@@ -63,8 +63,8 @@ from inventing incompatible layouts or tool settings.
 
 | Task | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [001 Create Python package](001-create-python-package.md) | in-progress | None | Importable `src`-layout package |
-| [002 Configure quality tooling](002-configure-quality-tooling.md) | planned | 001 | Local Ruff, Pyright, pytest, and build configuration |
+| [001 Create Python package](001-create-python-package.md) | completed | None | Importable `src`-layout package |
+| [002 Configure quality tooling](002-configure-quality-tooling.md) | in-progress | 001 | Local Ruff, Pyright, pytest, and build configuration |
 | [003 Add CI and build validation](003-add-ci-and-build-validation.md) | planned | 002 | Automated validation on supported changes |
 | [004 Define local development environment](004-define-local-development-environment.md) | planned | 002 | Reproducible Python `venv` workflow |
 
