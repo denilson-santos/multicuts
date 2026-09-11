@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P0 |
 | Depends on | 001.002 Configure quality tooling |
 
@@ -16,6 +16,19 @@ pull requests and changes to the default branch.
 Milestone 0 requires CI, and the repository uses GitHub Flow. The default CI
 path must be hermetic. Provider and media integration checks remain opt-in until
 their packages and required environments exist.
+
+## Implementation decisions
+
+- Run the complete quality and build sequence on Python 3.10, the minimum
+  supported version.
+- Run the hermetic tests on Python 3.13 as the upper supported endpoint. Expand
+  coverage if future dependencies introduce version-specific compatibility
+  risks.
+- Use the current official major versions `actions/checkout@v7` and
+  `actions/setup-python@v7`, disable persisted checkout credentials, and grant
+  only read access to repository contents.
+- Do not enable dependency caching until the repository adopts a lockfile or a
+  similarly explicit dependency resolution strategy.
 
 ## Expected changes
 
