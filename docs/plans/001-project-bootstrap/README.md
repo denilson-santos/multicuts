@@ -65,8 +65,8 @@ from inventing incompatible layouts or tool settings.
 | --- | --- | --- | --- |
 | [001 Create Python package](001-create-python-package.md) | completed | None | Importable `src`-layout package |
 | [002 Configure quality tooling](002-configure-quality-tooling.md) | completed | 001 | Local Ruff, Pyright, pytest, and build configuration |
-| [003 Add CI and build validation](003-add-ci-and-build-validation.md) | in-progress | 002 | Automated validation on supported changes |
-| [004 Define local development environment](004-define-local-development-environment.md) | planned | 002 | Reproducible Python `venv` workflow |
+| [003 Add CI and build validation](003-add-ci-and-build-validation.md) | completed | 002 | Automated validation on supported changes |
+| [004 Define local development environment](004-define-local-development-environment.md) | in-progress | 002 | Reproducible Python `venv` workflow |
 
 ## Completion criteria
 

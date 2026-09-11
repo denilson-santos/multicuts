@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P0 |
 | Depends on | 001.002 Configure quality tooling |
 

@@ -1,0 +1,13 @@
+# Local Python environment
+.venv/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Development tool caches
+.pytest_cache/
+.ruff_cache/
