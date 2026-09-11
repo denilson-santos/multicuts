@@ -291,15 +291,5 @@ Do not expand the task beyond what is required to satisfy it correctly.
 ## 17. Git delivery workflow
 
 - for every repository-changing implementation task, follow the `deliver-feature` skill before editing files;
-- use GitHub Flow with one short-lived branch per coherent change;
-- create the branch from the remote default branch before implementation;
-- name branches `<type>/<issue-id>-<slug>`, omitting the issue ID when none is available;
-- use lowercase kebab-case branch names and Conventional Commits 1.0.0;
-- do not discard, stash, move, stage, or include pre-existing user changes without explicit permission;
-- after implementation and validation, stop before staging or committing;
-- present the exact branch, changed files, validation results, proposed commits, and pull request content;
-- stage, commit, push, and open the pull request only after explicit user approval of that delivery package;
-- if the approved content or target changes materially, request approval again;
-- never merge a pull request or delete its branch without separate explicit authorization.
-
-Read-only analysis, diagnosis, review, and status requests do not require a new branch.
+- never commit, push, or open a pull request without explicit user approval;
+- read-only analysis, diagnosis, review, and status requests do not use this workflow.
