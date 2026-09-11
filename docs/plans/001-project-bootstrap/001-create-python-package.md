@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P0 |
 | Depends on | None |
 
@@ -16,6 +16,13 @@ supported Python range and provides the base for all later modules.
 Use the runtime/development baseline in `docs/architecture.md` and the Python
 compatibility rules in `docs/conventions.md`. Before editing, select and record a
 minimal maintained PEP 517 backend; the source documents do not prescribe one.
+
+## Implementation decision
+
+Use `setuptools.build_meta` with `setuptools>=68`. It is a maintained PEP 517
+backend with support across Python 3.10–3.13, requires no additional project
+workflow, and leaves the dependency-lock strategy open. Use `0.0.0` as a
+provisional pre-release package version; release versioning remains undecided.
 
 ## Expected changes
 

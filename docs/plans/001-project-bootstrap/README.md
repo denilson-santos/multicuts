@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M0 — Foundation |
-| Status | planned |
+| Status | in-progress |
 | Priority | P0 |
 | Depends on | None |
 | Unlocks | 002 Domain foundation |
@@ -63,7 +63,7 @@ from inventing incompatible layouts or tool settings.
 
 | Task | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [001 Create Python package](001-create-python-package.md) | planned | None | Importable `src`-layout package |
+| [001 Create Python package](001-create-python-package.md) | in-progress | None | Importable `src`-layout package |
 | [002 Configure quality tooling](002-configure-quality-tooling.md) | planned | 001 | Local Ruff, Pyright, pytest, and build configuration |
 | [003 Add CI and build validation](003-add-ci-and-build-validation.md) | planned | 002 | Automated validation on supported changes |
 | [004 Define local development environment](004-define-local-development-environment.md) | planned | 002 | Reproducible Python `venv` workflow |
@@ -87,6 +87,9 @@ from inventing incompatible layouts or tool settings.
 - The build backend is not selected by existing documentation. Select a minimal,
   maintained PEP 517 backend before task 001 is implemented and record the
   decision in that change.
+- Task 001 uses `setuptools.build_meta` with `setuptools>=68`. This maintained,
+  standards-based backend supports the project's Python range without selecting
+  a dependency manager or deciding the still-open lockfile strategy.
 - The supported interpreter used to create `.venv` must be selected explicitly
   from Python 3.10–3.13; the environment must not silently use an unsupported
   system Python.
