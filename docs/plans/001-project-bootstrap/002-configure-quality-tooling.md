@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P0 |
 | Depends on | 001.001 Create the Python package |
 
@@ -16,6 +16,16 @@ same commands can be used locally and in CI.
 The conventions prescribe Ruff, Pyright, and pytest, including initial Ruff and
 Pyright settings. The default test selection must exclude integration tests and
 must not require network access, models, GPU, YouTube, FFmpeg, or credentials.
+
+## Implementation decisions
+
+- Expose build and quality tools through the `dev` optional dependency group,
+  with major-version bounds but no lockfile.
+- Exclude `docs/` from Ruff because its Markdown contains conceptual and partial
+  Python snippets rather than executable project code. Source and tests remain
+  fully covered by formatting and lint checks.
+- Enable pytest strict configuration and marker validation so configuration
+  mistakes fail early.
 
 ## Expected changes
 
