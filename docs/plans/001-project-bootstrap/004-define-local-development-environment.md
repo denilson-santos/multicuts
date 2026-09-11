@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P0 |
 | Depends on | 001.002 Configure quality tooling |
 
@@ -18,6 +18,15 @@ The repository supports Python `>=3.10,<3.14`, uses a small dependency tree, and
 has no selected environment manager. The project should provide one predictable
 workflow without adding Conda, Poetry, `uv`, a Dev Container, or another tool as
 an implicit requirement.
+
+## Implementation decisions
+
+- Use Python 3.10 in the setup examples while allowing any explicitly verified
+  Python 3.10–3.13 interpreter.
+- Keep all setup commands in the contributor-facing root `README.md`; no custom
+  activation or bootstrap script is required.
+- Ignore the root `.venv/`, Python bytecode, test/lint caches, package metadata,
+  and build outputs produced by the documented workflow.
 
 ## Expected changes
 

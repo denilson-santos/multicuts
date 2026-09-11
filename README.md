@@ -8,6 +8,50 @@
 
 The project does **not** attempt to predict virality with certainty. The score is a heuristic and semantic ranking signal designed to reduce the manual effort required to find strong moments in long-form content.
 
+## Development
+
+Use Python 3.10, 3.11, 3.12, or 3.13 and create the local environment at
+`.venv/` in the repository root. The examples below select Python 3.10; replace
+the launcher with another available supported interpreter when needed.
+
+On POSIX systems:
+
+```bash
+python3.10 --version
+python3.10 -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows PowerShell:
+
+```powershell
+py -3.10 --version
+py -3.10 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+After activation, verify the selected interpreter and install the project with
+its development tools:
+
+```bash
+python --version
+python -m pip install --editable ".[dev]"
+```
+
+Run the local quality and build checks from the activated environment:
+
+```bash
+ruff format --check .
+ruff check .
+pyright
+pytest -m "not integration"
+python -m build
+```
+
+The `.venv/` directory, tool caches, and generated build artifacts are ignored
+by Git. GitHub Actions creates a separate isolated environment and never uses a
+developer's local `.venv`.
+
 ## MVP goals
 
 The first MVP should be able to:
