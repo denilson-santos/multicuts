@@ -54,4 +54,16 @@ After the user approves the displayed delivery package:
 5. Open the pull request with the approved title, body, base branch, and review state.
 6. Return the commit identifiers, validation summary, and pull request link.
 
-Request approval again if the content, commit plan, remote, base branch, or pull request state changes materially. Report failures without inventing a successful result or creating duplicate pull requests. Never merge the pull request or delete its branch without separate explicit authorization.
+Request approval again if the content, commit plan, remote, base branch, or pull request state changes materially. Report failures without inventing a successful result or creating duplicate pull requests. Never merge the pull request without separate explicit authorization.
+
+## Clean up after merge
+
+When the user reports that a pull request was merged, treat that message as authorization to clean up only that pull request's verified head branch:
+
+1. Confirm through GitHub that the pull request state is `MERGED` and record its exact head and base branches.
+2. Stop if the working tree is not clean. Do not stash or discard changes to perform cleanup.
+3. Switch to the base branch, fetch the remote with pruning, and update the local base by fast-forward only.
+4. Delete the local head branch with `git branch -d`. Never use force deletion.
+5. Verify that the repository's automatic branch deletion removed the remote head branch. If it remains, report it instead of deleting it without additional authorization.
+
+Do not delete an open, closed-unmerged, unidentified, or unpushed branch. A post-merge cleanup request does not authorize deleting any branch other than the verified head branch of that pull request.
