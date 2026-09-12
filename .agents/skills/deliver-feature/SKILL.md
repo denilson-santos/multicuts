@@ -41,6 +41,32 @@ After implementation and validation, inspect the complete diff and present:
 
 Use Conventional Commits 1.0.0 for each commit. Keep scopes optional and repository-specific. Mark breaking changes with `!` and explain them in the commit body or footer. Prefer a Conventional Commit title for the pull request so squash merges preserve the convention.
 
+Use this exact Markdown structure for every pull request body:
+
+```markdown
+## Summary
+
+<State the concrete problem and the behavior after this change in one or two short paragraphs.>
+
+## Changes
+
+- <Describe a reviewable change.>
+- <Describe another reviewable change when applicable.>
+
+## Validation
+
+- `<command>` — passed (<concise result when useful>)
+- Not run: `<command>` — <reason>
+
+## Risks and follow-ups
+
+- None.
+```
+
+Keep all four headings in this order. Replace the instructional placeholders and remove unused example bullets, but do not remove a section. Under `Validation`, list every materially relevant command that ran and its result; list required or relevant checks that could not run with the reason. Under `Risks and follow-ups`, write `- None.` when there are no known items. Include issue links, migration notes, breaking-change details, screenshots, or operational notes inside the most relevant section rather than creating ad hoc headings. Keep the summary focused on the final implementation, without conversational history or abandoned approaches.
+
+Create the pull request using the exact title and body shown in the approved delivery package. Preserve Markdown with a body file or an equivalent structured tool argument rather than assembling multiline prose through fragile shell quoting.
+
 Ask one explicit confirmation covering the displayed commits, push target, and pull request. Do not treat approval of the implementation request as delivery approval.
 
 ## Publish only after approval
