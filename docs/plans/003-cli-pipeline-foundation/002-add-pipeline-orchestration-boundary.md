@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 003.001 Build the CLI command surface |
 
@@ -44,6 +44,17 @@ embedding algorithms, provider construction, or fake outputs.
 - Domain modules do not import CLI or adapters.
 - Errors propagate to the CLI boundary without being swallowed.
 - Tests replace external boundaries, not chains of private helpers.
+
+## Implementation decisions
+
+- `run_pipeline` is the typed application entry point and calls the available
+  local acquisition and media-probing boundaries in order.
+- Acquisition and probing callables remain optional keyword substitutions for
+  hermetic boundary tests; no stage registry or generic workflow abstraction is
+  introduced.
+- The current pipeline raises `PipelineNotReadyError` after media preflight
+  because transcription and artifact publication are implemented by later
+  packages. This keeps an incomplete run from being reported as successful.
 
 ## Tests and validation
 

@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from multicuts.config import RunConfig
+from multicuts.pipeline import run_pipeline
 
 DEFAULT_OUTPUT_DIR = Path("multicuts-output")
 DEFAULT_CLIPS = 5
@@ -166,10 +167,6 @@ def main(
 ) -> int:
     """Parse one command and hand its configuration to the pipeline boundary."""
     config = parse_run_config(argv)
-    if pipeline is None:
-        raise RuntimeError(
-            "Pipeline orchestration is not available until the pipeline boundary "
-            "is configured"
-        )
-    pipeline(config)
+    runner = run_pipeline if pipeline is None else pipeline
+    runner(config)
     return 0
