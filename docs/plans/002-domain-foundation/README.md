@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M0 — Foundation |
-| Status | in-progress |
+| Status | completed |
 | Priority | P0 |
 | Depends on | 001 Project bootstrap |
 | Unlocks | 003 CLI and pipeline foundation; 004 Local source and media |
@@ -61,8 +61,8 @@ validation to `config.py`, and the small exception hierarchy to `errors.py`.
 | Task | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
 | [001 Define error hierarchy](001-define-error-hierarchy.md) | completed | Package 001 | Stable project failure categories |
-| [002 Define core models](002-define-core-models.md) | in-progress | Package 001 | Provider-independent values through transcription |
-| [003 Define run configuration](003-define-run-configuration.md) | planned | 002 | Validated immutable run configuration |
+| [002 Define core models](002-define-core-models.md) | completed | Package 001 | Provider-independent values through transcription |
+| [003 Define run configuration](003-define-run-configuration.md) | completed | 002 | Validated immutable run configuration |
 
 ## Completion criteria
 
