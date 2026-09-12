@@ -3,10 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription |
 | Unlocks | Candidate generation and later pipeline stages |
+| PRs | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective and expected outcome
 
@@ -56,11 +57,11 @@ than a database or generic caching service.
 
 ## Task index
 
-| Task | Status | Depends on | Outcome |
-| --- | --- | --- | --- |
-| [001 Create workspace and artifact paths](001-create-workspace-and-artifact-paths.md) | planned | Package 005 | Explicit controlled locations for source/transcript artifacts |
-| [002 Persist transcripts safely](002-persist-transcripts-safely.md) | planned | 001 | Round-trippable, atomically published transcript JSON |
-| [003 Key and reuse transcription cache](003-key-and-reuse-transcription-cache.md) | planned | 002 | Correct cache reuse and invalidation without repeated ASR |
+| Task | Status | Depends on | PRs | Outcome |
+| --- | --- | --- | --- | --- |
+| [001 Create workspace and artifact paths](001-create-workspace-and-artifact-paths.md) | in-progress | Package 005 | — | Explicit controlled locations for source/transcript artifacts |
+| [002 Persist transcripts safely](002-persist-transcripts-safely.md) | in-progress | 001 | — | Round-trippable, atomically published transcript JSON |
+| [003 Key and reuse transcription cache](003-key-and-reuse-transcription-cache.md) | in-progress | 002 | — | Correct cache reuse and invalidation without repeated ASR |
 
 ## Completion criteria
 
@@ -83,3 +84,23 @@ than a database or generic caching service.
 - Schema/stage version values must be declared constants and changed when
   serialized meaning changes.
 - Cache metadata must not contain secrets or complete provider request payloads.
+
+## Implementation decisions
+
+- The initial cache is output-local. A run directory uses only a digest of the
+  source fingerprint and transcription cache key, so filename changes do not
+  invalidate ASR and untrusted source titles never become path components.
+  `source/metadata.json` is reserved; this package does not introduce the full
+  source or run manifest.
+- The normalized transcript lives at `transcript/transcript.json`; provider and
+  incomplete write artifacts stay under `.work/`. A pre-existing `manifest.json`
+  blocks writes even with `force_recompute`.
+- Schema and stage versions start at `1`. The cache key hashes source fingerprint,
+  provider/version, model, requested language or auto mode, task, and both
+  versions. Styling, geometry, scoring, and clip count are excluded.
+- Malformed or incompatible transcript JSON is recomputed. An I/O failure while
+  reading the cache raises `ArtifactError`. `force_recompute` replaces only the
+  internal transcript cache after a complete temporary write.
+- The pipeline persists a transcript and then raises `PipelineNotReadyError`
+  until candidate generation and final publication exist; it never reports a
+  completed clip run at this stage.

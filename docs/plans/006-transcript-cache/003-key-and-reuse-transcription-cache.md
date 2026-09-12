@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 006.002 Persist transcripts safely |
+| PR | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective
 
@@ -69,3 +70,11 @@ pytest -m "not integration"
   explicitly excluded.
 - Cache cleanup/retention policy and remote downloaded-source retention remain
   future work.
+
+## Implementation decision
+
+The provider version comes from installed distribution metadata without loading
+the ASR model. A matching validated artifact is reused; malformed JSON or an
+unsupported schema is recomputed, while cache read I/O errors remain actionable
+`ArtifactError`s. `force_recompute` always invokes transcription and only
+replaces the internal cache after successful publication.

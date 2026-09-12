@@ -3,6 +3,7 @@
 import json
 import sys
 from collections.abc import Callable
+from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 
@@ -15,6 +16,26 @@ from multicuts.models import Transcript, TranscriptSegment, Word
 TRANSCRIPT_FIXTURE = (
     Path(__file__).parent.parent / "fixtures" / "multisubs_v4_1_transcript.json"
 )
+
+
+def test_provider_version_uses_distribution_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.1.0")
+
+    assert MultisubsAdapter().version() == "4.1.0"
+
+
+def test_missing_provider_version_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(_name: str) -> str:
+        raise metadata.PackageNotFoundError("multisubs")
+
+    monkeypatch.setattr(metadata, "version", missing)
+
+    with pytest.raises(TranscriptionError, match="check the multisubs installation"):
+        MultisubsAdapter().version()
 
 
 def _install_provider(

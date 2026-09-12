@@ -1,6 +1,7 @@
 """Source transcription through the public multisubs package API."""
 
 import importlib
+import importlib.metadata
 import json
 from dataclasses import dataclass
 from math import isfinite
@@ -156,6 +157,15 @@ def _normalize_artifact(artifact: TranscriptionArtifact) -> Transcript:
 
 class MultisubsAdapter:
     """Transcribe a source through multisubs and normalize its JSON artifact."""
+
+    def version(self) -> str:
+        """Read installed provider metadata without loading a transcription model."""
+        try:
+            return importlib.metadata.version("multisubs")
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise TranscriptionError(
+                "multisubs is unavailable; check the multisubs installation"
+            ) from exc
 
     def transcribe(
         self,

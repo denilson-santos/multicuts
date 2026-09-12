@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Package 005 Multisubs transcription |
+| PR | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective
 
@@ -62,3 +63,11 @@ pyright
 - Source titles and provider text are untrusted and must not escape the selected
   root.
 - Complete run manifests and per-clip paths belong to later packages.
+
+## Implementation decision
+
+Use a caller-provided output root with one directory per source fingerprint and
+transcription key. Directory names use only a digest, so untrusted source labels
+cannot affect cache identity or escape the root. Reserve `source/metadata.json`,
+`transcript/transcript.json`, and `.work/` without writing a full source or run
+manifest in this package.

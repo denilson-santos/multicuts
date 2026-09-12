@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 006.001 Create workspace and artifact paths |
+| PR | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective
 
@@ -64,3 +65,11 @@ pyright
   byte-for-byte assumptions.
 - Do not silently migrate unknown future schema versions.
 - Candidate/scoring artifacts and the full run manifest remain out of scope.
+
+## Implementation decision
+
+Use a project-owned JSON envelope with schema/stage version, task, cache key,
+and normalized transcript fields. Write UTF-8 JSON to a private `.work/` file,
+flush it, and publish with `os.replace`. Completed manifests and ordinary
+transcript artifacts are protected from implicit replacement; explicit cache
+recomputation may replace only the transcript artifact.
