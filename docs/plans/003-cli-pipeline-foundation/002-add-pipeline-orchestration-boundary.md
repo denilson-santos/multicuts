@@ -5,6 +5,7 @@
 | Status | completed |
 | Priority | P1 |
 | Depends on | 003.001 Build the CLI command surface |
+| PR | [#14](https://github.com/denilson-santos/multicuts/pull/14) |
 
 ## Objective
 

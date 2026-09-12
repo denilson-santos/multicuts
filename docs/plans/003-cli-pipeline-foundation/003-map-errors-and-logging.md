@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 003.002 Add the pipeline orchestration boundary |
+| PR | — |
 
 ## Objective
 
@@ -56,6 +57,25 @@ ruff format --check .
 ruff check .
 pyright
 ```
+
+## Implementation decisions
+
+- `MediaError` maps to exit 3 because media preflight validates the acquired
+  input before transcription.
+- `ArtifactError` maps to exit 6 because artifact publication is part of the
+  output stage alongside rendering.
+- `KeyboardInterrupt` returns the conventional exit 130 after a warning; the
+  CLI does not print a completion summary for interrupted runs.
+- The CLI configures the standard logging module once per invocation on the
+  `multicuts` logger hierarchy only. Normal output contains concise errors,
+  while `--verbose` adds stage, exception-type, cause-type, and exit-code
+  diagnostics without enabling unrelated provider loggers or logging chained
+  exception messages, secrets, or complete transcripts.
+- Pipeline logs use only synthesized source origin (`local`, `remote`, or
+  `unknown`) plus safe media facts such as duration and presentation geometry;
+  user-provided names and URLs are never emitted.
+- Unexpected failures use a generic user-facing message. Verbose diagnostics
+  include only their type, current stage, cause type, and exit code.
 
 ## Risks and exclusions
 

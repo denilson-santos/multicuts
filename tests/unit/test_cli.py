@@ -1,10 +1,19 @@
+import logging
 from pathlib import Path
 
 import pytest
 
 from multicuts.cli import build_parser, main, parse_run_config
 from multicuts.config import RunConfig
-from multicuts.errors import ConfigurationError
+from multicuts.errors import (
+    AcquisitionError,
+    ArtifactError,
+    ConfigurationError,
+    MediaError,
+    RenderingError,
+    ScoringError,
+    TranscriptionError,
+)
 from multicuts.pipeline import PipelineNotReadyError
 
 
@@ -167,13 +176,139 @@ def test_main_uses_the_default_pipeline_boundary(
     assert called[0].source == "source.mp4"
 
 
-def test_main_surfaces_incomplete_default_pipeline(
+def test_main_maps_incomplete_pipeline_to_unexpected_failure(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     def incomplete_pipeline(_config: RunConfig) -> None:
         raise PipelineNotReadyError("pipeline incomplete")
 
     monkeypatch.setattr("multicuts.cli.run_pipeline", incomplete_pipeline)
 
-    with pytest.raises(PipelineNotReadyError, match="pipeline incomplete"):
-        main(["generate", "source.mp4"])
+    assert main(["generate", "source.mp4"]) == 1
+    output = capsys.readouterr().err
+    assert "Unexpected failure; no diagnostic details are available" in output
+    assert "pipeline incomplete" not in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_exit", "label"),
+    [
+        (ConfigurationError("clips must be positive"), 2, "Invalid configuration"),
+        (AcquisitionError("source is unavailable"), 3, "Acquisition failed"),
+        (MediaError("source has no audio"), 3, "Media preflight failed"),
+        (TranscriptionError("provider failed"), 4, "Transcription failed"),
+        (ScoringError("scorer failed"), 5, "Scoring failed"),
+        (RenderingError("FFmpeg failed"), 6, "Rendering failed"),
+        (
+            ArtifactError("manifest could not be written"),
+            6,
+            "Artifact publication failed",
+        ),
+    ],
+)
+def test_main_maps_project_errors_to_documented_exit_codes(
+    error: Exception,
+    expected_exit: int,
+    label: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def failing_pipeline(_config: RunConfig) -> None:
+        raise error
+
+    assert main(["generate", "source.mp4"], pipeline=failing_pipeline) == expected_exit
+    output = capsys.readouterr().err
+    assert f"{label}: {error}" in output
+    assert "Traceback" not in output
+
+
+def test_main_reports_semantic_configuration_errors_without_running_pipeline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called = False
+
+    def failing_pipeline(_config: RunConfig) -> None:
+        nonlocal called
+        called = True
+
+    assert (
+        main(
+            ["generate", "source.mp4", "--clips", "0"],
+            pipeline=failing_pipeline,
+        )
+        == 2
+    )
+    assert not called
+    assert "Invalid configuration: clips" in capsys.readouterr().err
+
+
+def test_main_verbose_diagnostics_include_safe_failure_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def failing_pipeline(_config: RunConfig) -> None:
+        raise AcquisitionError("download failed token=super-secret") from RuntimeError(
+            "provider token=super-secret"
+        )
+
+    assert (
+        main(
+            ["generate", "https://example.test/video?token=super-secret", "--verbose"],
+            pipeline=failing_pipeline,
+        )
+        == 3
+    )
+    output = capsys.readouterr().err
+    assert "stage=acquire" in output
+    assert "error_type=AcquisitionError" in output
+    assert "super-secret" not in output
+    assert "Traceback" not in output
+
+
+def test_main_unexpected_failure_uses_only_generic_and_typed_diagnostics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def failing_pipeline(_config: RunConfig) -> None:
+        raise RuntimeError("provider response token=super-secret") from ValueError(
+            "raw provider payload"
+        )
+
+    assert (
+        main(
+            ["generate", "source.mp4", "--verbose"],
+            pipeline=failing_pipeline,
+        )
+        == 1
+    )
+    output = capsys.readouterr().err
+    assert "Unexpected failure; no diagnostic details are available" in output
+    assert "stage=run error_type=RuntimeError cause_type=ValueError" in output
+    assert "provider response" not in output
+    assert "raw provider payload" not in output
+    assert "super-secret" not in output
+
+
+def test_main_returns_clean_interruption_exit_without_success_summary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def interrupt_pipeline(_config: RunConfig) -> None:
+        raise KeyboardInterrupt
+
+    assert main(["generate", "source.mp4"], pipeline=interrupt_pipeline) == 130
+    output = capsys.readouterr().err
+    assert "Run interrupted" in output
+    assert "completion summary" in output
+
+
+def test_pipeline_logging_configuration_sets_debug_level_for_verbose() -> None:
+    from multicuts.cli import configure_logging
+
+    root_logger = logging.getLogger()
+    project_logger = logging.getLogger("multicuts")
+    root_level = root_logger.level
+    configure_logging(verbose=True)
+    assert project_logger.level == logging.DEBUG
+    assert root_logger.level == root_level
+    configure_logging(verbose=False)
+    assert project_logger.level == logging.WARNING
+    assert root_logger.level == root_level

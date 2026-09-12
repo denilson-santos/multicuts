@@ -1,10 +1,23 @@
-"""Command-line parsing for one multicuts run."""
+"""Command-line parsing and process-boundary handling for one run."""
 
 import argparse
+import logging
+import re
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from multicuts.config import RunConfig
+from multicuts.errors import (
+    AcquisitionError,
+    ArtifactError,
+    ConfigurationError,
+    MediaError,
+    MulticutsError,
+    RenderingError,
+    ScoringError,
+    TranscriptionError,
+)
 from multicuts.pipeline import run_pipeline
 
 DEFAULT_OUTPUT_DIR = Path("multicuts-output")
@@ -18,10 +31,121 @@ DEFAULT_MODEL = "default"
 
 PipelineRunner = Callable[[RunConfig], None]
 
+EXIT_SUCCESS = 0
+EXIT_UNEXPECTED = 1
+EXIT_CONFIGURATION = 2
+EXIT_ACQUISITION = 3
+EXIT_TRANSCRIPTION = 4
+EXIT_SCORING = 5
+EXIT_RENDERING = 6
+
+logger = logging.getLogger(__name__)
+_CLI_HANDLER_MARKER = "_multicuts_cli_handler"
+_MAX_SAFE_ERROR_LENGTH = 500
+_SECRET_VALUE_PATTERN = re.compile(
+    r"(?i)(\b(?:access[_ -]?token|api[_ -]?key|authorization|cookie|password|"
+    r"secret|token)\b\s*(?:[:=]\s*(?:bearer\s+)?|bearer\s+))[^\s,;]+"
+)
+_URL_SECRET_PATTERN = re.compile(
+    r"(?i)([?&](?:access[_-]?token|api[_-]?key|signature|token|key)=)[^&#\s]+"
+)
+
+_ERROR_DETAILS: tuple[tuple[type[MulticutsError], int, str, str], ...] = (
+    (ConfigurationError, EXIT_CONFIGURATION, "configuration", "Invalid configuration"),
+    (AcquisitionError, EXIT_ACQUISITION, "acquire", "Acquisition failed"),
+    # Media preflight is part of validating the acquired input.
+    (MediaError, EXIT_ACQUISITION, "probe", "Media preflight failed"),
+    (TranscriptionError, EXIT_TRANSCRIPTION, "transcribe", "Transcription failed"),
+    (ScoringError, EXIT_SCORING, "score", "Scoring failed"),
+    (RenderingError, EXIT_RENDERING, "render", "Rendering failed"),
+    # Artifact publication is an output-stage failure and shares rendering's exit.
+    (ArtifactError, EXIT_RENDERING, "publish", "Artifact publication failed"),
+)
+
 
 def _path_argument(value: str) -> Path:
     """Convert a CLI path while preserving relative paths."""
     return Path(value).expanduser()
+
+
+def configure_logging(verbose: bool) -> None:
+    """Configure standard logging for one CLI invocation.
+
+    The handler is attached only to the project logger hierarchy. This keeps
+    verbose provider logging disabled while still allowing repeated in-process
+    invocations to follow the current ``sys.stderr``.
+    """
+    project_logger = logging.getLogger("multicuts")
+    project_logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+    handler: logging.StreamHandler | None = next(
+        (
+            candidate
+            for candidate in project_logger.handlers
+            if isinstance(candidate, logging.StreamHandler)
+            and getattr(candidate, _CLI_HANDLER_MARKER, False)
+        ),
+        None,
+    )
+    if handler is not None:
+        project_logger.removeHandler(handler)
+        handler.close()
+
+    handler = logging.StreamHandler(sys.stderr)
+    setattr(handler, _CLI_HANDLER_MARKER, True)
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    project_logger.addHandler(handler)
+
+
+def _safe_text(value: object) -> str:
+    """Bound and redact text before it reaches user-facing diagnostics."""
+    message = " ".join(str(value).split())
+    if not message:
+        message = "no further details available"
+    message = _SECRET_VALUE_PATTERN.sub(r"\1[REDACTED]", message)
+    message = _URL_SECRET_PATTERN.sub(r"\1[REDACTED]", message)
+    if len(message) > _MAX_SAFE_ERROR_LENGTH:
+        message = message[:_MAX_SAFE_ERROR_LENGTH].rstrip() + "..."
+    return message
+
+
+def _error_details(error: MulticutsError) -> tuple[int, str, str]:
+    """Return the exit code, stage, and user-facing label for an expected error."""
+    for error_type, exit_code, stage, label in _ERROR_DETAILS:
+        if isinstance(error, error_type):
+            return exit_code, stage, label
+    return EXIT_UNEXPECTED, "unknown", "Unexpected project failure"
+
+
+def _log_project_error(error: MulticutsError, *, verbose: bool) -> int:
+    """Log a safe project error and return its documented process exit code."""
+    exit_code, stage, label = _error_details(error)
+    logger.error("%s: %s", label, _safe_text(error))
+    if verbose:
+        cause_type = type(error.__cause__).__name__ if error.__cause__ else "none"
+        logger.debug(
+            "stage=%s error_type=%s cause_type=%s exit_code=%d",
+            stage,
+            type(error).__name__,
+            cause_type,
+            exit_code,
+        )
+    return exit_code
+
+
+def _log_unexpected_error(error: BaseException, *, stage: str, verbose: bool) -> int:
+    """Log an unexpected failure without exposing its raw message or cause."""
+    logger.error("Unexpected failure; no diagnostic details are available")
+    if verbose:
+        cause_type = type(error.__cause__).__name__ if error.__cause__ else "none"
+        logger.debug(
+            "stage=%s error_type=%s cause_type=%s exit_code=%d",
+            stage,
+            type(error).__name__,
+            cause_type,
+            EXIT_UNEXPECTED,
+        )
+    return EXIT_UNEXPECTED
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -165,8 +289,23 @@ def main(
     *,
     pipeline: PipelineRunner | None = None,
 ) -> int:
-    """Parse one command and hand its configuration to the pipeline boundary."""
-    config = parse_run_config(argv)
-    runner = run_pipeline if pipeline is None else pipeline
-    runner(config)
-    return 0
+    """Run one command and translate process-boundary failures into exit codes."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    verbose = any(argument == "--verbose" for argument in arguments)
+    configure_logging(verbose)
+
+    stage = "validate"
+    try:
+        config = parse_run_config(arguments)
+        logger.info("stage=validate complete")
+        stage = "run"
+        runner = run_pipeline if pipeline is None else pipeline
+        runner(config)
+    except KeyboardInterrupt:
+        logger.warning("Run interrupted; no completion summary was produced")
+        return 130
+    except MulticutsError as error:
+        return _log_project_error(error, verbose=verbose)
+    except Exception as error:
+        return _log_unexpected_error(error, stage=stage, verbose=verbose)
+    return EXIT_SUCCESS
