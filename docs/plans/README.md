@@ -40,7 +40,7 @@ completed and its package-level completion criteria pass.
 | [001 Project bootstrap](001-project-bootstrap/) | M0 | completed | P0 | None | Installable package, quality tooling, build checks, and CI |
 | [002 Domain foundation](002-domain-foundation/) | M0 | completed | P0 | 001 | Typed configuration, errors, and the domain models required through transcription |
 | [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | planned | P1 | 002 | Documented command surface, readable orchestration boundary, logging, and exit handling |
-| [004 Local source and media](004-local-source-media/) | M1 | planned | P1 | 002 | Validated local input, stable source identity, and normalized media metadata |
+| [004 Local source and media](004-local-source-media/) | M1 | in-progress | P1 | 002 | Validated local input, stable source identity, and normalized media metadata |
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | planned | P1 | 002, 004 | Public-API transcription adapter and normalized transcript |
 | [006 Transcript cache](006-transcript-cache/) | M1 | planned | P1 | 005 | Safely persisted and reusable normalized transcripts |
 
