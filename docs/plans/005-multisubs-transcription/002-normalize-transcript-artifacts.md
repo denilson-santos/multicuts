@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 005.001 Implement the public API adapter |
+| PR | — |
 
 ## Objective
 
@@ -58,6 +59,18 @@ ruff format --check .
 ruff check .
 pyright
 ```
+
+## Implementation decisions
+
+- Parse the v4.1.0 public JSON artifact's schema version 3, with detected
+  language and duration in `metadata` and original text/segments in
+  `transcription`. Reject unsupported schema versions and invalid consumed
+  fields instead of interpreting provider rendering metadata.
+- Flatten `segments[*].words` into project-owned `Word` values. Preserve the
+  provider's `word` text and optional `score` as `confidence`; preserve absent
+  start/end pairs as `None` and reject incomplete pairs.
+- Keep `transcribe_to_artifact` for callers needing the provider artifact and
+  expose `MultisubsAdapter.transcribe` as the normalized project boundary.
 
 ## Risks and exclusions
 

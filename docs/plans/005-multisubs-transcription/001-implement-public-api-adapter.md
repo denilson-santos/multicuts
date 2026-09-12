@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Packages 002 Domain foundation and 004 Local source and media |
+| PR | [#16](https://github.com/denilson-santos/multicuts/pull/16) |
 
 ## Objective
 

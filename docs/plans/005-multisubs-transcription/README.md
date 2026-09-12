@@ -7,6 +7,7 @@
 | Priority | P1 |
 | Depends on | 002 Domain foundation; 004 Local source and media |
 | Unlocks | 006 Transcript cache |
+| PRs | [#16](https://github.com/denilson-santos/multicuts/pull/16); current delivery: — |
 
 ## Objective and expected outcome
 
@@ -58,11 +59,11 @@ cross the adapter boundary.
 
 ## Task index
 
-| Task | Status | Depends on | Outcome |
-| --- | --- | --- | --- |
-| [001 Implement public API adapter](001-implement-public-api-adapter.md) | in-progress | Packages 002, 004 | Isolated transcription call and error translation |
-| [002 Normalize transcript artifacts](002-normalize-transcript-artifacts.md) | planned | 001 | Valid project-owned transcript with timing provenance |
-| [003 Add provider contract tests](003-add-provider-contract-tests.md) | planned | 001, 002 | Executable checks for supported public behavior/schema |
+| Task | Status | Depends on | PRs | Outcome |
+| --- | --- | --- | --- | --- |
+| [001 Implement public API adapter](001-implement-public-api-adapter.md) | completed | Packages 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16) | Isolated transcription call and error translation |
+| [002 Normalize transcript artifacts](002-normalize-transcript-artifacts.md) | in-progress | 001 | — | Valid project-owned transcript with timing provenance |
+| [003 Add provider contract tests](003-add-provider-contract-tests.md) | in-progress | 001, 002 | — | Executable checks for supported public behavior/schema |
 
 ## Completion criteria
 
@@ -77,8 +78,10 @@ cross the adapter boundary.
 
 ## Risks, assumptions, and open questions
 
-- The exact JSON fields consumed must be verified against the supported public
-  output. Fixtures may not assert undocumented fields as permanent contracts.
+- The adapter consumes the v4.1.0 public JSON artifact's schema version 3,
+  `metadata.language`/`duration`, and `transcription.text`/`segments`. A real
+  model-backed artifact check remains opt-in; fixtures do not assert unrelated
+  rendering fields as permanent contracts.
 - Early environments may pin `multisubs==4.1.0`, but the declared compatibility
   range remains `>=4.1,<5` and requires contract coverage.
 - The v4.1.0 distribution is currently a checksummed GitHub Release wheel, not
