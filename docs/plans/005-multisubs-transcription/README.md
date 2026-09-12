@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 002 Domain foundation; 004 Local source and media |
 | Unlocks | 006 Transcript cache |
-| PRs | [#16](https://github.com/denilson-santos/multicuts/pull/16); current delivery: — |
+| PRs | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) |
 
 ## Objective and expected outcome
 
@@ -62,8 +62,8 @@ cross the adapter boundary.
 | Task | Status | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- |
 | [001 Implement public API adapter](001-implement-public-api-adapter.md) | completed | Packages 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16) | Isolated transcription call and error translation |
-| [002 Normalize transcript artifacts](002-normalize-transcript-artifacts.md) | in-progress | 001 | — | Valid project-owned transcript with timing provenance |
-| [003 Add provider contract tests](003-add-provider-contract-tests.md) | in-progress | 001, 002 | — | Executable checks for supported public behavior/schema |
+| [002 Normalize transcript artifacts](002-normalize-transcript-artifacts.md) | completed | 001 | [#18](https://github.com/denilson-santos/multicuts/pull/18) | Valid project-owned transcript with timing provenance |
+| [003 Add provider contract tests](003-add-provider-contract-tests.md) | completed | 001, 002 | [#18](https://github.com/denilson-santos/multicuts/pull/18) | Executable checks for supported public behavior/schema |
 
 ## Completion criteria
 

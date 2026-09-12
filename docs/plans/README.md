@@ -2,12 +2,11 @@
 
 ## Current state
 
-`multicuts` has completed the project bootstrap, domain foundation, and local
-source/media preflight. The CLI and synchronous pipeline boundary exist, but the
-production pipeline deliberately stops after media probing until normalized
-transcription and artifact publication are integrated. CLI diagnostics and the
-`multisubs` normalization/contract work are in progress; transcript caching is
-planned.
+`multicuts` has completed the project bootstrap, domain foundation, local
+source/media preflight, CLI foundation, and `multisubs` transcription adapter.
+The production pipeline deliberately stops after media probing; normalized
+transcription has not yet been wired into the end-to-end pipeline. Transcript
+caching is the next planned package; artifact publication remains future work.
 
 These packages cover Milestone 0 and the local-source core of Milestone 1. They
 stop once a normalized transcript can be persisted and reused. Later planning
@@ -40,9 +39,9 @@ completed and its package-level completion criteria pass.
 | --- | --- | --- | --- | --- | --- | --- |
 | [001 Project bootstrap](001-project-bootstrap/) | M0 | completed | P0 | None | [#4](https://github.com/denilson-santos/multicuts/pull/4), [#5](https://github.com/denilson-santos/multicuts/pull/5), [#6](https://github.com/denilson-santos/multicuts/pull/6), [#7](https://github.com/denilson-santos/multicuts/pull/7) | Installable package, quality tooling, build checks, and CI |
 | [002 Domain foundation](002-domain-foundation/) | M0 | completed | P0 | 001 | [#8](https://github.com/denilson-santos/multicuts/pull/8), [#9](https://github.com/denilson-santos/multicuts/pull/9), [#10](https://github.com/denilson-santos/multicuts/pull/10) | Typed configuration, errors, and the domain models required through transcription |
-| [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | in-progress | P1 | 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14); current: — | Documented command surface, readable orchestration boundary, logging, and exit handling |
+| [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | completed | P1 | 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), [#19](https://github.com/denilson-santos/multicuts/pull/19) | Documented command surface, readable orchestration boundary, logging, and exit handling |
 | [004 Local source and media](004-local-source-media/) | M1 | completed | P1 | 002 | [#11](https://github.com/denilson-santos/multicuts/pull/11), [#12](https://github.com/denilson-santos/multicuts/pull/12), [#15](https://github.com/denilson-santos/multicuts/pull/15) | Validated local input, stable source identity, and normalized media metadata |
-| [005 Multisubs transcription](005-multisubs-transcription/) | M1 | in-progress | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16); current: — | Public-API transcription adapter and normalized transcript |
+| [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
 | [006 Transcript cache](006-transcript-cache/) | M1 | planned | P1 | 005 | — | Safely persisted and reusable normalized transcripts |
 
 ## Recommended execution order

@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 003.002 Add the pipeline orchestration boundary |
-| PR | — |
+| PR | [#19](https://github.com/denilson-santos/multicuts/pull/19) |
 
 ## Objective
 
@@ -80,6 +80,6 @@ pyright
 ## Risks and exclusions
 
 - The PRD does not define distinct numeric exits for media/artifact failures;
-  their mapping is an open implementation decision that must be recorded.
+  their selected mapping is recorded above.
 - Never log tokens, cookies, authorization headers, or full provider commands.
 - Progress bars and structured logging are not required for this package.

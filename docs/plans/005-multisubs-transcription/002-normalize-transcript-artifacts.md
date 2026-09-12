@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 005.001 Implement the public API adapter |
-| PR | — |
+| PR | [#18](https://github.com/denilson-santos/multicuts/pull/18) |
 
 ## Objective
 
