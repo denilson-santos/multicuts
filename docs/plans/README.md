@@ -4,9 +4,10 @@
 
 `multicuts` has completed the project bootstrap, domain foundation, local
 source/media preflight, CLI foundation, and `multisubs` transcription adapter.
-The production pipeline deliberately stops after media probing; normalized
-transcription has not yet been wired into the end-to-end pipeline. Transcript
-caching is the next planned package; artifact publication remains future work.
+The production pipeline now reaches normalized transcription and output-local
+transcript persistence, then deliberately stops before candidate generation.
+Transcript caching is in progress; final artifact publication remains future
+work.
 
 These packages cover Milestone 0 and the local-source core of Milestone 1. They
 stop once a normalized transcript can be persisted and reused. Later planning
@@ -42,7 +43,7 @@ completed and its package-level completion criteria pass.
 | [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | completed | P1 | 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), [#19](https://github.com/denilson-santos/multicuts/pull/19) | Documented command surface, readable orchestration boundary, logging, and exit handling |
 | [004 Local source and media](004-local-source-media/) | M1 | completed | P1 | 002 | [#11](https://github.com/denilson-santos/multicuts/pull/11), [#12](https://github.com/denilson-santos/multicuts/pull/12), [#15](https://github.com/denilson-santos/multicuts/pull/15) | Validated local input, stable source identity, and normalized media metadata |
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
-| [006 Transcript cache](006-transcript-cache/) | M1 | planned | P1 | 005 | — | Safely persisted and reusable normalized transcripts |
+| [006 Transcript cache](006-transcript-cache/) | M1 | in-progress | P1 | 005 | — | Safely persisted and reusable normalized transcripts |
 
 ## Recommended execution order
 
