@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | completed |
 | Priority | P0 |
 | Depends on | 002.002 Define core models |
 
@@ -60,8 +60,14 @@ aspect ratio, and invalid custom-template directory.
 ## Risks and exclusions
 
 - The PRD specifies 15 and 60 seconds as initial duration defaults but leaves
-  several other defaults open; document selected values rather than presenting
-  them as existing product requirements.
+  several other defaults open. `RunConfig` uses 15 and 60 seconds, `None` for
+  automatic language and an absent custom template directory, and `False` for
+  boolean flags. Source, output directory, clip count, score threshold, aspect
+  ratio, template, scorer, and model remain required constructor inputs; CLI
+  defaults for these values must be decided in package 003.
+- The PRD does not say whether `--model` identifies the transcription or semantic
+  scoring model. Keep the single documented `model` option without assigning it
+  additional meaning here; the CLI and adapter integration must resolve this.
 - Do not add Pydantic or another configuration framework without demonstrated
   complexity that dataclasses cannot handle clearly.
 - Secret/provider credential loading is outside this task.
