@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 004.002 Probe media and normalize geometry |
 
@@ -55,6 +55,19 @@ pyright
 ```
 
 The integration command is conditional on local binaries.
+
+## Implementation decisions
+
+- `probe_media` checks that `ffmpeg` and `ffprobe` can start with `-version`
+  before reading probe JSON. Version checks have a five-second timeout and do
+  not surface provider output or local executable paths in errors.
+- Probe normalization keeps audio availability explicit in `MediaInfo`; the
+  transcription preflight rejects a normalized result without a usable audio
+  stream. Duration, video stream, and geometry validation remain in the
+  normalization boundary and `MediaInfo` invariants.
+- The pipeline task 003.002 calls `probe_media` after acquisition, so these
+  checks run before later transcription is added without coupling either
+  branch to an unmerged API.
 
 ## Risks and exclusions
 

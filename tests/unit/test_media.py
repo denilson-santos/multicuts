@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from multicuts.errors import MediaError
-from multicuts.media import normalize_media_probe, probe_media
+from multicuts.media import (
+    check_media_tools,
+    normalize_media_probe,
+    probe_media,
+    validate_media_for_transcription,
+)
 from multicuts.models import AcquiredSource
 
 
@@ -166,6 +171,8 @@ def test_probe_command_uses_argument_vector_and_project_model(
         command: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         calls.append((command, kwargs))
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
         return subprocess.CompletedProcess(command, 0, json.dumps(probe_payload), "")
 
     monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
@@ -173,8 +180,16 @@ def test_probe_command_uses_argument_vector_and_project_model(
     media = probe_media(source)
 
     assert media.duration == 12.5
-    assert len(calls) == 1
-    command, kwargs = calls[0]
+    assert len(calls) == 3
+    assert [command for command, _ in calls[:2]] == [
+        ["ffmpeg", "-version"],
+        ["ffprobe", "-version"],
+    ]
+    for _, version_kwargs in calls[:2]:
+        assert version_kwargs["timeout"] == 5
+        assert version_kwargs["check"] is True
+        assert "shell" not in version_kwargs
+    command, kwargs = calls[2]
     assert command[0] == "ffprobe"
     assert command[-1] == str(source.local_path)
     assert command[command.index("-of") + 1] == "json"
@@ -191,32 +206,117 @@ def test_probe_failure_does_not_expose_unbounded_provider_diagnostics(
     def fake_run(
         command: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
         return subprocess.CompletedProcess(command, 1, "", "private metadata" * 1000)
 
     monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
 
-    with pytest.raises(MediaError, match="ffprobe failed") as caught:
+    with pytest.raises(
+        MediaError, match="Could not inspect media with ffprobe"
+    ) as caught:
         probe_media(source)
     assert "private metadata" not in str(caught.value)
     assert "secret.mp4" not in str(caught.value)
     assert len(str(caught.value)) < 100
 
 
-def test_probe_wraps_missing_binary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("missing_tool", ["ffmpeg", "ffprobe"])
+def test_preflight_rejects_missing_binary_before_probe(
+    missing_tool: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = AcquiredSource(tmp_path / "video.mp4", "sha256-v1:abc")
+    calls: list[list[str]] = []
 
     def fake_run(
-        _command: list[str], **_kwargs: object
+        command: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
-        raise FileNotFoundError("ffprobe")
+        calls.append(command)
+        if command[0] == missing_tool:
+            raise FileNotFoundError(missing_tool)
+        return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
 
-    with pytest.raises(MediaError, match="Could not run ffprobe") as caught:
+    with pytest.raises(MediaError, match=f"{missing_tool} is unavailable") as caught:
         probe_media(source)
     assert isinstance(caught.value.__cause__, FileNotFoundError)
+    assert all("-version" in command for command in calls)
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (subprocess.CalledProcessError(7, ["ffmpeg", "-version"]), "exit code 7"),
+        (subprocess.TimeoutExpired(["ffmpeg", "-version"], 5), "timed out"),
+        (PermissionError("private executable path"), "Could not run ffmpeg"),
+    ],
+)
+def test_preflight_wraps_version_failures_without_sensitive_details(
+    failure: Exception,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(
+        _command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise failure
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
+
+    with pytest.raises(MediaError, match=message) as caught:
+        check_media_tools()
+    assert caught.value.__cause__ is failure
+    assert "private executable path" not in str(caught.value)
+
+
+def test_preflight_rejects_missing_audio_after_probe(
+    probe_payload: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = probe_payload["streams"]
+    assert isinstance(streams, list)
+    probe_payload["streams"] = streams[:1]
+    source = AcquiredSource(tmp_path / "silent.mp4", "sha256-v1:abc")
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(probe_payload), "")
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
+
+    with pytest.raises(MediaError, match="No usable audio stream"):
+        probe_media(source)
+
+    media = normalize_media_probe(probe_payload)
+    assert not media.has_audio
+    with pytest.raises(MediaError, match="No usable audio stream"):
+        validate_media_for_transcription(media)
+
+
+def test_probe_preserves_process_failure_cause_without_exposing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = AcquiredSource(tmp_path / "private-video.mp4", "sha256-v1:abc")
+    failure = PermissionError("private executable path")
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        raise failure
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
+
+    with pytest.raises(MediaError, match="Could not inspect media") as caught:
+        probe_media(source)
+    assert caught.value.__cause__ is failure
+    assert "private" not in str(caught.value)
 
 
 def test_probe_rejects_invalid_json(
@@ -227,6 +327,8 @@ def test_probe_rejects_invalid_json(
     def fake_run(
         command: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
         return subprocess.CompletedProcess(command, 0, "not-json", "")
 
     monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
