@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Package 002 Domain foundation |
 
@@ -57,6 +57,12 @@ pyright
 
 ## Risks and exclusions
 
+- The selected local fingerprint is `sha256-v1:<hex digest>` over complete file
+  contents, read in 1 MiB blocks. Equal bytes produce equal identities regardless
+  of path; changing this algorithm requires a new version prefix.
+- The source model carries the resolved local path and fingerprint. Do not copy
+  the absolute path into user-facing artifacts or logs; artifact-safe display
+  metadata belongs at the publication boundary.
 - Full content hashes can be expensive for long videos; chunked reading avoids
   excessive memory but does not remove I/O cost.
 - Metadata-only fingerprints risk stale cache hits and require explicit evidence
