@@ -5,6 +5,7 @@ import pytest
 from multicuts.cli import build_parser, main, parse_run_config
 from multicuts.config import RunConfig
 from multicuts.errors import ConfigurationError
+from multicuts.pipeline import PipelineNotReadyError
 
 
 def test_generate_defaults_are_converted_to_run_config() -> None:
@@ -152,6 +153,27 @@ def test_main_passes_one_validated_config_to_pipeline() -> None:
     assert received[0].clips == 2
 
 
-def test_main_does_not_claim_success_without_a_pipeline() -> None:
-    with pytest.raises(RuntimeError, match="Pipeline orchestration"):
+def test_main_uses_the_default_pipeline_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[RunConfig] = []
+
+    def fake_pipeline(config: RunConfig) -> None:
+        called.append(config)
+
+    monkeypatch.setattr("multicuts.cli.run_pipeline", fake_pipeline)
+
+    assert main(["generate", "source.mp4"]) == 0
+    assert called[0].source == "source.mp4"
+
+
+def test_main_surfaces_incomplete_default_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def incomplete_pipeline(_config: RunConfig) -> None:
+        raise PipelineNotReadyError("pipeline incomplete")
+
+    monkeypatch.setattr("multicuts.cli.run_pipeline", incomplete_pipeline)
+
+    with pytest.raises(PipelineNotReadyError, match="pipeline incomplete"):
         main(["generate", "source.mp4"])

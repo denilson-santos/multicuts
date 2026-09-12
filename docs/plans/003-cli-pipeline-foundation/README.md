@@ -59,8 +59,8 @@ logic into the console layer.
 
 | Task | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [001 Build CLI command surface](001-build-cli-command-surface.md) | in-progress | Package 002 | Documented command and options parse into `RunConfig` |
-| [002 Add pipeline orchestration boundary](002-add-pipeline-orchestration-boundary.md) | planned | 001 | One readable synchronous application entry point |
+| [001 Build CLI command surface](001-build-cli-command-surface.md) | completed | Package 002 | Documented command and options parse into `RunConfig` |
+| [002 Add pipeline orchestration boundary](002-add-pipeline-orchestration-boundary.md) | in-progress | 001 | One readable synchronous application entry point |
 | [003 Map errors and logging](003-map-errors-and-logging.md) | planned | 002 | Stable exit behavior and safe diagnostics |
 
 ## Completion criteria
