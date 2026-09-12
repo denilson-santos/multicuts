@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 005.001 Public API adapter; 005.002 Transcript normalization |
+| PR | — |
 
 ## Objective
 
@@ -59,6 +60,16 @@ pyright
 
 Run the integration command only in an environment provisioned with the model and
 media dependencies.
+
+## Implementation decisions
+
+- The fast contract test imports only the public `multisubs` package API and
+  verifies its consumed call signature and version. It skips when the provider
+  is not installed in the hermetic development environment.
+- A small v4.1.0-shaped JSON fixture exercises normalization without model
+  downloads. An opt-in integration test uses a short local speech video and the
+  public API to detect real output-schema changes; set
+  `MULTICUTS_MULTISUBS_CONTRACT_VIDEO` when the model is available.
 
 ## Risks and exclusions
 

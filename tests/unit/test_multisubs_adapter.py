@@ -1,5 +1,6 @@
 """Hermetic tests for the public multisubs transcription boundary."""
 
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -9,6 +10,11 @@ import pytest
 
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.errors import TranscriptionError
+from multicuts.models import Transcript, TranscriptSegment, Word
+
+TRANSCRIPT_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "multisubs_v4_1_transcript.json"
+)
 
 
 def _install_provider(
@@ -36,6 +42,134 @@ def _write_artifacts(
     srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
     ass_path.write_text("[Script Info]\n", encoding="utf-8")
     return str(json_path), str(srt_path), str(ass_path)
+
+
+def _transcribe_json(
+    json_text: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    language: str | None = None,
+) -> Transcript:
+    def generate(
+        _input_path: Path, output_dir: Path, **_kwargs: object
+    ) -> tuple[str, str, str]:
+        return _write_artifacts(output_dir, json_text=json_text)
+
+    _install_provider(monkeypatch, generate)
+    return MultisubsAdapter().transcribe(
+        tmp_path / "source.mp4",
+        language=language,
+        model="default",
+        workspace=tmp_path / "run",
+    )
+
+
+@pytest.mark.parametrize("requested_language", [None, "pt"])
+def test_normalizes_public_json_without_losing_timing_or_text(
+    requested_language: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = _transcribe_json(
+        TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"),
+        tmp_path,
+        monkeypatch,
+        language=requested_language,
+    )
+
+    assert transcript.language_requested == requested_language
+    assert transcript.language_detected == "pt"
+    assert transcript.duration == 2.0
+    assert transcript.text == "Olá mundo. 世界!"
+    assert transcript.segments == (
+        TranscriptSegment("Olá mundo.", 0.0, 1.0),
+        TranscriptSegment("世界!", 1.2, 2.0),
+    )
+    assert transcript.words == (
+        Word("Olá", 0.125, 0.475, 0.97),
+        Word("mundo.", 0.5, 1.0),
+        Word("世界!", None, None),
+    )
+    assert (transcript.provider, transcript.provider_version) == (
+        "multisubs",
+        "4.1.0",
+    )
+
+
+def test_missing_segment_timing_remains_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
+    segment = payload["transcription"]["segments"][1]
+    del segment["start"]
+    del segment["end"]
+
+    transcript = _transcribe_json(
+        json.dumps(payload, ensure_ascii=False), tmp_path, monkeypatch
+    )
+
+    assert transcript.segments[1] == TranscriptSegment("世界!", None, None)
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ("schema", "schema version"),
+        ("language", "detected language"),
+        ("duration", "duration"),
+        ("text", "transcription text"),
+        ("segments", "segments"),
+        ("segment_interval", "segment 0"),
+        ("partial_segment_interval", "segment 0 timing"),
+        ("word_interval", "word 0 timing"),
+        ("word_text", "word 0 text"),
+        ("word_score", "word 0 score"),
+    ],
+)
+def test_rejects_invalid_consumed_json_fields(
+    case: str,
+    expected: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
+    if case == "schema":
+        payload["schema_version"] = 4
+    elif case == "language":
+        payload["metadata"]["language"] = ""
+    elif case == "duration":
+        payload["metadata"]["duration"] = 0
+    elif case == "text":
+        payload["transcription"]["text"] = ""
+    elif case == "segments":
+        payload["transcription"]["segments"] = []
+    else:
+        segment = payload["transcription"]["segments"][0]
+        word = segment["words"][0]
+        if case == "segment_interval":
+            segment["end"] = -1
+        elif case == "partial_segment_interval":
+            del segment["end"]
+        elif case == "word_interval":
+            del word["end"]
+        elif case == "word_text":
+            word["word"] = ""
+        elif case == "word_score":
+            word["score"] = "high"
+
+    with pytest.raises(TranscriptionError, match=expected):
+        _transcribe_json(json.dumps(payload, ensure_ascii=False), tmp_path, monkeypatch)
+
+
+def test_non_finite_json_number_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
+    payload["metadata"]["duration"] = float("nan")
+
+    with pytest.raises(TranscriptionError, match="readable JSON transcript"):
+        _transcribe_json(json.dumps(payload), tmp_path, monkeypatch)
 
 
 def test_auto_language_and_default_model_use_public_api(
