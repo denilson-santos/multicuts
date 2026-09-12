@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M0 — Foundation |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 002 Domain foundation |
 | Unlocks | End-to-end orchestration integration for later packages |
-| PRs | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), — |
+| PRs | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), [#19](https://github.com/denilson-santos/multicuts/pull/19) |
 
 ## Objective and expected outcome
 
@@ -62,7 +62,7 @@ logic into the console layer.
 | --- | --- | --- | --- | --- |
 | [001 Build CLI command surface](001-build-cli-command-surface.md) | completed | Package 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13) | Documented command and options parse into `RunConfig` |
 | [002 Add pipeline orchestration boundary](002-add-pipeline-orchestration-boundary.md) | completed | 001 | [#14](https://github.com/denilson-santos/multicuts/pull/14) | One readable synchronous application entry point |
-| [003 Map errors and logging](003-map-errors-and-logging.md) | in-progress | 002 | — | Stable exit behavior and safe diagnostics |
+| [003 Map errors and logging](003-map-errors-and-logging.md) | completed | 002 | [#19](https://github.com/denilson-santos/multicuts/pull/19) | Stable exit behavior and safe diagnostics |
 
 ## Completion criteria
 
@@ -75,12 +75,11 @@ logic into the console layer.
 
 ## Risks, assumptions, and open questions
 
-- The PRD permits Typer or `argparse` but does not select one. Resolve this before
-  task 001 using dependency cost, Python support, and testability; do not add
-  Rich independently unless a concrete requirement justifies it.
+- The PRD permits Typer or `argparse`; task 001 selected `argparse` without an
+  additional CLI dependency.
 - Defaults for `--clips`, `--min-score`, scorer/model, output directory, and
-  subtitle template are not all fixed. Record any chosen defaults as explicit
-  implementation decisions.
+  subtitle template were recorded in task 001 and may need review when the
+  end-to-end pipeline is available.
 - Until downstream stages exist, tests should invoke the CLI with a substituted
   orchestration boundary. Production code must surface incomplete capability
   honestly rather than return a false success.
