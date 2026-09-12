@@ -8,7 +8,9 @@ version = "0.0.0"
 description = "Turn long-form videos into ranked, subtitled short clips."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
-dependencies = []
+dependencies = [
+    "multisubs @ https://github.com/denilson-santos/multisubs/releases/download/v4.1.0/multisubs-4.1.0-py3-none-any.whl#sha256=01dce5d0651fc37b1d3e633302d20919185b6f8e060d0d2163014321fcb81c3d",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Programming Language :: Python :: 3",

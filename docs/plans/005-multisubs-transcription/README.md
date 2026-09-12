@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 002 Domain foundation; 004 Local source and media |
 | Unlocks | 006 Transcript cache |
@@ -60,7 +60,7 @@ cross the adapter boundary.
 
 | Task | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [001 Implement public API adapter](001-implement-public-api-adapter.md) | planned | Packages 002, 004 | Isolated transcription call and error translation |
+| [001 Implement public API adapter](001-implement-public-api-adapter.md) | in-progress | Packages 002, 004 | Isolated transcription call and error translation |
 | [002 Normalize transcript artifacts](002-normalize-transcript-artifacts.md) | planned | 001 | Valid project-owned transcript with timing provenance |
 | [003 Add provider contract tests](003-add-provider-contract-tests.md) | planned | 001, 002 | Executable checks for supported public behavior/schema |
 
@@ -81,6 +81,9 @@ cross the adapter boundary.
   output. Fixtures may not assert undocumented fields as permanent contracts.
 - Early environments may pin `multisubs==4.1.0`, but the declared compatibility
   range remains `>=4.1,<5` and requires contract coverage.
+- The v4.1.0 distribution is currently a checksummed GitHub Release wheel, not
+  a package-index release; revisit the installation pin when distribution
+  changes.
 - The public API for ASS generation from an existing clip transcript remains a
   future dependency and does not block source transcription.
 - A detected language without a supported alignment model must surface the

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 002 Domain foundation |
 | Unlocks | 005 Multisubs transcription |
@@ -59,7 +59,7 @@ and incorrect assumptions about rotated presentation geometry.
 | --- | --- | --- | --- |
 | [001 Acquire and fingerprint local source](001-acquire-and-fingerprint-local-source.md) | completed | Package 002 | Validated immutable local source description |
 | [002 Probe media and normalize geometry](002-probe-media-and-normalize-geometry.md) | completed | 001 | Accurate `MediaInfo` from ffprobe data |
-| [003 Handle media preflight failures](003-handle-media-preflight-failures.md) | in-progress | 002 | Actionable early failures and integration coverage |
+| [003 Handle media preflight failures](003-handle-media-preflight-failures.md) | completed | 002 | Actionable early failures and integration coverage |
 
 ## Completion criteria
 

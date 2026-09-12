@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Packages 002 Domain foundation and 004 Local source and media |
 
@@ -56,6 +56,28 @@ ruff format --check .
 ruff check .
 pyright
 ```
+
+## Implementation decisions
+
+- The public `multisubs` v4.1.0 root exports `generate_transcriptions` and
+  `__version__`. The generator accepts `input_path`, `output_dir`, `lang`,
+  `task`, and `model_name`, and returns JSON, SRT, and ASS paths in that order.
+- `MultisubsAdapter.transcribe_to_artifact` keeps those provider paths inside
+  the adapter and returns only a project-owned JSON path and provenance value.
+  Task 005.002 will add the normalized `Transcript` return path.
+- The CLI's `model="default"` sentinel omits `model_name`, selecting the public
+  provider default. Explicit model names are forwarded unchanged.
+- The adapter uses a `multisubs/` subdirectory inside the supplied workspace,
+  verifies all three returned files, and requires a nonempty JSON object. Full
+  transcript-schema validation belongs to task 005.002.
+- `multisubs` is a runtime dependency, pinned temporarily to the official
+  v4.1.0 GitHub Release wheel and its published SHA-256 checksum because the
+  package is not available from the default Python package index. This is an
+  early-development installation pin within the documented `>=4.1,<5`
+  compatibility target; revisit it when a package-index release exists.
+- Hermetic CI installs the project without runtime providers and installs only
+  development tools; task 005.003 will add separate checks against the
+  installed provider contract.
 
 ## Risks and exclusions
 
