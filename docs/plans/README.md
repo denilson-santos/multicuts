@@ -43,7 +43,7 @@ completed and its package-level completion criteria pass.
 | [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | completed | P1 | 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), [#19](https://github.com/denilson-santos/multicuts/pull/19) | Documented command surface, readable orchestration boundary, logging, and exit handling |
 | [004 Local source and media](004-local-source-media/) | M1 | completed | P1 | 002 | [#11](https://github.com/denilson-santos/multicuts/pull/11), [#12](https://github.com/denilson-santos/multicuts/pull/12), [#15](https://github.com/denilson-santos/multicuts/pull/15) | Validated local input, stable source identity, and normalized media metadata |
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
-| [006 Transcript cache](006-transcript-cache/) | M1 | in-progress | P1 | 005 | — | Safely persisted and reusable normalized transcripts |
+| [006 Transcript cache](006-transcript-cache/) | M1 | in-progress | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
 
 ## Recommended execution order
 

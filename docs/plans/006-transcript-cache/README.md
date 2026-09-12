@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription |
 | Unlocks | Candidate generation and later pipeline stages |
-| PRs | — |
+| PRs | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective and expected outcome
 

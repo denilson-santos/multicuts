@@ -5,7 +5,7 @@
 | Status | in-progress |
 | Priority | P1 |
 | Depends on | 006.001 Create workspace and artifact paths |
-| PR | — |
+| PR | [#21](https://github.com/denilson-santos/multicuts/pull/21) |
 
 ## Objective
 
