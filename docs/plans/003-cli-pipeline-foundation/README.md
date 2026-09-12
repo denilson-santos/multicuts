@@ -7,6 +7,7 @@
 | Priority | P1 |
 | Depends on | 002 Domain foundation |
 | Unlocks | End-to-end orchestration integration for later packages |
+| PRs | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), — |
 
 ## Objective and expected outcome
 
@@ -57,11 +58,11 @@ logic into the console layer.
 
 ## Task index
 
-| Task | Status | Depends on | Outcome |
-| --- | --- | --- | --- |
-| [001 Build CLI command surface](001-build-cli-command-surface.md) | completed | Package 002 | Documented command and options parse into `RunConfig` |
-| [002 Add pipeline orchestration boundary](002-add-pipeline-orchestration-boundary.md) | completed | 001 | One readable synchronous application entry point |
-| [003 Map errors and logging](003-map-errors-and-logging.md) | planned | 002 | Stable exit behavior and safe diagnostics |
+| Task | Status | Depends on | PR | Outcome |
+| --- | --- | --- | --- | --- |
+| [001 Build CLI command surface](001-build-cli-command-surface.md) | completed | Package 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13) | Documented command and options parse into `RunConfig` |
+| [002 Add pipeline orchestration boundary](002-add-pipeline-orchestration-boundary.md) | completed | 001 | [#14](https://github.com/denilson-santos/multicuts/pull/14) | One readable synchronous application entry point |
+| [003 Map errors and logging](003-map-errors-and-logging.md) | in-progress | 002 | — | Stable exit behavior and safe diagnostics |
 
 ## Completion criteria
 

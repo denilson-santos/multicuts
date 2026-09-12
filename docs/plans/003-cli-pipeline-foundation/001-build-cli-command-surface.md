@@ -5,6 +5,7 @@
 | Status | completed |
 | Priority | P1 |
 | Depends on | Package 002 Domain foundation |
+| PR | [#13](https://github.com/denilson-santos/multicuts/pull/13) |
 
 ## Objective
 

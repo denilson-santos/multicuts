@@ -1,3 +1,5 @@
+import logging
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -75,3 +77,31 @@ def test_pipeline_propagates_media_errors_without_fabricating_completion(
 
     with pytest.raises(MediaError, match="media unavailable"):
         run_pipeline(config, acquire=acquire, probe=probe)
+
+
+def test_pipeline_logs_stage_and_safe_resource_context(
+    config: RunConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = replace(
+        config,
+        source="https://example.test/video.mp4?token=super-secret",
+    )
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
+
+    with caplog.at_level(logging.INFO, logger="multicuts.pipeline"):
+        with pytest.raises(PipelineNotReadyError):
+            run_pipeline(
+                config,
+                acquire=lambda _value: source,
+                probe=lambda _value: media,
+            )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("stage=acquire origin=remote" in message for message in messages)
+    assert any("stage=probe complete origin=remote" in message for message in messages)
+    assert all("example.test" not in message for message in messages)
+    assert all("video.mp4" not in message for message in messages)
+    assert all("source.mp4" not in message for message in messages)
+    assert all("super-secret" not in message for message in messages)
