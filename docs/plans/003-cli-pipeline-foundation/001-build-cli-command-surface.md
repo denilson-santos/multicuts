@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Package 002 Domain foundation |
 
@@ -42,6 +42,25 @@ acquisition boundary rather than deciding the provider inside the CLI.
 - Parsed values are not retained as a broad dictionary beyond the parser.
 - Configuration errors are passed to the error-mapping boundary.
 - Parsing does not access the network, filesystem media, FFmpeg, or models.
+
+## Implementation decisions
+
+- Use the Python standard-library `argparse` module to avoid adding a runtime
+  dependency for the initial command surface.
+- Default `--output-dir` to `multicuts-output`, `--clips` to `5`, `--min-score`
+  to `0`, and `--aspect-ratio` to `original`, matching the documented CLI
+  examples and avoiding an undocumented score filter.
+- Use the documented `yellow-pop` built-in as the initial subtitle-template
+  default and `heuristic` as the initial scorer name. The PRD lists
+  `yellow-pop` among the supported `multisubs` presentations.
+- Keep `default` as the model parser sentinel because the repository does not
+  document a provider model default. The transcription adapter must resolve
+  this before invoking `multisubs`, or the CLI default must become required
+  when that contract is implemented.
+- Keep the pipeline callback injectable so tests can verify the CLI boundary
+  without external tools. Invoking the installed command before the pipeline
+  task is complete raises an explicit runtime error instead of reporting a
+  successful no-op.
 
 ## Tests and validation
 
