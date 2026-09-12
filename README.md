@@ -38,6 +38,13 @@ python --version
 python -m pip install --editable ".[dev]"
 ```
 
+The runtime dependency on `multisubs` currently installs its v4.1.0 wheel from
+the official GitHub Release with a pinned SHA-256 checksum; it is not available
+from the default Python package index. A full install also resolves the
+provider's Torch/WhisperX dependencies. The hermetic CI checks install the
+project without runtime dependencies and install development tools separately;
+real transcription requires the full installation above.
+
 Run the local quality and build checks from the activated environment:
 
 ```bash

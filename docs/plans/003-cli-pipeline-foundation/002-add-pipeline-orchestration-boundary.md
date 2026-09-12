@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 003.001 Build the CLI command surface |
 
