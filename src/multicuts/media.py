@@ -8,8 +8,39 @@ from multicuts.errors import MediaError
 from multicuts.models import AcquiredSource, MediaInfo
 
 
+def check_media_tools() -> None:
+    """Verify that both runtime media tools can start before probing a source."""
+    for tool in ("ffmpeg", "ffprobe"):
+        try:
+            subprocess.run(
+                [tool, "-version"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=5,
+            )
+        except FileNotFoundError as exc:
+            raise MediaError(
+                f"{tool} is unavailable; install FFmpeg and add it to PATH"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise MediaError(
+                f"{tool} version check timed out; check the FFmpeg installation"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            raise MediaError(
+                f"{tool} version check failed (exit code {exc.returncode}); "
+                "check the FFmpeg installation"
+            ) from exc
+        except OSError as exc:
+            raise MediaError(
+                f"Could not run {tool}; check the FFmpeg installation and PATH"
+            ) from exc
+
+
 def probe_media(source: AcquiredSource) -> MediaInfo:
     """Inspect a local source with ffprobe and return project-owned metadata."""
+    check_media_tools()
     command = [
         "ffprobe",
         "-v",
@@ -30,16 +61,30 @@ def probe_media(source: AcquiredSource) -> MediaInfo:
             check=False,
         )
     except OSError as exc:
-        raise MediaError("Could not run ffprobe") from exc
+        raise MediaError(
+            "Could not inspect media with ffprobe; "
+            "check the installation and source permissions"
+        ) from exc
 
     if result.returncode != 0:
         # Provider diagnostics may contain user paths or metadata.
-        raise MediaError(f"ffprobe failed (exit code {result.returncode})")
+        raise MediaError(
+            f"Could not inspect media with ffprobe (exit code {result.returncode}); "
+            "check that the source is a supported video"
+        )
     try:
         payload: object = json.loads(result.stdout)
     except ValueError as exc:
         raise MediaError("ffprobe returned invalid JSON") from exc
-    return normalize_media_probe(payload)
+    media = normalize_media_probe(payload)
+    validate_media_for_transcription(media)
+    return media
+
+
+def validate_media_for_transcription(media: MediaInfo) -> None:
+    """Reject normalized media that cannot provide audio for transcription."""
+    if not media.has_audio:
+        raise MediaError("No usable audio stream found; source cannot be transcribed")
 
 
 def normalize_media_probe(payload: object) -> MediaInfo:
