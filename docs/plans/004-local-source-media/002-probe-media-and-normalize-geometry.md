@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 004.001 Acquire and fingerprint local source |
 
@@ -61,6 +61,13 @@ available; the unit suite must remain independent of them.
 
 ## Risks and exclusions
 
+- Duration comes from the container format. A video stream is selected only when
+  it has positive frame dimensions and is not attached cover art. An audio stream
+  requires positive channels and sample rate; package task 004.003 decides when
+  missing audio fails the run.
+- Missing or `N/A` sample aspect ratio is treated as square pixels. Non-quarter-
+  turn display rotation is rejected until its presentation geometry is verified
+  with real fixtures; silently guessing would misplace subtitles later.
 - Containers expose rotation through different metadata locations; fixtures must
   cover the supported interpretations.
 - Do not assume the first video/audio stream is usable without explicit checks.
