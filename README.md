@@ -159,7 +159,7 @@ The commands below describe the intended UX and may still change during implemen
 ### Local video
 
 ```bash
-multicuts generate ./podcast.mp4 \
+multicuts ./podcast.mp4 \
   --lang pt \
   --clips 5
 ```
@@ -167,14 +167,14 @@ multicuts generate ./podcast.mp4 \
 ### Automatic language detection
 
 ```bash
-multicuts generate ./podcast.mp4 \
+multicuts ./podcast.mp4 \
   --clips 5
 ```
 
 ### YouTube
 
 ```bash
-multicuts generate "https://www.youtube.com/watch?v=..." \
+multicuts "https://www.youtube.com/watch?v=..." \
   --lang pt \
   --clips 8 \
   --min-score 65
@@ -183,14 +183,14 @@ multicuts generate "https://www.youtube.com/watch?v=..." \
 ### Keep the original aspect ratio
 
 ```bash
-multicuts generate ./interview.mp4 \
+multicuts ./interview.mp4 \
   --aspect-ratio original
 ```
 
 ### Vertical output with a `multisubs` template
 
 ```bash
-multicuts generate ./interview.mp4 \
+multicuts ./interview.mp4 \
   --aspect-ratio 9:16 \
   --subtitle-template yellow-pop
 ```
@@ -198,7 +198,7 @@ multicuts generate ./interview.mp4 \
 ### Custom subtitle template directory
 
 ```bash
-multicuts generate ./interview.mp4 \
+multicuts ./interview.mp4 \
   --subtitle-template my-brand \
   --subtitle-template-dir ./templates
 ```
