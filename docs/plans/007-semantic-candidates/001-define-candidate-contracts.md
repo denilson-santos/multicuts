@@ -5,7 +5,7 @@
 | Status | in-progress |
 | Priority | P1 |
 | Depends on | Package 006 Transcript cache |
-| PR | — |
+| PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |
 
 ## Objective
 
