@@ -60,5 +60,6 @@ pyright
 ## Implementation decision
 
 Version `1` closes units on terminal punctuation or a measured pause of at least
-`0.75` seconds. It prefers timed normalized segments, falls back to timed words
-only when no segment is timed, merges overlaps, and excludes untimed content.
+`0.75` seconds. It prefers timed normalized segments and falls back to timed
+words when those segments cannot produce any duration-valid candidate. It merges
+overlaps and excludes untimed content.

@@ -58,7 +58,10 @@ pyright
 
 ## Implementation decision
 
-Version `1` enumerates only contiguous semantic-unit windows and stops extending
-a start position after `max_duration`. Complete unit boundaries provide the
-natural expansion, so no separate timestamp padding is added. Preferred-range
-windows sort by distance from 35 seconds, then source interval and candidate ID.
+Version `1` considers every semantic-unit start but selects at most one nearest
+endpoint for each of the configured minimum, preferred 25/35/45-second targets,
+and configured maximum. This emits at most five windows per unit start instead
+of enumerating every contiguous combination. Complete unit boundaries provide
+the natural expansion, so no separate timestamp padding is added. Preferred-
+range windows sort by distance from 35 seconds, then source interval and
+candidate ID. The candidate budget sent to semantic scoring remains package 008.

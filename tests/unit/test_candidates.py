@@ -246,6 +246,25 @@ def test_candidate_windows_include_exact_minimum_and_maximum() -> None:
     assert (0.0, 60.0) in intervals
 
 
+def test_candidate_windows_bound_endpoints_per_start_for_dense_units() -> None:
+    units = tuple(
+        SemanticUnit(f"Unit {index}.", index * 0.01, (index + 1) * 0.01)
+        for index in range(1000)
+    )
+
+    candidates = generate_candidate_windows(
+        units,
+        source_fingerprint="sha256-v1:abc",
+        min_duration=0.1,
+        max_duration=1.0,
+    )
+
+    assert 0 < len(candidates) <= 5 * len(units)
+    assert all(
+        0.1 <= candidate.end - candidate.start <= 1.0 for candidate in candidates
+    )
+
+
 def test_repeated_text_at_different_intervals_has_distinct_identity() -> None:
     candidates = generate_candidate_windows(
         (
@@ -306,6 +325,28 @@ def test_generate_candidates_returns_empty_for_short_timed_transcript() -> None:
         )
         == ()
     )
+
+
+def test_generate_candidates_uses_words_when_timed_segments_yield_no_windows() -> None:
+    transcript = _transcript(
+        duration=60.0,
+        segments=(TranscriptSegment("One coarse segment.", 0.0, 60.0),),
+        words=tuple(
+            Word(f"word{index}", index * 0.4, index * 0.4 + 0.3) for index in range(40)
+        ),
+    )
+
+    candidates = generate_candidates(
+        transcript,
+        source_fingerprint="sha256-v1:abc",
+        min_duration=10.0,
+        max_duration=30.0,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].start == 0.0
+    assert candidates[0].end == pytest.approx(15.9)
+    assert candidates[0].text.startswith("word0 word1")
 
 
 def test_models_reject_invalid_candidate_relationships() -> None:

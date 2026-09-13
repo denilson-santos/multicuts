@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_left
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isfinite
@@ -176,6 +177,50 @@ def _candidate_preference(
     )
 
 
+def _candidate_end_indexes(
+    unit_ends: Sequence[float],
+    *,
+    start_index: int,
+    start: float,
+    min_duration: float,
+    max_duration: float,
+) -> tuple[int, ...]:
+    preferred_targets = (
+        min_duration,
+        PREFERRED_DURATION_MIN_SECONDS,
+        _PREFERRED_DURATION_MIDPOINT_SECONDS,
+        PREFERRED_DURATION_MAX_SECONDS,
+        max_duration,
+    )
+    targets = {
+        min(max_duration, max(min_duration, target)) for target in preferred_targets
+    }
+    selected: set[int] = set()
+    for target in sorted(targets):
+        insertion_index = bisect_left(unit_ends, start + target, lo=start_index)
+        possible_indexes = (
+            insertion_index - 1,
+            insertion_index,
+        )
+        valid_indexes = [
+            index
+            for index in possible_indexes
+            if start_index <= index < len(unit_ends)
+            and min_duration <= unit_ends[index] - start <= max_duration
+        ]
+        if valid_indexes:
+            selected.add(
+                min(
+                    valid_indexes,
+                    key=lambda index: (
+                        abs((unit_ends[index] - start) - target),
+                        unit_ends[index],
+                    ),
+                )
+            )
+    return tuple(sorted(selected))
+
+
 def generate_candidate_windows(
     units: Sequence[SemanticUnit],
     *,
@@ -194,22 +239,22 @@ def generate_candidate_windows(
 
     candidates: list[Candidate] = []
     seen_intervals: set[tuple[str, str]] = set()
+    unit_ends = tuple(unit.end for unit in units)
     for start_index, first in enumerate(units):
-        texts: list[str] = []
-        indexes: list[int] = []
-        for end_index in range(start_index, len(units)):
+        end_indexes = _candidate_end_indexes(
+            unit_ends,
+            start_index=start_index,
+            start=first.start,
+            min_duration=min_duration,
+            max_duration=max_duration,
+        )
+        for end_index in end_indexes:
             last = units[end_index]
-            texts.append(last.text)
-            indexes.append(end_index)
-            duration = last.end - first.start
-            if duration > max_duration:
-                break
-            if duration < min_duration:
-                continue
             interval_key = (first.start.hex(), last.end.hex())
             if interval_key in seen_intervals:
                 continue
             seen_intervals.add(interval_key)
+            window_units = units[start_index : end_index + 1]
             candidates.append(
                 Candidate(
                     candidate_id=candidate_id(
@@ -220,8 +265,8 @@ def generate_candidate_windows(
                     ),
                     start=first.start,
                     end=last.end,
-                    text=_join_text(texts),
-                    unit_indexes=tuple(indexes),
+                    text=_join_text(tuple(unit.text for unit in window_units)),
+                    unit_indexes=tuple(range(start_index, end_index + 1)),
                     generator_version=generator_version,
                 )
             )
@@ -237,13 +282,40 @@ def generate_candidates(
     max_duration: float,
 ) -> tuple[Candidate, ...]:
     """Build semantic units and return bounded candidates for one source."""
-    units = build_semantic_units(transcript)
-    candidates = generate_candidate_windows(
-        units,
-        source_fingerprint=source_fingerprint,
-        min_duration=min_duration,
-        max_duration=max_duration,
-    )
+    segment_items = _timed_segment_items(transcript)
+    if segment_items:
+        units = _semantic_units_from_items(
+            segment_items, pause_threshold=SEMANTIC_PAUSE_THRESHOLD_SECONDS
+        )
+        candidates = generate_candidate_windows(
+            units,
+            source_fingerprint=source_fingerprint,
+            min_duration=min_duration,
+            max_duration=max_duration,
+        )
+        if not candidates:
+            word_items = _timed_word_items(transcript)
+            if word_items:
+                word_units = _semantic_units_from_items(
+                    word_items, pause_threshold=SEMANTIC_PAUSE_THRESHOLD_SECONDS
+                )
+                candidates = generate_candidate_windows(
+                    word_units,
+                    source_fingerprint=source_fingerprint,
+                    min_duration=min_duration,
+                    max_duration=max_duration,
+                )
+    else:
+        units = _semantic_units_from_items(
+            _timed_word_items(transcript),
+            pause_threshold=SEMANTIC_PAUSE_THRESHOLD_SECONDS,
+        )
+        candidates = generate_candidate_windows(
+            units,
+            source_fingerprint=source_fingerprint,
+            min_duration=min_duration,
+            max_duration=max_duration,
+        )
     if any(candidate.end > transcript.duration for candidate in candidates):
         raise ValueError("candidate interval exceeds transcript duration")
     return candidates

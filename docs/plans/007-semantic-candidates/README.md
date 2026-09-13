@@ -111,9 +111,9 @@ candidates while the algorithm is incomplete.
 - Candidate generation version `1` uses `0.75` seconds as the measured-pause
   boundary. Terminal `.`, `!`, `?`, `。`, `！`, `？`, and `…` punctuation also
   closes a unit when the following timed text does not overlap it.
-- Timed normalized segments are authoritative whenever any are available. Timed
-  words are used only when no segment is timed; untimed content is excluded
-  rather than assigned inferred timestamps.
+- Timed normalized segments are preferred. If they produce no window within the
+  configured duration limits, the generator retries with timed words. Untimed
+  content is excluded rather than assigned inferred timestamps.
 - Overlapping consecutive timed items are merged into one semantic unit so the
   emitted units remain ordered and non-overlapping. Decreasing source timestamps
   and intervals beyond transcript duration are rejected.
@@ -121,6 +121,8 @@ candidates while the algorithm is incomplete.
   representations, and generator version. The public ID exposes only the
   versioned digest.
 - Windows contain complete adjacent semantic units, so version `1` adds no
-  artificial padding. Candidates in the documented 25–45 second preferred range
-  sort first, followed by distance from its 35-second midpoint and stable source
-  order.
+  artificial padding. For each unit start, it selects at most one endpoint near
+  the configured minimum, preferred 25/35/45-second targets, and configured
+  maximum, yielding at most five windows per unit start. Candidates in the
+  documented 25–45 second preferred range sort first, followed by distance from
+  its 35-second midpoint and stable source order.
