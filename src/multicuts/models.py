@@ -1,4 +1,4 @@
-"""Project-owned values shared by source, media, and transcription stages."""
+"""Project-owned values shared across the synchronous pipeline."""
 
 from dataclasses import dataclass
 from math import isfinite
@@ -117,3 +117,47 @@ class Transcript:
             raise ValueError("transcript provider and version must not be empty")
         if not isinstance(self.segments, tuple) or not isinstance(self.words, tuple):
             raise ValueError("transcript segments and words must be tuples")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticUnit:
+    """One timed transcript unit bounded by observed source timestamps."""
+
+    text: str
+    start: float
+    end: float
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("semantic unit text must not be empty")
+        _validate_interval(self.start, self.end)
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """A contiguous semantic-unit window proposed for later evaluation."""
+
+    candidate_id: str
+    start: float
+    end: float
+    text: str
+    unit_indexes: tuple[int, ...]
+    generator_version: str
+
+    def __post_init__(self) -> None:
+        if not self.candidate_id.strip():
+            raise ValueError("candidate ID must not be empty")
+        if not self.text.strip():
+            raise ValueError("candidate text must not be empty")
+        if not self.generator_version.strip():
+            raise ValueError("candidate generator version must not be empty")
+        _validate_interval(self.start, self.end)
+        if not isinstance(self.unit_indexes, tuple) or not self.unit_indexes:
+            raise ValueError("candidate unit indexes must be a nonempty tuple")
+        if any(type(index) is not int or index < 0 for index in self.unit_indexes):
+            raise ValueError("candidate unit indexes must be non-negative integers")
+        expected = tuple(
+            range(self.unit_indexes[0], self.unit_indexes[0] + len(self.unit_indexes))
+        )
+        if self.unit_indexes != expected:
+            raise ValueError("candidate unit indexes must be contiguous")

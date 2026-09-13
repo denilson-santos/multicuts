@@ -14,11 +14,12 @@ from multicuts.artifacts import (
     transcription_cache_key,
     write_transcript,
 )
+from multicuts.candidates.generator import generate_candidates
 from multicuts.config import RunConfig
 from multicuts.errors import TranscriptionError
 from multicuts.local_source import acquire_local_source
 from multicuts.media import probe_media
-from multicuts.models import AcquiredSource, MediaInfo, Transcript
+from multicuts.models import AcquiredSource, Candidate, MediaInfo, Transcript
 
 AcquireSource = Callable[[str], AcquiredSource]
 ProbeMedia = Callable[[AcquiredSource], MediaInfo]
@@ -42,8 +43,21 @@ class TranscriptionProvider(Protocol):
     ) -> Transcript: ...
 
 
+class CandidateGenerator(Protocol):
+    """The substitutable pure candidate-generation boundary."""
+
+    def __call__(
+        self,
+        transcript: Transcript,
+        *,
+        source_fingerprint: str,
+        min_duration: float,
+        max_duration: float,
+    ) -> tuple[Candidate, ...]: ...
+
+
 class PipelineNotReadyError(RuntimeError):
-    """Raised while downstream candidate generation and publication are unavailable."""
+    """Raised while downstream candidate evaluation/publication is unavailable."""
 
 
 def _source_origin(source: str) -> str:
@@ -112,12 +126,13 @@ def run_pipeline(
     acquire: AcquireSource = acquire_local_source,
     probe: ProbeMedia = probe_media,
     transcriber: TranscriptionProvider | None = None,
+    candidate_generator: CandidateGenerator = generate_candidates,
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after persisting source transcription until
-    candidate generation and artifact publication are available. Raising here
-    prevents the CLI from reporting a completed run for a partial pipeline.
+    The pipeline deliberately stops after generating candidates until candidate
+    evaluation and artifact publication are available. Raising here prevents
+    the CLI from reporting a completed run for a partial pipeline.
     """
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
@@ -132,12 +147,20 @@ def run_pipeline(
         media.presentation_width,
         media.presentation_height,
     )
-    load_or_transcribe(
+    transcript = load_or_transcribe(
         config,
         source,
         provider=transcriber if transcriber is not None else MultisubsAdapter(),
     )
+    logger.info("stage=candidates")
+    candidates = candidate_generator(
+        transcript,
+        source_fingerprint=source.fingerprint,
+        min_duration=config.min_duration,
+        max_duration=config.max_duration,
+    )
+    logger.info("stage=candidates complete count=%d", len(candidates))
     raise PipelineNotReadyError(
-        "Pipeline stops after transcription until candidate generation and "
-        "artifact publication are implemented"
+        "Pipeline stops after candidate generation until candidate evaluation "
+        "and artifact publication are implemented"
     )

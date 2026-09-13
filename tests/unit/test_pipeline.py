@@ -13,6 +13,7 @@ from multicuts.errors import (
 )
 from multicuts.models import (
     AcquiredSource,
+    Candidate,
     MediaInfo,
     Transcript,
     TranscriptSegment,
@@ -86,11 +87,39 @@ def test_pipeline_runs_acquisition_before_media_probe(
         events.append(("probe", value))
         return media
 
-    transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after transcription"):
-        run_pipeline(config, acquire=acquire, probe=probe, transcriber=transcriber)
+    def generate(
+        transcript: Transcript,
+        *,
+        source_fingerprint: str,
+        min_duration: float,
+        max_duration: float,
+    ) -> tuple[Candidate, ...]:
+        events.append(
+            (
+                "generate",
+                (transcript, source_fingerprint, min_duration, max_duration),
+            )
+        )
+        return ()
 
-    assert events == [("acquire", "source.mp4"), ("probe", source)]
+    transcriber = FakeTranscriber(transcript)
+    with pytest.raises(PipelineNotReadyError, match="after candidate generation"):
+        run_pipeline(
+            config,
+            acquire=acquire,
+            probe=probe,
+            transcriber=transcriber,
+            candidate_generator=generate,
+        )
+
+    assert events == [
+        ("acquire", "source.mp4"),
+        ("probe", source),
+        (
+            "generate",
+            (transcript, source.fingerprint, config.min_duration, config.max_duration),
+        ),
+    ]
     assert len(transcriber.calls) == 1
     assert transcriber.calls[0][:3] == (source.local_path, None, "default")
     assert (config.output_dir).is_dir()
@@ -155,6 +184,7 @@ def test_pipeline_logs_stage_and_safe_resource_context(
     assert any("stage=acquire origin=remote" in message for message in messages)
     assert any("stage=probe complete origin=remote" in message for message in messages)
     assert any("stage=transcribe cache=miss" in message for message in messages)
+    assert any("stage=candidates complete count=0" in message for message in messages)
     assert all("example.test" not in message for message in messages)
     assert all("video.mp4" not in message for message in messages)
     assert all("source.mp4" not in message for message in messages)
@@ -167,6 +197,17 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
     transcriber = FakeTranscriber(transcript)
+    generated: list[Transcript] = []
+
+    def generate(
+        transcript: Transcript,
+        *,
+        source_fingerprint: str,
+        min_duration: float,
+        max_duration: float,
+    ) -> tuple[Candidate, ...]:
+        generated.append(transcript)
+        return ()
 
     for _ in range(2):
         with pytest.raises(PipelineNotReadyError):
@@ -175,10 +216,37 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
                 acquire=lambda _value: source,
                 probe=lambda _value: media,
                 transcriber=transcriber,
+                candidate_generator=generate,
             )
 
     assert len(transcriber.calls) == 1
+    assert generated == [transcript, transcript]
     assert list(config.output_dir.rglob("transcript.json"))
+
+
+def test_pipeline_propagates_candidate_generation_errors(
+    config: RunConfig, transcript: Transcript
+) -> None:
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
+
+    def generate(
+        transcript: Transcript,
+        *,
+        source_fingerprint: str,
+        min_duration: float,
+        max_duration: float,
+    ) -> tuple[Candidate, ...]:
+        raise ValueError("candidate generation failed")
+
+    with pytest.raises(ValueError, match="candidate generation failed"):
+        run_pipeline(
+            config,
+            acquire=lambda _value: source,
+            probe=lambda _value: media,
+            transcriber=FakeTranscriber(transcript),
+            candidate_generator=generate,
+        )
 
 
 def test_pipeline_reuses_same_content_after_source_rename(

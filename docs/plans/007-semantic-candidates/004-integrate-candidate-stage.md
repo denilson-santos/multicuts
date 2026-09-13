@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 007.003 Generate bounded candidate windows |
-| PR | — |
+| PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |
 
 ## Objective
 
@@ -55,3 +55,9 @@ pyright
   small protocol is sufficient for orchestration tests.
 - Persistent candidate metadata is introduced with the checklist stage, where
   FR-FLT-003 traceability can be represented coherently.
+
+## Implementation decision
+
+The pipeline accepts a small callable candidate boundary for tests and invokes
+the production pure generator after `load_or_transcribe`. It logs only the
+candidate count and raises `PipelineNotReadyError` at the package 008 handoff.

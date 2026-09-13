@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 007.001 Define candidate contracts and identity |
-| PR | — |
+| PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |
 
 ## Objective
 
@@ -56,3 +56,10 @@ pyright
 - Language-specific NLP libraries and semantic topic models are out of scope.
 - The first heuristic will be imperfect on transcripts with sparse punctuation;
   fixtures should establish behavior without claiming linguistic completeness.
+
+## Implementation decision
+
+Version `1` closes units on terminal punctuation or a measured pause of at least
+`0.75` seconds. It prefers timed normalized segments and falls back to timed
+words when those segments cannot produce any duration-valid candidate. It merges
+overlaps and excludes untimed content.
