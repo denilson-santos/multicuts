@@ -18,7 +18,7 @@ from multicuts.pipeline import PipelineNotReadyError
 
 
 def test_generate_defaults_are_converted_to_run_config() -> None:
-    config = parse_run_config(["generate", "missing-video.mp4"])
+    config = parse_run_config(["missing-video.mp4"])
 
     assert config.source == "missing-video.mp4"
     assert config.output_dir == Path("multicuts-output")
@@ -41,7 +41,6 @@ def test_generate_maps_explicit_options_without_accessing_source(
 
     config = parse_run_config(
         [
-            "generate",
             "https://example.test/video",
             "--output-dir",
             "~/runs",
@@ -87,9 +86,7 @@ def test_generate_maps_explicit_options_without_accessing_source(
 
 
 def test_auto_language_is_normalized_by_run_config() -> None:
-    assert (
-        parse_run_config(["generate", "source.mp4", "--lang", "auto"]).language is None
-    )
+    assert parse_run_config(["source.mp4", "--lang", "auto"]).language is None
 
 
 @pytest.mark.parametrize(
@@ -104,7 +101,7 @@ def test_semantic_cli_errors_reach_run_config_validation(
     option: str, value: str, message: str
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
-        parse_run_config(["generate", "source.mp4", option, value])
+        parse_run_config(["source.mp4", option, value])
 
 
 def test_custom_template_directory_is_validated_by_run_config(
@@ -113,7 +110,6 @@ def test_custom_template_directory_is_validated_by_run_config(
     with pytest.raises(ConfigurationError, match="subtitle_template_dir"):
         parse_run_config(
             [
-                "generate",
                 "source.mp4",
                 "--subtitle-template-dir",
                 str(tmp_path / "missing-templates"),
@@ -125,10 +121,13 @@ def test_help_exposes_the_documented_options_and_score_semantics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as raised:
-        build_parser().parse_args(["generate", "--help"])
+        build_parser().parse_args(["--help"])
 
     assert raised.value.code == 0
     help_text = capsys.readouterr().out
+    assert "usage: multicuts" in help_text
+    assert "SOURCE" in help_text
+    assert "{generate}" not in help_text
     for option in (
         "--output-dir",
         "--lang",
@@ -149,13 +148,20 @@ def test_help_exposes_the_documented_options_and_score_semantics(
     assert "ranking heuristic, not a probability" in help_text
 
 
+def test_removed_generate_subcommand_is_rejected() -> None:
+    with pytest.raises(SystemExit) as raised:
+        parse_run_config(["generate", "source.mp4"])
+
+    assert raised.value.code == 2
+
+
 def test_main_passes_one_validated_config_to_pipeline() -> None:
     received: list[RunConfig] = []
 
     def fake_pipeline(config: RunConfig) -> None:
         received.append(config)
 
-    exit_code = main(["generate", "source.mp4", "--clips", "2"], pipeline=fake_pipeline)
+    exit_code = main(["source.mp4", "--clips", "2"], pipeline=fake_pipeline)
 
     assert exit_code == 0
     assert len(received) == 1
@@ -172,7 +178,7 @@ def test_main_uses_the_default_pipeline_boundary(
 
     monkeypatch.setattr("multicuts.cli.run_pipeline", fake_pipeline)
 
-    assert main(["generate", "source.mp4"]) == 0
+    assert main(["source.mp4"]) == 0
     assert called[0].source == "source.mp4"
 
 
@@ -185,7 +191,7 @@ def test_main_maps_incomplete_pipeline_to_unexpected_failure(
 
     monkeypatch.setattr("multicuts.cli.run_pipeline", incomplete_pipeline)
 
-    assert main(["generate", "source.mp4"]) == 1
+    assert main(["source.mp4"]) == 1
     output = capsys.readouterr().err
     assert "Unexpected failure; no diagnostic details are available" in output
     assert "pipeline incomplete" not in output
@@ -217,7 +223,7 @@ def test_main_maps_project_errors_to_documented_exit_codes(
     def failing_pipeline(_config: RunConfig) -> None:
         raise error
 
-    assert main(["generate", "source.mp4"], pipeline=failing_pipeline) == expected_exit
+    assert main(["source.mp4"], pipeline=failing_pipeline) == expected_exit
     output = capsys.readouterr().err
     assert f"{label}: {error}" in output
     assert "Traceback" not in output
@@ -234,7 +240,7 @@ def test_main_reports_semantic_configuration_errors_without_running_pipeline(
 
     assert (
         main(
-            ["generate", "source.mp4", "--clips", "0"],
+            ["source.mp4", "--clips", "0"],
             pipeline=failing_pipeline,
         )
         == 2
@@ -253,7 +259,7 @@ def test_main_verbose_diagnostics_include_safe_failure_metadata(
 
     assert (
         main(
-            ["generate", "https://example.test/video?token=super-secret", "--verbose"],
+            ["https://example.test/video?token=super-secret", "--verbose"],
             pipeline=failing_pipeline,
         )
         == 3
@@ -275,7 +281,7 @@ def test_main_unexpected_failure_uses_only_generic_and_typed_diagnostics(
 
     assert (
         main(
-            ["generate", "source.mp4", "--verbose"],
+            ["source.mp4", "--verbose"],
             pipeline=failing_pipeline,
         )
         == 1
@@ -294,7 +300,7 @@ def test_main_returns_clean_interruption_exit_without_success_summary(
     def interrupt_pipeline(_config: RunConfig) -> None:
         raise KeyboardInterrupt
 
-    assert main(["generate", "source.mp4"], pipeline=interrupt_pipeline) == 130
+    assert main(["source.mp4"], pipeline=interrupt_pipeline) == 130
     output = capsys.readouterr().err
     assert "Run interrupted" in output
     assert "completion summary" in output

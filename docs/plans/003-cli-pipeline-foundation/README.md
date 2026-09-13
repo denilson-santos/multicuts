@@ -11,7 +11,7 @@
 
 ## Objective and expected outcome
 
-Expose the documented `multicuts generate SOURCE` command, translate its inputs
+Expose the documented `multicuts SOURCE` command, translate its inputs
 into `RunConfig`, and establish a readable synchronous pipeline boundary with
 consistent logging and exit codes. The command must not report success for
 stages that have not yet been implemented.
@@ -66,7 +66,7 @@ logic into the console layer.
 
 ## Completion criteria
 
-- `multicuts generate SOURCE --help` exposes every minimum MVP option.
+- `multicuts SOURCE --help` exposes every minimum MVP option.
 - CLI values are normalized once into `RunConfig` and are not passed around as
   an untyped dictionary.
 - Pipeline orchestration contains no provider details or product algorithms.

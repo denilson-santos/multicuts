@@ -182,7 +182,7 @@ The source should be transcribed once per relevant transcription configuration, 
 ```text
 User
  |
- | multicuts generate SOURCE
+ | multicuts SOURCE
  v
 Validate configuration
  |
@@ -240,7 +240,7 @@ Done
 The CLI must provide:
 
 ```bash
-multicuts generate SOURCE
+multicuts SOURCE
 ```
 
 `SOURCE` may be:
@@ -1427,7 +1427,7 @@ CI contract tests should verify:
 Example:
 
 ```text
-$ multicuts generate ./podcast.mp4 --lang pt --clips 3
+$ multicuts ./podcast.mp4 --lang pt --clips 3
 
 Source
   podcast.mp4
@@ -1467,7 +1467,7 @@ Errors should communicate:
 
 ### AC-001 — Local source
 
-Given a valid local video, when the user runs `multicuts generate`, the pipeline produces a manifest and at least one clip when a candidate satisfies the configured threshold.
+Given a valid local video, when the user runs `multicuts SOURCE`, the pipeline produces a manifest and at least one clip when a candidate satisfies the configured threshold.
 
 ### AC-002 — YouTube source
 

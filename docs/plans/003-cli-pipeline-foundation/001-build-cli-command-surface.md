@@ -9,7 +9,7 @@
 
 ## Objective
 
-Expose `multicuts generate SOURCE` with the complete minimum option surface and
+Expose `multicuts SOURCE` with the complete minimum option surface and
 convert parsed values into a validated `RunConfig`.
 
 ## Context and inputs
@@ -38,7 +38,7 @@ acquisition boundary rather than deciding the provider inside the CLI.
 
 ## Acceptance criteria
 
-- Installed users can run `multicuts generate SOURCE`.
+- Installed users can run `multicuts SOURCE`.
 - Help exposes every option required by FR-CLI-002.
 - Parsed values are not retained as a broad dictionary beyond the parser.
 - Configuration errors are passed to the error-mapping boundary.
