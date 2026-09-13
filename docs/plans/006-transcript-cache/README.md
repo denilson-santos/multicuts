@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription |
 | Unlocks | Candidate generation and later pipeline stages |
@@ -59,9 +59,9 @@ than a database or generic caching service.
 
 | Task | Status | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- |
-| [001 Create workspace and artifact paths](001-create-workspace-and-artifact-paths.md) | in-progress | Package 005 | — | Explicit controlled locations for source/transcript artifacts |
-| [002 Persist transcripts safely](002-persist-transcripts-safely.md) | in-progress | 001 | — | Round-trippable, atomically published transcript JSON |
-| [003 Key and reuse transcription cache](003-key-and-reuse-transcription-cache.md) | in-progress | 002 | — | Correct cache reuse and invalidation without repeated ASR |
+| [001 Create workspace and artifact paths](001-create-workspace-and-artifact-paths.md) | completed | Package 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Explicit controlled locations for source/transcript artifacts |
+| [002 Persist transcripts safely](002-persist-transcripts-safely.md) | completed | 001 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Round-trippable, atomically published transcript JSON |
+| [003 Key and reuse transcription cache](003-key-and-reuse-transcription-cache.md) | completed | 002 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Correct cache reuse and invalidation without repeated ASR |
 
 ## Completion criteria
 

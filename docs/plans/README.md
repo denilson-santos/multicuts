@@ -1,18 +1,19 @@
-# Initial Implementation Plans
+# Implementation Plans
 
 ## Current state
 
 `multicuts` has completed the project bootstrap, domain foundation, local
-source/media preflight, CLI foundation, and `multisubs` transcription adapter.
-The production pipeline now reaches normalized transcription and output-local
-transcript persistence, then deliberately stops before candidate generation.
-Transcript caching is in progress; final artifact publication remains future
-work.
+source/media preflight, CLI foundation, `multisubs` transcription adapter, and
+the output-local transcript cache. The production pipeline reaches a persisted,
+reusable normalized transcript, then deliberately stops before candidate
+generation.
 
-These packages cover Milestone 0 and the local-source core of Milestone 1. They
-stop once a normalized transcript can be persisted and reused. Later planning
-will cover YouTube acquisition, candidate generation, scoring, ranking,
-rendering, the complete run manifest, and release hardening.
+The next planning batch advances the local-source critical path through
+candidate generation, cheap evaluation, explainable heuristic scoring, and
+non-redundant top-K selection. YouTube acquisition is a parallel package that
+completes the documented M1 input breadth without blocking the local
+intelligence path. Semantic-provider integration, rendering, the complete run
+manifest, and release hardening remain later work.
 
 ## Status and priority
 
@@ -28,7 +29,8 @@ Package and task status use this vocabulary:
 Priority indicates sequencing impact:
 
 - `P0`: a foundation that blocks multiple downstream packages;
-- `P1`: part of the first functional local transcription path.
+- `P1`: part of the first functional local intelligence path;
+- `P2`: documented input breadth that can proceed independently of that path.
 
 Status changes must update the package README and the relevant task files in the
 same delivery. A package becomes `completed` only when all its tasks are
@@ -43,21 +45,29 @@ completed and its package-level completion criteria pass.
 | [003 CLI and pipeline foundation](003-cli-pipeline-foundation/) | M0 | completed | P1 | 002 | [#13](https://github.com/denilson-santos/multicuts/pull/13), [#14](https://github.com/denilson-santos/multicuts/pull/14), [#19](https://github.com/denilson-santos/multicuts/pull/19) | Documented command surface, readable orchestration boundary, logging, and exit handling |
 | [004 Local source and media](004-local-source-media/) | M1 | completed | P1 | 002 | [#11](https://github.com/denilson-santos/multicuts/pull/11), [#12](https://github.com/denilson-santos/multicuts/pull/12), [#15](https://github.com/denilson-santos/multicuts/pull/15) | Validated local input, stable source identity, and normalized media metadata |
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
-| [006 Transcript cache](006-transcript-cache/) | M1 | in-progress | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
+| [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
+| [007 Semantic candidates](007-semantic-candidates/) | M2 | planned | P1 | 006 | — | Deterministic semantic units and bounded candidate windows with stable identities |
+| [008 Candidate evaluation](008-candidate-evaluation/) | M2 | planned | P1 | 007 | — | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
+| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | planned | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
+| [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
+| [011 YouTube acquisition](011-youtube-acquisition/) | M1 | planned | P2 | 003, 004, 006 | — | Supported YouTube URLs normalized to controlled local media and safe metadata |
 
 ## Recommended execution order
 
 The main dependency path is:
 
 ```text
-001 -> 002 -> 004 -> 005 -> 006
-              |
-              +---- 003
+001 -> 002 -> 004 -> 005 -> 006 -> 007 -> 008 -> 009 -> 010
+002 -> 003
+003 + 004 + 006 -> 011
 ```
 
-Package 003 and package 004 may proceed independently after package 002. When
-they are implemented concurrently, they must agree on the `RunConfig`,
-`AcquiredSource`, and `MediaInfo` contracts established by package 002.
+Packages 007–010 are the recommended critical path for the next local vertical
+slice and should execute in order. Package 011 may proceed in parallel because
+it reuses the established acquisition and pipeline boundaries but is not a
+prerequisite for candidate intelligence. A future semantic-provider package may
+start after package 009 once the provider decision is made; package 010 does not
+depend on that choice because it consumes project-owned score results.
 
 ## Global implementation constraints
 
@@ -90,9 +100,9 @@ Every package must preserve these established decisions:
 
 The following work is intentionally excluded from these packages:
 
-- YouTube acquisition and advanced yt-dlp configuration;
-- semantic-unit and candidate generation;
-- filters, deterministic features, scoring providers, and ranking/deduplication;
+- advanced yt-dlp cookie configuration and downloaded-source retention policy;
+- remote semantic-provider selection, adapters, hybrid scoring, and semantic
+  scoring cache;
 - boundary refinement, FFmpeg cutting, aspect-ratio conversion, and subtitles;
 - per-clip metadata and the complete run manifest;
 - the missing public `multisubs` contract for building ASS from an existing
@@ -103,14 +113,18 @@ The following work is intentionally excluded from these packages:
 
 The source documents do not yet determine:
 
-- the PEP 517 build backend and dependency-lock strategy;
-- whether the CLI uses Typer or standard-library `argparse`;
-- CLI defaults not explicitly stated in the PRD;
-- the exact local-source fingerprint algorithm;
-- whether reusable workspace/cache data ultimately lives under each output
-  directory or in a global cache;
-- the exact supported `multisubs` JSON schema beyond fields confirmed by
-  contract tests.
+- the exact semantic-unit pause threshold and punctuation heuristics;
+- the default candidate budget, including whether it scales with source
+  duration;
+- the exact heuristic mapping from deterministic features to scoring dimensions
+  and penalty points;
+- whether the suggested `0.60` temporal-overlap threshold should become the
+  initial default;
+- which semantic provider/model will back hybrid scoring and whether semantic
+  near-duplicate detection initially uses embeddings;
+- advanced yt-dlp cookie behavior and downloaded-source retention policy;
+- whether reusable workspace/cache data ultimately moves from the implemented
+  output-local layout to a global cache.
 
 Each affected package identifies when the decision must be made. Implementers
 must not silently turn an unresolved option into a permanent product contract.
