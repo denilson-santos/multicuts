@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 006 Transcript cache |
 | Unlocks | 008 Candidate evaluation |
@@ -65,10 +65,10 @@ an LLM or depend on provider objects.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define candidate contracts and identity](001-define-candidate-contracts.md) | planned | P1 | Package 006 | — | Typed candidate intervals, text, provenance, and stable versioned IDs |
-| [002 Build semantic units](002-build-semantic-units.md) | planned | P1 | 001 | — | Deterministic timed units from available transcript boundaries |
-| [003 Generate bounded candidate windows](003-generate-candidate-windows.md) | planned | P1 | 002 | — | Non-exhaustive adjacent-unit windows within configured limits |
-| [004 Integrate the candidate stage](004-integrate-candidate-stage.md) | planned | P1 | 003 | — | Pipeline reaches candidate generation and reports an honest downstream stop |
+| [001 Define candidate contracts and identity](001-define-candidate-contracts.md) | in-progress | P1 | Package 006 | — | Typed candidate intervals, text, provenance, and stable versioned IDs |
+| [002 Build semantic units](002-build-semantic-units.md) | in-progress | P1 | 001 | — | Deterministic timed units from available transcript boundaries |
+| [003 Generate bounded candidate windows](003-generate-candidate-windows.md) | in-progress | P1 | 002 | — | Non-exhaustive adjacent-unit windows within configured limits |
+| [004 Integrate the candidate stage](004-integrate-candidate-stage.md) | in-progress | P1 | 003 | — | Pipeline reaches candidate generation and reports an honest downstream stop |
 
 ## Suggested task sequence
 
@@ -105,3 +105,22 @@ candidates while the algorithm is incomplete.
 - The PRD allows boundary expansion but does not require a specific padding
   amount. Task 003 should make any initial bound explicit and keep it subordinate
   to `max_duration`.
+
+## Implementation decisions
+
+- Candidate generation version `1` uses `0.75` seconds as the measured-pause
+  boundary. Terminal `.`, `!`, `?`, `。`, `！`, `？`, and `…` punctuation also
+  closes a unit when the following timed text does not overlap it.
+- Timed normalized segments are authoritative whenever any are available. Timed
+  words are used only when no segment is timed; untimed content is excluded
+  rather than assigned inferred timestamps.
+- Overlapping consecutive timed items are merged into one semantic unit so the
+  emitted units remain ordered and non-overlapping. Decreasing source timestamps
+  and intervals beyond transcript duration are rejected.
+- Candidate IDs hash the source fingerprint, exact hexadecimal start/end float
+  representations, and generator version. The public ID exposes only the
+  versioned digest.
+- Windows contain complete adjacent semantic units, so version `1` adds no
+  artificial padding. Candidates in the documented 25–45 second preferred range
+  sort first, followed by distance from its 35-second midpoint and stable source
+  order.

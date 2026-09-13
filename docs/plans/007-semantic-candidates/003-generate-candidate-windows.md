@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 007.002 Build semantic units |
 | PR | — |
@@ -55,3 +55,10 @@ pyright
 - Candidate-budget pruning before expensive scoring belongs to package 008.
 - The preferred-range ordering rule must remain explainable and deterministic;
   it is not itself the final ranking algorithm.
+
+## Implementation decision
+
+Version `1` enumerates only contiguous semantic-unit windows and stops extending
+a start position after `max_duration`. Complete unit boundaries provide the
+natural expansion, so no separate timestamp padding is added. Preferred-range
+windows sort by distance from 35 seconds, then source interval and candidate ID.

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Package 006 Transcript cache |
 | PR | — |
@@ -56,3 +56,9 @@ pyright
   packages 008–010.
 - Timestamp canonicalization must not collapse meaningfully different source
   intervals; the chosen precision is an explicit implementation decision.
+
+## Implementation decision
+
+Candidate identity uses the SHA-256 digest of the source fingerprint, exact
+hexadecimal float representations for start/end, and generator version. The
+models retain contiguous semantic-unit indexes and expose no source path/title.

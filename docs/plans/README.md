@@ -4,9 +4,10 @@
 
 `multicuts` has completed the project bootstrap, domain foundation, local
 source/media preflight, CLI foundation, `multisubs` transcription adapter, and
-the output-local transcript cache. The production pipeline reaches a persisted,
-reusable normalized transcript, then deliberately stops before candidate
-generation.
+the output-local transcript cache. Package 007 is in progress: the production
+pipeline now reaches deterministic candidate generation from a persisted or
+reused normalized transcript, then deliberately stops before candidate
+evaluation.
 
 The next planning batch advances the local-source critical path through
 candidate generation, cheap evaluation, explainable heuristic scoring, and
@@ -46,7 +47,7 @@ completed and its package-level completion criteria pass.
 | [004 Local source and media](004-local-source-media/) | M1 | completed | P1 | 002 | [#11](https://github.com/denilson-santos/multicuts/pull/11), [#12](https://github.com/denilson-santos/multicuts/pull/12), [#15](https://github.com/denilson-santos/multicuts/pull/15) | Validated local input, stable source identity, and normalized media metadata |
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
 | [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
-| [007 Semantic candidates](007-semantic-candidates/) | M2 | planned | P1 | 006 | — | Deterministic semantic units and bounded candidate windows with stable identities |
+| [007 Semantic candidates](007-semantic-candidates/) | M2 | in-progress | P1 | 006 | — | Deterministic semantic units and bounded candidate windows with stable identities |
 | [008 Candidate evaluation](008-candidate-evaluation/) | M2 | planned | P1 | 007 | — | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
 | [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | planned | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
 | [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
