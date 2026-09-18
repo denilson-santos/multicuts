@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,12 @@ from multicuts.errors import (
     TranscriptionError,
 )
 from multicuts.pipeline import PipelineNotReadyError
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _without_ansi(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
 
 
 def test_generate_defaults_are_converted_to_run_config() -> None:
@@ -122,7 +129,7 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
     result = CliRunner().invoke(app, ["--help"], prog_name="multicuts")
 
     assert result.exit_code == 0
-    help_text = result.stdout
+    help_text = _without_ansi(result.stdout)
     assert "Usage: multicuts" in help_text
     assert "SOURCE" in help_text
     assert "{generate}" not in help_text
@@ -250,7 +257,7 @@ def test_main_maps_typer_parse_errors_to_configuration_exit(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(["source.mp4", "--clips", "not-an-integer"]) == 2
-    assert "Invalid value for '--clips'" in capsys.readouterr().err
+    assert "Invalid value for '--clips'" in _without_ansi(capsys.readouterr().err)
 
 
 def test_main_verbose_diagnostics_include_safe_failure_metadata(
