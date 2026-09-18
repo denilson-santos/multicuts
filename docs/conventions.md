@@ -312,7 +312,9 @@ Supported range:
 multisubs >=4.1,<5
 ```
 
-During early implementation the environment may pin `4.1.0`.
+During early implementation the environment may pin the official
+`multisubs[whisperx]` 4.2.0 wheel. Keep the selected extra aligned with the ASR
+backend used by the adapter.
 
 Rules:
 

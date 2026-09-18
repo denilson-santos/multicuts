@@ -38,12 +38,13 @@ python --version
 python -m pip install --editable ".[dev]"
 ```
 
-The runtime dependency on `multisubs` currently installs its v4.1.0 wheel from
+The runtime dependency on `multisubs` currently installs its v4.2.0 wheel from
 the official GitHub Release with a pinned SHA-256 checksum; it is not available
-from the default Python package index. A full install also resolves the
-provider's Torch/WhisperX dependencies. The hermetic CI checks install the
-project without runtime dependencies and install development tools separately;
-real transcription requires the full installation above.
+from the default Python package index. The dependency selects the provider's
+`whisperx` extra so a full install preserves the current transcription backend
+and resolves its Torch/WhisperX dependencies. The hermetic CI checks install
+the project without runtime dependencies and install development tools
+separately; real transcription requires the full installation above.
 
 Run the local quality and build checks from the activated environment:
 
@@ -82,16 +83,17 @@ The first MVP should be able to:
 
 `multicuts` should reuse [`multisubs`](https://github.com/denilson-santos/multisubs) as its transcription and subtitle-presentation engine whenever possible.
 
-The current project baseline is **`multisubs 4.1.0`**. Its public package API exposes:
+The current project baseline is **`multisubs 4.2.0`**. Its public package API exposes:
 
 - `generate_transcriptions`;
 - `embed_subtitles`.
 
-In the current release, `generate_transcriptions(...)` creates JSON, SRT, and ASS artifacts without rendering a final video and accepts `lang=None`, which enables automatic source-language detection. `embed_subtitles(...)` receives an ASS file and burns it into a video through FFmpeg/libass.
+In the current release, `generate_transcriptions(...)` creates JSON, SRT, and ASS artifacts without rendering a final video, accepts `lang=None` for automatic source-language detection, and supports an optional ASR-backend selector. `embed_subtitles(...)` receives an ASS file and burns it into a video through FFmpeg/libass. `multicuts` currently preserves the established WhisperX default and installs the corresponding optional dependency extra.
 
 The current `multisubs` feature set is especially useful to `multicuts`:
 
 - **16 built-in subtitle templates** designed for Reels, TikTok, Shorts, podcasts, tutorials, interviews, and editorial clips;
+- **selectable local ASR backends** in the provider: WhisperX, Faster-Whisper, NVIDIA Parakeet, and Qwen3-ASR;
 - **custom JSON templates** with built-in-template inheritance and style, layout, and animation overrides;
 - **82 bundled font faces** across six OFL font families, avoiding reliance on host-installed fonts;
 - **independent cue and word animations**, including progressive/active-word highlights, markers, reveal, pop, pulse, bounce, slide, and fade effects;
@@ -99,6 +101,7 @@ The current `multisubs` feature set is especially useful to `multicuts`:
 - **automatic source-language detection**;
 - text measurement based on the **font actually used for rendering**;
 - stronger multilingual segmentation, wrapping, shaping, and word-alignment preservation;
+- bounded English-translation fallbacks and independently scoped cue/word animation controls;
 - safe geometry handling, rotation handling, collision-safe outputs, and temporary rendering.
 
 This changes the MVP strategy: `multicuts` should not maintain a parallel catalog of "viral subtitle presets" when the same presentation can be represented by a `multisubs` template. The CLI should expose a concept such as `--subtitle-template` and forward the resolved presentation through the adapter.
@@ -107,7 +110,7 @@ The most important remaining integration gap is **per-clip subtitle artifact gen
 
 Until that contract exists, all `multisubs`-specific behavior must remain behind an adapter so the `multicuts` domain does not depend on private `multisubs` modules.
 
-> Initial compatibility target: `multisubs >=4.1,<5`, with contract tests in CI. The implementation lockfile may pin `4.1.0` during early development for reproducibility.
+> Compatibility target: `multisubs >=4.1,<5`, with contract tests in CI. The implementation dependency pins the official `4.2.0` wheel and selects its `whisperx` extra for reproducibility.
 
 ## Pipeline overview
 
@@ -413,7 +416,7 @@ For YouTube URLs:
 
 - `yt-dlp` is the initial acquisition adapter.
 
-`multisubs 4.1.0` already ships the resources required by its multilingual presentation pipeline, including bundled OFL fonts and Unicode/Japanese/Chinese segmentation dependencies. `multicuts` should not duplicate those assets.
+`multisubs 4.2.0` ships the resources required by its multilingual presentation pipeline, including bundled OFL fonts and Unicode/Japanese/Chinese segmentation dependencies. ASR runtimes are optional provider extras; `multicuts` selects `whisperx` to preserve its current backend. The project should not duplicate those assets.
 
 ## Suggested project structure
 

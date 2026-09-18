@@ -21,9 +21,9 @@ TRANSCRIPT_FIXTURE = (
 def test_provider_version_uses_distribution_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.2.0")
 
-    assert MultisubsAdapter().version() == "4.1.0"
+    assert MultisubsAdapter().version() == "4.2.0"
 
 
 def test_missing_provider_version_is_actionable(
@@ -42,7 +42,7 @@ def _install_provider(
     monkeypatch: pytest.MonkeyPatch,
     generate: Callable[..., object] | None,
     *,
-    version: str = "4.1.0",
+    version: str = "4.2.0",
 ) -> None:
     provider = ModuleType("multisubs")
     provider.__dict__["__version__"] = version
@@ -114,7 +114,7 @@ def test_normalizes_public_json_without_losing_timing_or_text(
     )
     assert (transcript.provider, transcript.provider_version) == (
         "multisubs",
-        "4.1.0",
+        "4.2.0",
     )
 
 
@@ -214,7 +214,7 @@ def test_auto_language_and_default_model_use_public_api(
     )
 
     assert result.json_path == (tmp_path / "run/multisubs/source.json").resolve()
-    assert result.provider_version == "4.1.0"
+    assert result.provider_version == "4.2.0"
     assert result.language_requested is None
     assert calls == [
         (

@@ -9,7 +9,7 @@ description = "Turn long-form videos into ranked, subtitled short clips."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "multisubs @ https://github.com/denilson-santos/multisubs/releases/download/v4.1.0/multisubs-4.1.0-py3-none-any.whl#sha256=01dce5d0651fc37b1d3e633302d20919185b6f8e060d0d2163014321fcb81c3d",
+    "multisubs[whisperx] @ https://github.com/denilson-santos/multisubs/releases/download/v4.2.0/multisubs-4.2.0-py3-none-any.whl#sha256=1f7cf94c1cd123974a1173e1bc05812b5152e7e0b27df7fb05f132e8b830ce5c",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
