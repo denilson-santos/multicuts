@@ -1,11 +1,14 @@
-"""Command-line parsing and process-boundary handling for one run."""
+"""Typer command-line parsing and process-boundary handling for one run."""
 
-import argparse
 import logging
 import re
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from multicuts.config import RunConfig
 from multicuts.errors import (
@@ -30,6 +33,14 @@ DEFAULT_MODEL = "default"
 
 
 PipelineRunner = Callable[[RunConfig], None]
+
+
+@dataclass
+class _CliContext:
+    """State shared between Typer's command callback and the process boundary."""
+
+    parsed_config: RunConfig | None = None
+
 
 EXIT_SUCCESS = 0
 EXIT_UNEXPECTED = 1
@@ -61,11 +72,6 @@ _ERROR_DETAILS: tuple[tuple[type[MulticutsError], int, str, str], ...] = (
     # Artifact publication is an output-stage failure and shares rendering's exit.
     (ArtifactError, EXIT_RENDERING, "publish", "Artifact publication failed"),
 )
-
-
-def _path_argument(value: str) -> Path:
-    """Convert a CLI path while preserving relative paths."""
-    return Path(value).expanduser()
 
 
 def configure_logging(verbose: bool) -> None:
@@ -148,131 +154,213 @@ def _log_unexpected_error(error: BaseException, *, stage: str, verbose: bool) ->
     return EXIT_UNEXPECTED
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the parser for the documented multicuts command surface."""
-    parser = argparse.ArgumentParser(
-        prog="multicuts",
-        description=(
-            "Generate ranked short clips from SOURCE. The viral-potential "
-            "score is an explainable ranking heuristic, not a probability."
+app = typer.Typer(
+    name="multicuts",
+    help=(
+        "Generate ranked short clips from SOURCE. The viral-potential score is "
+        "an explainable ranking heuristic, not a probability."
+    ),
+    add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    no_args_is_help=False,
+)
+
+
+def _build_run_config(
+    *,
+    source: str,
+    output_dir: Path,
+    language: str,
+    clips: int,
+    min_score: int,
+    min_duration: float,
+    max_duration: float,
+    aspect_ratio: str,
+    subtitle_template: str,
+    subtitle_template_dir: Path | None,
+    scorer: str,
+    model: str,
+    keep_intermediates: bool,
+    force_recompute: bool,
+    verbose: bool,
+) -> RunConfig:
+    """Convert Typer values into one validated project-owned configuration."""
+    return RunConfig(
+        source=source,
+        output_dir=output_dir.expanduser(),
+        clips=clips,
+        min_score=min_score,
+        aspect_ratio=aspect_ratio,
+        subtitle_template=subtitle_template,
+        scorer=scorer,
+        model=model,
+        language=language,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        subtitle_template_dir=(
+            subtitle_template_dir.expanduser()
+            if subtitle_template_dir is not None
+            else None
         ),
+        keep_intermediates=keep_intermediates,
+        force_recompute=force_recompute,
+        verbose=verbose,
     )
-    parser.add_argument(
-        "source",
-        metavar="SOURCE",
-        help="Local video path or supported source URL.",
+
+
+@app.command()
+def run_command(
+    ctx: typer.Context,
+    source: Annotated[
+        str,
+        typer.Argument(
+            ...,
+            metavar="SOURCE",
+            help="Local video path or supported source URL.",
+        ),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            metavar="PATH",
+            help="Directory for run artifacts and final clips.",
+        ),
+    ] = DEFAULT_OUTPUT_DIR,
+    language: Annotated[
+        str,
+        typer.Option(
+            "--lang",
+            metavar="CODE|auto",
+            help="Requested source language, or auto for provider detection.",
+        ),
+    ] = "auto",
+    clips: Annotated[
+        int,
+        typer.Option(
+            "--clips",
+            metavar="INTEGER",
+            help="Maximum number of selected clips.",
+        ),
+    ] = DEFAULT_CLIPS,
+    min_score: Annotated[
+        int,
+        typer.Option(
+            "--min-score",
+            metavar="INTEGER",
+            help="Minimum ranking score from 0 to 100.",
+        ),
+    ] = DEFAULT_MIN_SCORE,
+    min_duration: Annotated[
+        float,
+        typer.Option(
+            "--min-duration",
+            metavar="SECONDS",
+            help="Minimum candidate duration in seconds.",
+        ),
+    ] = 15.0,
+    max_duration: Annotated[
+        float,
+        typer.Option(
+            "--max-duration",
+            metavar="SECONDS",
+            help="Maximum candidate duration in seconds.",
+        ),
+    ] = 60.0,
+    aspect_ratio: Annotated[
+        str,
+        typer.Option(
+            "--aspect-ratio",
+            metavar="original|9:16",
+            help="Output presentation geometry.",
+        ),
+    ] = DEFAULT_ASPECT_RATIO,
+    subtitle_template: Annotated[
+        str,
+        typer.Option(
+            "--subtitle-template",
+            metavar="NAME",
+            help="Built-in or custom multisubs template name.",
+        ),
+    ] = DEFAULT_SUBTITLE_TEMPLATE,
+    subtitle_template_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--subtitle-template-dir",
+            metavar="PATH",
+            help="Directory containing custom subtitle templates.",
+        ),
+    ] = None,
+    scorer: Annotated[
+        str,
+        typer.Option("--scorer", metavar="NAME", help="Scoring strategy name."),
+    ] = DEFAULT_SCORER,
+    model: Annotated[
+        str,
+        typer.Option("--model", metavar="NAME", help="Provider model name."),
+    ] = DEFAULT_MODEL,
+    keep_intermediates: Annotated[
+        bool,
+        typer.Option(
+            "--keep-intermediates",
+            help="Keep useful intermediate artifacts for diagnostics.",
+        ),
+    ] = False,
+    force_recompute: Annotated[
+        bool,
+        typer.Option(
+            "--force-recompute",
+            help="Ignore reusable artifacts and recompute stages.",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", help="Enable diagnostic output for the run."),
+    ] = False,
+) -> None:
+    """Generate ranked short clips from SOURCE.
+
+    The viral-potential score is an explainable ranking heuristic, not a
+    probability.
+    """
+    config = _build_run_config(
+        source=source,
+        output_dir=output_dir,
+        language=language,
+        clips=clips,
+        min_score=min_score,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        aspect_ratio=aspect_ratio,
+        subtitle_template=subtitle_template,
+        subtitle_template_dir=subtitle_template_dir,
+        scorer=scorer,
+        model=model,
+        keep_intermediates=keep_intermediates,
+        force_recompute=force_recompute,
+        verbose=verbose,
     )
-    parser.add_argument(
-        "--output-dir",
-        type=_path_argument,
-        default=DEFAULT_OUTPUT_DIR,
-        metavar="PATH",
-        help="Directory for run artifacts and final clips.",
-    )
-    parser.add_argument(
-        "--lang",
-        dest="language",
-        default="auto",
-        metavar="CODE|auto",
-        help="Requested source language, or auto for provider detection.",
-    )
-    parser.add_argument(
-        "--clips",
-        type=int,
-        default=DEFAULT_CLIPS,
-        metavar="INTEGER",
-        help="Maximum number of selected clips.",
-    )
-    parser.add_argument(
-        "--min-score",
-        type=int,
-        default=DEFAULT_MIN_SCORE,
-        metavar="INTEGER",
-        help="Minimum ranking score from 0 to 100.",
-    )
-    parser.add_argument(
-        "--min-duration",
-        type=float,
-        default=15.0,
-        metavar="SECONDS",
-        help="Minimum candidate duration in seconds.",
-    )
-    parser.add_argument(
-        "--max-duration",
-        type=float,
-        default=60.0,
-        metavar="SECONDS",
-        help="Maximum candidate duration in seconds.",
-    )
-    parser.add_argument(
-        "--aspect-ratio",
-        default=DEFAULT_ASPECT_RATIO,
-        metavar="original|9:16",
-        help="Output presentation geometry.",
-    )
-    parser.add_argument(
-        "--subtitle-template",
-        default=DEFAULT_SUBTITLE_TEMPLATE,
-        metavar="NAME",
-        help="Built-in or custom multisubs template name.",
-    )
-    parser.add_argument(
-        "--subtitle-template-dir",
-        type=_path_argument,
-        default=None,
-        metavar="PATH",
-        help="Directory containing custom subtitle templates.",
-    )
-    parser.add_argument(
-        "--scorer",
-        default=DEFAULT_SCORER,
-        metavar="NAME",
-        help="Scoring strategy name.",
-    )
-    parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        metavar="NAME",
-        help="Provider model name.",
-    )
-    parser.add_argument(
-        "--keep-intermediates",
-        action="store_true",
-        help="Keep useful intermediate artifacts for diagnostics.",
-    )
-    parser.add_argument(
-        "--force-recompute",
-        action="store_true",
-        help="Ignore reusable artifacts and recompute stages.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable diagnostic output for the run.",
-    )
-    return parser
+    state = ctx.obj if isinstance(ctx.obj, _CliContext) else _CliContext()
+    state.parsed_config = config
 
 
 def parse_run_config(argv: Sequence[str] | None = None) -> RunConfig:
     """Parse ``argv`` and validate it as one project-owned run configuration."""
-    arguments = build_parser().parse_args(argv)
-    return RunConfig(
-        source=arguments.source,
-        output_dir=arguments.output_dir,
-        clips=arguments.clips,
-        min_score=arguments.min_score,
-        aspect_ratio=arguments.aspect_ratio,
-        subtitle_template=arguments.subtitle_template,
-        scorer=arguments.scorer,
-        model=arguments.model,
-        language=arguments.language,
-        min_duration=arguments.min_duration,
-        max_duration=arguments.max_duration,
-        subtitle_template_dir=arguments.subtitle_template_dir,
-        keep_intermediates=arguments.keep_intermediates,
-        force_recompute=arguments.force_recompute,
-        verbose=arguments.verbose,
-    )
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    state = _CliContext()
+    try:
+        app(
+            args=arguments,
+            prog_name="multicuts",
+            obj=state,
+            standalone_mode=True,
+        )
+    except SystemExit as error:
+        if error.code not in (0, None):
+            raise
+    if state.parsed_config is None:
+        raise RuntimeError("Typer did not produce a run configuration")
+    return state.parsed_config
 
 
 def main(
@@ -286,12 +374,34 @@ def main(
     configure_logging(verbose)
 
     stage = "validate"
+    state = _CliContext()
     try:
-        config = parse_run_config(arguments)
-        logger.info("stage=validate complete")
-        stage = "run"
+        app(
+            args=arguments,
+            prog_name="multicuts",
+            obj=state,
+            standalone_mode=True,
+        )
+    except KeyboardInterrupt:
+        logger.warning("Run interrupted; no completion summary was produced")
+        return 130
+    except SystemExit as error:
+        if error.code not in (0, None):
+            return int(error.code)
+        if state.parsed_config is None:
+            return EXIT_SUCCESS
+    except MulticutsError as error:
+        return _log_project_error(error, verbose=verbose)
+    except Exception as error:
+        return _log_unexpected_error(error, stage=stage, verbose=verbose)
+
+    if state.parsed_config is None:
+        return EXIT_SUCCESS
+    logger.info("stage=validate complete")
+    stage = "run"
+    try:
         runner = run_pipeline if pipeline is None else pipeline
-        runner(config)
+        runner(state.parsed_config)
     except KeyboardInterrupt:
         logger.warning("Run interrupted; no completion summary was produced")
         return 130

@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from multicuts.cli import build_parser, main, parse_run_config
+from multicuts.cli import app, main, parse_run_config
 from multicuts.config import RunConfig
 from multicuts.errors import (
     AcquisitionError,
@@ -117,15 +118,12 @@ def test_custom_template_directory_is_validated_by_run_config(
         )
 
 
-def test_help_exposes_the_documented_options_and_score_semantics(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with pytest.raises(SystemExit) as raised:
-        build_parser().parse_args(["--help"])
+def test_help_exposes_the_documented_options_and_score_semantics() -> None:
+    result = CliRunner().invoke(app, ["--help"], prog_name="multicuts")
 
-    assert raised.value.code == 0
-    help_text = capsys.readouterr().out
-    assert "usage: multicuts" in help_text
+    assert result.exit_code == 0
+    help_text = result.stdout
+    assert "Usage: multicuts" in help_text
     assert "SOURCE" in help_text
     assert "{generate}" not in help_text
     for option in (
@@ -145,14 +143,13 @@ def test_help_exposes_the_documented_options_and_score_semantics(
         "--verbose",
     ):
         assert option in help_text
-    assert "ranking heuristic, not a probability" in help_text
+    assert "ranking heuristic, not a probability" in " ".join(help_text.split())
 
 
 def test_removed_generate_subcommand_is_rejected() -> None:
-    with pytest.raises(SystemExit) as raised:
-        parse_run_config(["generate", "source.mp4"])
+    result = CliRunner().invoke(app, ["generate", "source.mp4"])
 
-    assert raised.value.code == 2
+    assert result.exit_code == 2
 
 
 def test_main_passes_one_validated_config_to_pipeline() -> None:
@@ -247,6 +244,13 @@ def test_main_reports_semantic_configuration_errors_without_running_pipeline(
     )
     assert not called
     assert "Invalid configuration: clips" in capsys.readouterr().err
+
+
+def test_main_maps_typer_parse_errors_to_configuration_exit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["source.mp4", "--clips", "not-an-integer"]) == 2
+    assert "Invalid value for '--clips'" in capsys.readouterr().err
 
 
 def test_main_verbose_diagnostics_include_safe_failure_metadata(
