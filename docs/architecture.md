@@ -119,7 +119,9 @@ A concrete module is preferred to:
 - `multisubs >=4.1,<5`;
 - yt-dlp.
 
-During early implementation, the lockfile may pin `multisubs==4.1.0` for reproducibility.
+During early implementation, the runtime dependency pins the official
+`multisubs[whisperx]` 4.2.0 wheel for reproducibility. The extra preserves the
+current WhisperX backend now that `multisubs` packages ASR runtimes separately.
 
 ### Development
 

@@ -365,7 +365,7 @@ The normalized media model must distinguish coded dimensions from final presenta
 
 #### FR-TR-001 — Provider baseline
 
-The initial provider is based on **`multisubs 4.1.0`**.
+The current provider baseline is **`multisubs 4.2.0`**.
 
 The package maintains these public APIs:
 
@@ -377,11 +377,13 @@ multisubs.embed_subtitles
 In the current baseline:
 
 - `generate_transcriptions(...)` creates JSON, SRT, and ASS without rendering a final video;
+- the provider supports WhisperX, Faster-Whisper, NVIDIA Parakeet, and Qwen3-ASR through an optional `asr_backend` argument;
+- `multicuts` currently keeps the established WhisperX default and installs the provider's `whisperx` extra;
 - `lang` may be `None`, enabling automatic source-language detection;
 - transcription uses WhisperX with word alignment;
 - `embed_subtitles(...)` receives an ASS file and performs hard-subtitle rendering;
 - the presentation engine supports built-in/custom templates, bundled fonts, cue/word animations, and multilingual layout behavior;
-- the 4.1 line contains important fixes for rendered-font measurement, multilingual text/alignment preservation, shaping, and separation of linguistic boundaries from timed highlights.
+- the 4.2 line retains the schema-3 artifact contract and adds improved alignment and segmentation, bounded translation fallbacks, and scoped animation controls.
 
 `multicuts` must integrate only through public APIs or a contract explicitly promoted and stabilized in `multisubs`.
 
@@ -839,7 +841,7 @@ The CLI should accept:
 --subtitle-template-dir PATH
 ```
 
-The `multisubs 4.1.0` built-in catalog includes 16 presentations aimed at hooks, Reels, TikTok, Shorts, interviews, storytelling, tutorials, and educational content.
+The `multisubs 4.2.0` built-in catalog includes 16 presentations aimed at hooks, Reels, TikTok, Shorts, interviews, storytelling, tutorials, and educational content.
 
 Relevant examples:
 
@@ -1169,7 +1171,8 @@ Ranking tie-breakers must be deterministic.
 - `multisubs >=4.1,<5`;
 - `yt-dlp` for remote source acquisition.
 
-The implementation lockfile may initially pin `multisubs==4.1.0`.
+The implementation dependency pins the official `multisubs[whisperx]` 4.2.0
+wheel so the existing default backend remains installable and reproducible.
 
 ### Python dependency categories
 
@@ -1235,7 +1238,7 @@ Primary rule:
 
 ### 18.1 Baseline
 
-This PRD uses **`multisubs 4.1.0`** as the integration baseline.
+This PRD uses **`multisubs 4.2.0`** as the integration baseline.
 
 The package exposes:
 
@@ -1274,17 +1277,23 @@ The 4.x line makes `multisubs` useful as the `multicuts` subtitle-presentation e
 
 Reimplementing these capabilities in `multicuts` would increase inconsistency and maintenance cost.
 
-### 18.3 Relevant 4.1.0 improvements
+### 18.3 Relevant 4.2.0 improvements
 
-Version 4.1.0 adds source-language auto-detection and built-in-template calibration and includes fixes for:
+Version 4.2.0 retains the 4.1 source-language detection, calibrated templates,
+font-aware measurement, and multilingual rendering behavior while adding:
 
-- measuring subtitles with their rendered fonts;
-- preserving multilingual subtitle text and alignment;
-- separating linguistic boundaries from timed highlights;
-- preserving multilingual shaping in subtitles and previews;
-- multilingual and Indic regression stability.
+- selectable WhisperX, Faster-Whisper, NVIDIA Parakeet, and Qwen3-ASR backends;
+- improved alignment and segmentation across backend output shapes;
+- lower Qwen alignment memory pressure;
+- bounded English-translation fallbacks;
+- independently scoped cue and word animation controls;
+- optional ASR dependency extras, with WhisperX remaining the provider default.
 
-These changes matter to `multicuts` because candidate extraction and boundary refinement depend on reliable text/timing, while final clips depend on predictable wrapping and rendering.
+These changes matter to `multicuts` because candidate extraction and boundary
+refinement depend on reliable text/timing, while final clips depend on
+predictable wrapping and rendering. The current adapter continues using
+WhisperX; exposing backend selection requires a separate product/configuration
+change so cache provenance can include the selected backend.
 
 ### 18.4 Adapter strategy
 
@@ -1402,10 +1411,11 @@ Initial supported range:
 multisubs >=4.1,<5
 ```
 
-During early implementation, the lockfile may pin:
+During early implementation, the runtime dependency pins the official wheel and
+the backend extra used by the adapter:
 
 ```text
-multisubs==4.1.0
+multisubs[whisperx] 4.2.0
 ```
 
 CI contract tests should verify:
@@ -1434,7 +1444,7 @@ Source
   duration: 01:42:18
 
 Transcription
-  provider: multisubs 4.1.0
+  provider: multisubs 4.2.0
   language: pt
   words: 14,832
 
