@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 007.003 Generate bounded candidate windows |
 | PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |
