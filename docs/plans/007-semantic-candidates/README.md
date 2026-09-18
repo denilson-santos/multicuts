@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 006 Transcript cache |
 | Unlocks | 008 Candidate evaluation |
@@ -65,10 +65,10 @@ an LLM or depend on provider objects.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define candidate contracts and identity](001-define-candidate-contracts.md) | in-progress | P1 | Package 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Typed candidate intervals, text, provenance, and stable versioned IDs |
-| [002 Build semantic units](002-build-semantic-units.md) | in-progress | P1 | 001 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic timed units from available transcript boundaries |
-| [003 Generate bounded candidate windows](003-generate-candidate-windows.md) | in-progress | P1 | 002 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Non-exhaustive adjacent-unit windows within configured limits |
-| [004 Integrate the candidate stage](004-integrate-candidate-stage.md) | in-progress | P1 | 003 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Pipeline reaches candidate generation and reports an honest downstream stop |
+| [001 Define candidate contracts and identity](001-define-candidate-contracts.md) | completed | P1 | Package 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Typed candidate intervals, text, provenance, and stable versioned IDs |
+| [002 Build semantic units](002-build-semantic-units.md) | completed | P1 | 001 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic timed units from available transcript boundaries |
+| [003 Generate bounded candidate windows](003-generate-candidate-windows.md) | completed | P1 | 002 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Non-exhaustive adjacent-unit windows within configured limits |
+| [004 Integrate the candidate stage](004-integrate-candidate-stage.md) | completed | P1 | 003 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Pipeline reaches candidate generation and reports an honest downstream stop |
 
 ## Suggested task sequence
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Package 006 Transcript cache |
 | PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |

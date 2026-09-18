@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 007.001 Define candidate contracts and identity |
 | PR | [#24](https://github.com/denilson-santos/multicuts/pull/24) |
