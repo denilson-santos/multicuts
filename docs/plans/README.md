@@ -9,12 +9,12 @@ The production pipeline reaches deterministic candidate generation from a
 persisted or reused normalized transcript, then deliberately stops before
 candidate evaluation.
 
-The next planning batch advances the remaining local-source critical path
-through cheap evaluation, explainable heuristic scoring, and non-redundant
-top-K selection. YouTube acquisition is a parallel package that completes the
-documented M1 input breadth without blocking the local intelligence path.
-Semantic-provider integration, rendering, the complete run manifest, and
-release hardening remain later work.
+Packages 008–011 remain the immediate implementation queue: deterministic
+evaluation, explainable heuristic scoring, non-redundant top-K selection, and
+YouTube acquisition. This planning batch adds package 012 as the parallel
+semantic/hybrid scoring track and packages 013–016 as the M3 path from selected
+candidates through refined boundaries, final-geometry rendering, subtitles,
+and complete run artifacts. M4 release hardening remains later work.
 
 ## Status and priority
 
@@ -30,8 +30,9 @@ Package and task status use this vocabulary:
 Priority indicates sequencing impact:
 
 - `P0`: a foundation that blocks multiple downstream packages;
-- `P1`: part of the first functional local intelligence path;
-- `P2`: documented input breadth that can proceed independently of that path.
+- `P1`: part of the first functional local intelligence/output path;
+- `P2`: documented input or scoring breadth that can proceed independently of
+  that path.
 
 Status changes must update the package README and the relevant task files in the
 same delivery. A package becomes `completed` only when all its tasks are
@@ -52,6 +53,17 @@ completed and its package-level completion criteria pass.
 | [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | planned | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
 | [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | planned | P2 | 003, 004, 006 | — | Supported YouTube URLs normalized to controlled local media and safe metadata |
+| [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | planned | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
+| [013 Boundary refinement](013-boundary-refinement/) | M3 | planned | P1 | 010 | — | Clean source-bounded render intervals that preserve scored-content provenance |
+| [014 Clip rendering](014-clip-rendering/) | M3 | planned | P1 | 004, 013 | — | Safe accurate `original` and center-cropped `9:16` raw clips |
+| [015 Clip subtitles](015-clip-subtitles/) | M3 | planned | P1 | 005, 006, 013, 014 | — | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
+| [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | planned | P1 | 010, 011, 014, 015 | — | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
+
+Package 015 can begin with clip-local transcript work, but task 015.002 is
+blocked until `multisubs` exposes the documented public subtitle-artifact
+operation (or the product requirement is explicitly revised). Package 016
+schema work may also begin, but subtitle-enabled M3 completion inherits that
+blocker.
 
 ## Recommended execution order
 
@@ -60,15 +72,22 @@ The main dependency path is:
 ```text
 001 -> 002 -> 004 -> 005 -> 006 -> 007 -> 008 -> 009 -> 010
 002 -> 003
-003 + 004 + 006 -> 011
+003 + 004 + 006 -> 011 -> 016
+008 + 009 -> 012
+010 -> 013 -> 014 -> 015 -> 016
 ```
 
-Packages 007–010 are the recommended critical path for the next local vertical
-slice and should execute in order. Package 011 may proceed in parallel because
-it reuses the established acquisition and pipeline boundaries but is not a
-prerequisite for candidate intelligence. A future semantic-provider package may
-start after package 009 once the provider decision is made; package 010 does not
-depend on that choice because it consumes project-owned score results.
+Packages 008–010 and 013–016 are the recommended critical path for the first
+complete local output and should execute in order. Package 011 should proceed in
+parallel and joins package 016 for final local/YouTube acceptance. Package 012
+may start after package 009 once the provider decision is recorded; ranking and
+rendering do not depend on it because they consume the project-owned score
+contract and the heuristic path remains valid.
+
+Within M3, task 015.001 may proceed alongside package 014 after package 013.
+Tasks 015.002–004 wait for the public `multisubs` capability. Parts of package
+016 that define schemas and source-safe provenance may proceed before that
+capability, but the package cannot complete without package 015.
 
 ## Global implementation constraints
 
@@ -102,12 +121,12 @@ Every package must preserve these established decisions:
 The following work is intentionally excluded from these packages:
 
 - advanced yt-dlp cookie configuration and downloaded-source retention policy;
-- remote semantic-provider selection, adapters, hybrid scoring, and semantic
-  scoring cache;
-- boundary refinement, FFmpeg cutting, aspect-ratio conversion, and subtitles;
-- per-clip metadata and the complete run manifest;
-- the missing public `multisubs` contract for building ASS from an existing
-  clip-local transcript;
+- multiple semantic-provider adapters, embedding-based diversity, and an
+  unselected fully local semantic model;
+- face tracking, smart reframing, manual crop offsets, and subtitle-preset
+  design that duplicates `multisubs`;
+- implementation/release work in the external `multisubs` repository; package
+  015 consumes and contract-tests the required public capability once available;
 - packaging/release hardening beyond the initial build and CI baseline.
 
 ## Shared open decisions
@@ -124,6 +143,12 @@ The source documents do not yet determine:
 - which semantic provider/model will back hybrid scoring and whether semantic
   near-duplicate detection initially uses embeddings;
 - advanced yt-dlp cookie behavior and downloaded-source retention policy;
+- which supported public `multisubs` release/API will build styled subtitle
+  artifacts from an existing clip-local transcript and target geometry;
+- how required per-clip `title` and `summary` fields are derived without
+  fabricating semantic-provider output;
+- whether zero eligible clips is a successful completed run or a distinct
+  non-error terminal outcome;
 - whether reusable workspace/cache data ultimately moves from the implemented
   output-local layout to a global cache.
 
