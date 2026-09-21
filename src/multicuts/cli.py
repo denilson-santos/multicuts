@@ -26,6 +26,7 @@ from multicuts.pipeline import run_pipeline
 DEFAULT_OUTPUT_DIR = Path("multicuts-output")
 DEFAULT_CLIPS = 5
 DEFAULT_MIN_SCORE = 0
+DEFAULT_CANDIDATE_BUDGET = 50
 DEFAULT_ASPECT_RATIO = "original"
 DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
 DEFAULT_SCORER = "heuristic"
@@ -175,6 +176,7 @@ def _build_run_config(
     min_score: int,
     min_duration: float,
     max_duration: float,
+    candidate_budget: int,
     aspect_ratio: str,
     subtitle_template: str,
     subtitle_template_dir: Path | None,
@@ -197,6 +199,7 @@ def _build_run_config(
         language=language,
         min_duration=min_duration,
         max_duration=max_duration,
+        candidate_budget=candidate_budget,
         subtitle_template_dir=(
             subtitle_template_dir.expanduser()
             if subtitle_template_dir is not None
@@ -267,6 +270,14 @@ def run_command(
             help="Maximum candidate duration in seconds.",
         ),
     ] = 60.0,
+    candidate_budget: Annotated[
+        int,
+        typer.Option(
+            "--candidate-budget",
+            metavar="INTEGER",
+            help="Maximum candidates sent to downstream scoring.",
+        ),
+    ] = DEFAULT_CANDIDATE_BUDGET,
     aspect_ratio: Annotated[
         str,
         typer.Option(
@@ -331,6 +342,7 @@ def run_command(
         min_score=min_score,
         min_duration=min_duration,
         max_duration=max_duration,
+        candidate_budget=candidate_budget,
         aspect_ratio=aspect_ratio,
         subtitle_template=subtitle_template,
         subtitle_template_dir=subtitle_template_dir,
