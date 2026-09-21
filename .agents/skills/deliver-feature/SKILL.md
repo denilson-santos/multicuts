@@ -12,9 +12,9 @@ Deliver one coherent repository change through a short-lived branch and a review
 Before editing repository files:
 
 1. Inspect the working tree, current branch, remotes, and remote default branch.
-2. Stop and explain the problem if usable Git metadata or a required remote is unavailable.
+2. Stop and explain the problem if usable Git metadata, a configured remote, or the remote default branch cannot be established.
 3. Do not discard, stash, move, stage, commit, or absorb pre-existing user changes without explicit permission.
-4. When remote access is available, fetch the remote default branch. Do not introduce a merge commit while synchronizing it.
+4. When remote access is available, fetch the remote default branch. If access is temporarily unavailable, use an existing remote-tracking ref for the known default branch and report that it could not be refreshed. Do not introduce a merge commit while synchronizing it.
 5. If the current non-default branch already matches the requested change, reuse it. Otherwise, create a branch from the remote default branch.
 
 Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavailable. Use lowercase kebab-case. Choose the narrowest applicable type, normally `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, or `chore`.
@@ -84,12 +84,13 @@ Request approval again if the content, commit plan, remote, base branch, or pull
 
 ## Clean up after merge
 
-When the user reports that a pull request was merged, treat that message as authorization to clean up only that pull request's verified head branch:
+When the user reports that a pull request was merged, first confirm through GitHub that its state is `MERGED`, record its exact head and base branches, and check that the working tree is clean. If any check fails, stop and explain the problem. Ask the user to confirm cleanup of that specific head branch. The merge report alone is not approval to clean up.
 
-1. Confirm through GitHub that the pull request state is `MERGED` and record its exact head and base branches.
-2. Stop if the working tree is not clean. Do not stash or discard changes to perform cleanup.
-3. Switch to the base branch, fetch the remote with pruning, and update the local base by fast-forward only.
-4. Delete the local head branch with `git branch -d`. Never use force deletion.
-5. Verify that the repository's automatic branch deletion removed the remote head branch. If it remains, report it instead of deleting it without additional authorization.
+After explicit confirmation:
 
-Do not delete an open, closed-unmerged, unidentified, or unpushed branch. A post-merge cleanup request does not authorize deleting any branch other than the verified head branch of that pull request.
+1. Recheck that the working tree is clean. Stop if it changed; do not stash or discard changes to perform cleanup.
+2. Switch to the base branch, fetch the remote with pruning, and update the local base by fast-forward only.
+3. Delete the local head branch with `git branch -d`. Never use force deletion.
+4. Verify that the repository's automatic branch deletion removed the remote head branch. If it remains, report it instead of deleting it without additional authorization.
+
+Do not delete an open, closed-unmerged, unidentified, or unpushed branch. Cleanup confirmation does not authorize deleting any branch other than the verified head branch of that pull request.
