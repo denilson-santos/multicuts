@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 007 Semantic candidates |
 | Unlocks | 009 Explainable heuristic scoring |
@@ -67,10 +67,10 @@ a configurable upper bound on candidates sent downstream.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define feature and checklist contracts](001-define-evaluation-contracts.md) | planned | P1 | Package 007 | — | Typed reusable features and explicit rule outcomes |
-| [002 Compute deterministic features](002-compute-deterministic-features.md) | planned | P1 | 001 | — | Tested structural and transcript-quality evidence |
-| [003 Apply checklist rules and scoring budget](003-apply-checklist-and-budget.md) | planned | P1 | 002 | — | Hard-filtered, traceable, bounded shortlist |
-| [004 Persist and integrate candidate evaluation](004-persist-and-integrate-evaluation.md) | planned | P1 | 003 | — | Reusable candidate artifact and pipeline handoff to scoring |
+| [001 Define feature and checklist contracts](001-define-evaluation-contracts.md) | in-progress | P1 | Package 007 | — | Typed reusable features and explicit rule outcomes |
+| [002 Compute deterministic features](002-compute-deterministic-features.md) | in-progress | P1 | 001 | — | Tested structural and transcript-quality evidence |
+| [003 Apply checklist rules and scoring budget](003-apply-checklist-and-budget.md) | in-progress | P1 | 002 | — | Hard-filtered, traceable, bounded shortlist |
+| [004 Persist and integrate candidate evaluation](004-persist-and-integrate-evaluation.md) | in-progress | P1 | 003 | — | Reusable candidate artifact and pipeline handoff to scoring |
 
 ## Suggested task sequence
 
@@ -107,3 +107,18 @@ artifact schema reflects the established evaluation model instead of driving it.
   judgments belong to a future semantic scorer and must not be fabricated.
 - Candidate artifact invalidation must include generator/evaluation versions and
   relevant duration/budget configuration without coupling to subtitle styling.
+
+## Implementation decisions
+
+- The initial candidate budget is a positive `RunConfig.candidate_budget` with
+  a default of `50`, exposed as `--candidate-budget`. It is a cost-control cap,
+  not a quality or virality claim, and it does not scale by source duration yet.
+- The initial checklist uses hard failures for duration and insufficient text,
+  soft failures for pause, boundary, context, payoff, and transcript-quality
+  heuristics, and `UNKNOWN` when the required timing/confidence evidence is not
+  present. Transcript gaps are persisted as pause proxies, not measured audio
+  silence.
+- Candidate artifacts are keyed by source fingerprint, generator/evaluation
+  versions, duration limits, and budget. Scorer, geometry, subtitle, and other
+  downstream configuration do not invalidate this stage. Rule-threshold changes
+  require an evaluation-version bump.

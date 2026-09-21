@@ -8,18 +8,36 @@ from urllib.parse import urlsplit
 
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.artifacts import (
+    InvalidCandidateEvaluationArtifactError,
     InvalidTranscriptArtifactError,
+    candidate_evaluation_cache_key,
     prepare_workspace,
+    read_candidate_evaluation,
     read_transcript,
     transcription_cache_key,
+    write_candidate_evaluation,
     write_transcript,
 )
-from multicuts.candidates.generator import generate_candidates
+from multicuts.candidates.filters import (
+    CANDIDATE_EVALUATION_VERSION,
+    evaluate_candidates,
+)
+from multicuts.candidates.generator import (
+    CANDIDATE_GENERATOR_VERSION,
+    generate_candidates,
+)
 from multicuts.config import RunConfig
 from multicuts.errors import TranscriptionError
 from multicuts.local_source import acquire_local_source
 from multicuts.media import probe_media
-from multicuts.models import AcquiredSource, Candidate, MediaInfo, Transcript
+from multicuts.models import (
+    AcquiredSource,
+    Candidate,
+    CandidateEvaluationArtifact,
+    CandidateEvaluationBatch,
+    MediaInfo,
+    Transcript,
+)
 
 AcquireSource = Callable[[str], AcquiredSource]
 ProbeMedia = Callable[[AcquiredSource], MediaInfo]
@@ -56,8 +74,22 @@ class CandidateGenerator(Protocol):
     ) -> tuple[Candidate, ...]: ...
 
 
+class CandidateEvaluator(Protocol):
+    """The substitutable pure candidate-evaluation boundary."""
+
+    def __call__(
+        self,
+        candidates: tuple[Candidate, ...],
+        transcript: Transcript,
+        *,
+        min_duration: float,
+        max_duration: float,
+        candidate_budget: int,
+    ) -> CandidateEvaluationBatch: ...
+
+
 class PipelineNotReadyError(RuntimeError):
-    """Raised while downstream candidate evaluation/publication is unavailable."""
+    """Raised while downstream scoring and final publication are unavailable."""
 
 
 def _source_origin(source: str) -> str:
@@ -120,6 +152,67 @@ def load_or_transcribe(
     return transcript
 
 
+def load_or_evaluate_candidates(
+    config: RunConfig,
+    source: AcquiredSource,
+    transcript: Transcript,
+    candidates: tuple[Candidate, ...],
+    *,
+    evaluator: CandidateEvaluator = evaluate_candidates,
+) -> CandidateEvaluationArtifact:
+    """Reuse or safely publish deterministic candidate evaluation results."""
+    key = candidate_evaluation_cache_key(
+        source_fingerprint=source.fingerprint,
+        candidate_generator_version=CANDIDATE_GENERATOR_VERSION,
+        evaluation_version=CANDIDATE_EVALUATION_VERSION,
+        min_duration=config.min_duration,
+        max_duration=config.max_duration,
+        candidate_budget=config.candidate_budget,
+    )
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    if not config.force_recompute:
+        try:
+            cached = read_candidate_evaluation(paths, cache_key=key)
+        except InvalidCandidateEvaluationArtifactError:
+            logger.warning("stage=evaluate cache=invalid; recomputing")
+        else:
+            if cached is not None:
+                logger.info("stage=evaluate cache=hit")
+                return cached
+
+    logger.info("stage=evaluate cache=miss")
+    batch = evaluator(
+        candidates,
+        transcript,
+        min_duration=config.min_duration,
+        max_duration=config.max_duration,
+        candidate_budget=config.candidate_budget,
+    )
+    artifact = CandidateEvaluationArtifact(
+        source_fingerprint=source.fingerprint,
+        candidate_generator_version=CANDIDATE_GENERATOR_VERSION,
+        evaluation_version=CANDIDATE_EVALUATION_VERSION,
+        min_duration=config.min_duration,
+        max_duration=config.max_duration,
+        candidate_budget=config.candidate_budget,
+        evaluations=batch.evaluations,
+    )
+    write_candidate_evaluation(
+        paths,
+        artifact,
+        cache_key=key,
+        replace=paths.candidates.exists(),
+    )
+    return artifact
+
+
 def run_pipeline(
     config: RunConfig,
     *,
@@ -127,12 +220,13 @@ def run_pipeline(
     probe: ProbeMedia = probe_media,
     transcriber: TranscriptionProvider | None = None,
     candidate_generator: CandidateGenerator = generate_candidates,
+    candidate_evaluator: CandidateEvaluator = evaluate_candidates,
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after generating candidates until candidate
-    evaluation and artifact publication are available. Raising here prevents
-    the CLI from reporting a completed run for a partial pipeline.
+    The pipeline deliberately stops after candidate evaluation until scoring and
+    final artifact publication are available. Raising here prevents the CLI
+    from reporting a completed run for a partial pipeline.
     """
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
@@ -160,7 +254,22 @@ def run_pipeline(
         max_duration=config.max_duration,
     )
     logger.info("stage=candidates complete count=%d", len(candidates))
+    logger.info("stage=evaluate")
+    evaluation = load_or_evaluate_candidates(
+        config,
+        source,
+        transcript,
+        candidates,
+        evaluator=candidate_evaluator,
+    )
+    hard_failed = sum(item.hard_failed for item in evaluation.evaluations)
+    logger.info(
+        "stage=evaluate complete generated=%d hard_failed=%d shortlisted=%d",
+        len(evaluation.evaluations),
+        hard_failed,
+        len(evaluation.shortlist_ids),
+    )
     raise PipelineNotReadyError(
-        "Pipeline stops after candidate generation until candidate evaluation "
-        "and artifact publication are implemented"
+        "Pipeline stops after candidate generation and candidate evaluation "
+        "until scoring and final artifact publication are implemented"
     )

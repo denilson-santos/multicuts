@@ -22,6 +22,7 @@ class RunConfig:
     language: str | None = None
     min_duration: float = 15.0
     max_duration: float = 60.0
+    candidate_budget: int = 50
     subtitle_template_dir: Path | None = None
     keep_intermediates: bool = False
     force_recompute: bool = False
@@ -61,6 +62,8 @@ class RunConfig:
                 raise ConfigurationError(f"{field_name} must be finite and positive")
         if self.min_duration > self.max_duration:
             raise ConfigurationError("min_duration must not exceed max_duration")
+        if type(self.candidate_budget) is not int or self.candidate_budget <= 0:
+            raise ConfigurationError("candidate_budget must be a positive integer")
 
         if self.language is not None:
             if not isinstance(self.language, str) or not self.language.strip():

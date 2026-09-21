@@ -49,7 +49,7 @@ completed and its package-level completion criteria pass.
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
 | [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
 | [007 Semantic candidates](007-semantic-candidates/) | M2 | completed | P1 | 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic semantic units and bounded candidate windows with stable identities |
-| [008 Candidate evaluation](008-candidate-evaluation/) | M2 | planned | P1 | 007 | — | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
+| [008 Candidate evaluation](008-candidate-evaluation/) | M2 | in-progress | P1 | 007 | — | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
 | [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | planned | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
 | [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | planned | P2 | 003, 004, 006 | — | Supported YouTube URLs normalized to controlled local media and safe metadata |

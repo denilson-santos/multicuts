@@ -140,6 +140,7 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
         "--min-score",
         "--min-duration",
         "--max-duration",
+        "--candidate-budget",
         "--aspect-ratio",
         "--subtitle-template",
         "--subtitle-template-dir",
