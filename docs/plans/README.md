@@ -5,11 +5,11 @@
 `multicuts` has completed the project bootstrap, domain foundation, local
 source/media preflight, CLI foundation, `multisubs` transcription adapter, the
 output-local transcript cache, semantic candidate generation, and deterministic
-candidate evaluation. The integrated pipeline stops before heuristic scoring.
+candidate evaluation, explainable heuristic scoring, and YouTube acquisition.
+The integrated pipeline currently stops after deterministic candidate selection.
 
-Packages 009–011 remain the immediate implementation queue: explainable
-heuristic scoring, non-redundant top-K selection, and YouTube acquisition.
-This planning batch adds package 012 as the parallel
+Package 010 is the active critical-path implementation: non-redundant top-K
+selection. This planning batch adds package 012 as the parallel
 semantic/hybrid scoring track and packages 013–016 as the M3 path from selected
 candidates through refined boundaries, final-geometry rendering, subtitles,
 and complete run artifacts. M4 release hardening remains later work.
@@ -49,9 +49,9 @@ completed and its package-level completion criteria pass.
 | [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
 | [007 Semantic candidates](007-semantic-candidates/) | M2 | completed | P1 | 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic semantic units and bounded candidate windows with stable identities |
 | [008 Candidate evaluation](008-candidate-evaluation/) | M2 | completed | P1 | 007 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
-| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | in-review | P1 | 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
-| [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
-| [011 YouTube acquisition](011-youtube-acquisition/) | M1 | in-review | P2 | 003, 004, 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Supported YouTube URLs normalized to controlled local media and safe metadata |
+| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | completed | P1 | 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
+| [010 Ranking and selection](010-ranking-selection/) | M2 | in-review | P1 | 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Deterministic non-redundant top-K selection honoring the score threshold |
+| [011 YouTube acquisition](011-youtube-acquisition/) | M1 | completed | P2 | 003, 004, 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Supported YouTube URLs normalized to controlled local media and safe metadata |
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | planned | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
 | [013 Boundary refinement](013-boundary-refinement/) | M3 | planned | P1 | 010 | — | Clean source-bounded render intervals that preserve scored-content provenance |
 | [014 Clip rendering](014-clip-rendering/) | M3 | planned | P1 | 004, 013 | — | Safe accurate `original` and center-cropped `9:16` raw clips |

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 008 Candidate evaluation |
 | Unlocks | 010 Ranking and selection; future semantic/hybrid scorer integration |
@@ -65,10 +65,10 @@ than imply statistical calibration.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define versioned score contracts](001-define-score-contracts.md) | in-review | P1 | Package 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Valid score dimensions, confidence, penalties, reason, and provenance |
-| [002 Implement heuristic judgments](002-implement-heuristic-judgments.md) | in-review | P1 | 001 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Deterministic dimension evidence without fabricated provider output |
-| [003 Compose final scores and penalties](003-compose-scores-and-penalties.md) | in-review | P1 | 002 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reproducible weighted `0..100` results under `scoring-v1` |
-| [004 Persist and integrate heuristic scoring](004-persist-and-integrate-scoring.md) | in-review | P1 | 003 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reusable scored candidates and an operational heuristic pipeline path |
+| [001 Define versioned score contracts](001-define-score-contracts.md) | completed | P1 | Package 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Valid score dimensions, confidence, penalties, reason, and provenance |
+| [002 Implement heuristic judgments](002-implement-heuristic-judgments.md) | completed | P1 | 001 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Deterministic dimension evidence without fabricated provider output |
+| [003 Compose final scores and penalties](003-compose-scores-and-penalties.md) | completed | P1 | 002 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reproducible weighted `0..100` results under `scoring-v1` |
+| [004 Persist and integrate heuristic scoring](004-persist-and-integrate-scoring.md) | completed | P1 | 003 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reusable scored candidates and an operational heuristic pipeline path |
 
 ## Suggested task sequence
 

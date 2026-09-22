@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 009.001 Define versioned score contracts |
 | PR | [#33](https://github.com/denilson-santos/multicuts/pull/33) |
