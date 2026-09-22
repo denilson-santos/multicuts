@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 009.002 Implement heuristic judgments |
-| PR | — |
+| PR | [#33](https://github.com/denilson-santos/multicuts/pull/33) |
 
 ## Objective
 

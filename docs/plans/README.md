@@ -49,7 +49,7 @@ completed and its package-level completion criteria pass.
 | [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
 | [007 Semantic candidates](007-semantic-candidates/) | M2 | completed | P1 | 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic semantic units and bounded candidate windows with stable identities |
 | [008 Candidate evaluation](008-candidate-evaluation/) | M2 | completed | P1 | 007 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
-| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | in-progress | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
+| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | in-review | P1 | 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
 | [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | planned | P2 | 003, 004, 006 | — | Supported YouTube URLs normalized to controlled local media and safe metadata |
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | planned | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
