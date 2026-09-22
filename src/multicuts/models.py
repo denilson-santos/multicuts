@@ -465,3 +465,138 @@ class CandidateEvaluationArtifact:
             evaluation.candidate.candidate_id
             for evaluation in sorted(ranked, key=lambda item: item.shortlist_rank or 0)
         )
+
+
+SCORE_DIMENSIONS = (
+    "hook",
+    "standalone_context",
+    "payoff",
+    "clarity",
+    "emotion_surprise",
+    "quotability",
+    "information_density",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreDimension:
+    name: str
+    value: float
+
+    def __post_init__(self) -> None:
+        if self.name not in SCORE_DIMENSIONS:
+            raise ValueError("unknown score dimension")
+        if (
+            isinstance(self.value, bool)
+            or not isinstance(self.value, (int, float))
+            or not isfinite(self.value)
+            or not 0 <= self.value <= 100
+        ):
+            raise ValueError("dimension value must be finite and within 0..100")
+
+
+@dataclass(frozen=True, slots=True)
+class ScorePenalty:
+    code: str
+    points: float
+    reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.code, str)
+            or not self.code.strip()
+            or not isinstance(self.reason, str)
+            or not self.reason.strip()
+        ):
+            raise ValueError("penalty code and reason must not be empty")
+        if (
+            isinstance(self.points, bool)
+            or not isinstance(self.points, (int, float))
+            or not isfinite(self.points)
+            or self.points < 0
+        ):
+            raise ValueError("penalty points must be finite and non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreResult:
+    """Provider-independent, auditable score for one candidate."""
+
+    score: float
+    base_score: float
+    confidence: float
+    dimensions: tuple[ScoreDimension, ...]
+    penalties: tuple[ScorePenalty, ...]
+    reason: str
+    scoring_schema_version: int
+    scoring_algorithm_version: str
+    scorer: str
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("score", "base_score"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or not 0 <= value <= 100
+            ):
+                raise ValueError(f"{name} must be finite and within 0..100")
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, (int, float))
+            or not isfinite(self.confidence)
+            or not 0 <= self.confidence <= 1
+        ):
+            raise ValueError("score confidence must be finite and within 0..1")
+        if (
+            not isinstance(self.dimensions, tuple)
+            or any(not isinstance(item, ScoreDimension) for item in self.dimensions)
+            or tuple(item.name for item in self.dimensions) != SCORE_DIMENSIONS
+        ):
+            raise ValueError("score dimensions must contain the closed ordered set")
+        if not isinstance(self.penalties, tuple) or any(
+            not isinstance(item, ScorePenalty) for item in self.penalties
+        ):
+            raise ValueError("score penalties must be structured values")
+        if len({item.code for item in self.penalties}) != len(self.penalties):
+            raise ValueError("score penalties must be unique")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("score reason must not be empty")
+        if (
+            type(self.scoring_schema_version) is not int
+            or self.scoring_schema_version <= 0
+        ):
+            raise ValueError("scoring schema version must be positive")
+        if (
+            not isinstance(self.scoring_algorithm_version, str)
+            or not self.scoring_algorithm_version.strip()
+        ):
+            raise ValueError("scoring algorithm version must not be empty")
+        for name in ("provider", "model", "prompt_version"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{name} must be non-empty when present")
+        if self.scorer == "heuristic":
+            if any(
+                value is not None
+                for value in (self.provider, self.model, self.prompt_version)
+            ):
+                raise ValueError("heuristic scores cannot claim semantic provenance")
+        elif not isinstance(self.scorer, str) or not self.scorer.strip():
+            raise ValueError("scorer must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredCandidate:
+    candidate_id: str
+    result: ScoreResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.candidate_id, str) or not self.candidate_id.strip():
+            raise ValueError("scored candidate ID must not be empty")
+        if not isinstance(self.result, ScoreResult):
+            raise ValueError("scored candidate result must be a score")

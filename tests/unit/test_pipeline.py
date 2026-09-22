@@ -9,11 +9,17 @@ from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
     MediaError,
+    ScoringError,
     TranscriptionError,
 )
 from multicuts.models import (
     AcquiredSource,
     Candidate,
+    CandidateEvaluation,
+    CandidateEvaluationBatch,
+    CandidateFeatures,
+    ChecklistOutcome,
+    ChecklistResult,
     MediaInfo,
     Transcript,
     TranscriptSegment,
@@ -103,7 +109,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
         return ()
 
     transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after candidate generation"):
+    with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
         run_pipeline(
             config,
             acquire=acquire,
@@ -354,7 +360,6 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
         config,
         clips=7,
         min_score=40,
-        scorer="another",
         aspect_ratio="9:16",
         subtitle_template="different",
     )
@@ -369,3 +374,59 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
             )
 
     assert len(transcriber.calls) == 1
+
+
+def test_pipeline_rejects_unsupported_scorer_after_reusing_transcript(
+    config: RunConfig, transcript: Transcript
+) -> None:
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
+    with pytest.raises(ScoringError, match="Unsupported scorer"):
+        run_pipeline(
+            replace(config, scorer="hybrid"),
+            acquire=lambda _value: source,
+            probe=lambda _value: media,
+            transcriber=FakeTranscriber(transcript),
+        )
+
+
+def test_pipeline_scores_shortlist_before_selection_boundary(
+    config: RunConfig, transcript: Transcript
+) -> None:
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(40.0, 1920, 1080, 1920, 1080, 0, 1)
+    candidate = Candidate(
+        "candidate-v1:one", 0.0, 30.0, "A complete example with a payoff.", (0,), "1"
+    )
+    evaluated = CandidateEvaluation(
+        candidate=candidate,
+        features=CandidateFeatures(
+            duration=30.0,
+            word_count=6,
+            timed_word_count=6,
+            words_per_second=1.5,
+            opening_quality=0.8,
+            standalone_context=0.75,
+            payoff=0.7,
+        ),
+        checklist=(ChecklistResult("valid_duration", ChecklistOutcome.PASS),),
+        shortlist_rank=1,
+    )
+
+    def evaluator(*_args: object, **_kwargs: object) -> CandidateEvaluationBatch:
+        return CandidateEvaluationBatch((evaluated,), (evaluated,))
+
+    with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
+        run_pipeline(
+            config,
+            acquire=lambda _value: source,
+            probe=lambda _value: media,
+            transcriber=FakeTranscriber(transcript),
+            candidate_generator=lambda *_args, **_kwargs: (candidate,),
+            candidate_evaluator=evaluator,
+        )
+
+    score_path = next(config.output_dir.rglob("scores.json"))
+    assert '"candidate_id": "candidate-v1:one"' in score_path.read_text(
+        encoding="utf-8"
+    )

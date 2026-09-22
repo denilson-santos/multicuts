@@ -48,6 +48,7 @@ class WorkspacePaths:
     source_metadata: Path
     transcript: Path
     candidates: Path
+    scores: Path
     work: Path
 
 
@@ -146,6 +147,7 @@ def prepare_workspace(
         source_metadata=root / "source" / "metadata.json",
         transcript=root / "transcript" / "transcript.json",
         candidates=root / "candidates" / "candidates.json",
+        scores=root / "scoring" / "scores.json",
         work=root / ".work",
     )
     try:
@@ -155,6 +157,7 @@ def prepare_workspace(
             paths.source_metadata.parent,
             paths.transcript.parent,
             paths.candidates.parent,
+            paths.scores.parent,
             paths.work,
         ):
             directory.mkdir(exist_ok=True)

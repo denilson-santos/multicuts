@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Package 007 Semantic candidates |
-| PR | — |
+| PR | [#31](https://github.com/denilson-santos/multicuts/pull/31) |
 
 ## Objective
 

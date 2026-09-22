@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 009.002 Implement heuristic judgments |
 | PR | — |

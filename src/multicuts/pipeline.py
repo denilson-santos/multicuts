@@ -27,17 +27,27 @@ from multicuts.candidates.generator import (
     generate_candidates,
 )
 from multicuts.config import RunConfig
-from multicuts.errors import TranscriptionError
+from multicuts.errors import ScoringError, TranscriptionError
 from multicuts.local_source import acquire_local_source
 from multicuts.media import probe_media
 from multicuts.models import (
     AcquiredSource,
     Candidate,
+    CandidateEvaluation,
     CandidateEvaluationArtifact,
     CandidateEvaluationBatch,
     MediaInfo,
+    ScoredCandidate,
+    ScoreResult,
     Transcript,
 )
+from multicuts.scoring.artifacts import (
+    InvalidScoringArtifactError,
+    read_scores,
+    scoring_cache_key,
+    write_scores,
+)
+from multicuts.scoring.heuristic import score_heuristically
 
 AcquireSource = Callable[[str], AcquiredSource]
 ProbeMedia = Callable[[AcquiredSource], MediaInfo]
@@ -90,6 +100,9 @@ class CandidateEvaluator(Protocol):
 
 class PipelineNotReadyError(RuntimeError):
     """Raised while downstream scoring and final publication are unavailable."""
+
+
+HeuristicScorer = Callable[[CandidateEvaluation], ScoreResult]
 
 
 def _source_origin(source: str) -> str:
@@ -213,6 +226,73 @@ def load_or_evaluate_candidates(
     return artifact
 
 
+def load_or_score_candidates(
+    config: RunConfig,
+    source: AcquiredSource,
+    transcript: Transcript,
+    evaluation: CandidateEvaluationArtifact,
+    *,
+    scorer: HeuristicScorer = score_heuristically,
+) -> tuple[ScoredCandidate, ...]:
+    """Reuse or publish scores for the bounded, eligible candidate shortlist."""
+    if config.scorer != "heuristic":
+        raise ScoringError(f"Unsupported scorer: {config.scorer}")
+    evaluation_key = candidate_evaluation_cache_key(
+        source_fingerprint=evaluation.source_fingerprint,
+        candidate_generator_version=evaluation.candidate_generator_version,
+        evaluation_version=evaluation.evaluation_version,
+        min_duration=evaluation.min_duration,
+        max_duration=evaluation.max_duration,
+        candidate_budget=evaluation.candidate_budget,
+    )
+    shortlisted = tuple(
+        sorted(
+            (
+                item
+                for item in evaluation.evaluations
+                if item.shortlist_rank is not None
+            ),
+            key=lambda item: item.shortlist_rank or 0,
+        )
+    )
+    key = scoring_cache_key(evaluation_key=evaluation_key, shortlist=shortlisted)
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    if not config.force_recompute:
+        try:
+            cached = read_scores(
+                paths, cache_key=key, expected_ids=evaluation.shortlist_ids
+            )
+        except InvalidScoringArtifactError:
+            logger.warning("stage=score cache=invalid; recomputing")
+        else:
+            if cached is not None:
+                logger.info("stage=score cache=hit count=%d", len(cached))
+                return cached
+
+    logger.info("stage=score cache=miss count=%d", len(shortlisted))
+    scores: list[ScoredCandidate] = []
+    for item in shortlisted:
+        try:
+            result = scorer(item)
+            if result.scorer != "heuristic":
+                raise ValueError("scorer returned incompatible provenance")
+            scores.append(ScoredCandidate(item.candidate.candidate_id, result))
+        except ValueError as exc:
+            raise ScoringError(
+                "Heuristic scoring failed for a shortlisted candidate"
+            ) from exc
+    completed = tuple(scores)
+    write_scores(paths, completed, cache_key=key, replace=paths.scores.exists())
+    return completed
+
+
 def run_pipeline(
     config: RunConfig,
     *,
@@ -221,10 +301,11 @@ def run_pipeline(
     transcriber: TranscriptionProvider | None = None,
     candidate_generator: CandidateGenerator = generate_candidates,
     candidate_evaluator: CandidateEvaluator = evaluate_candidates,
+    heuristic_scorer: HeuristicScorer = score_heuristically,
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after candidate evaluation until scoring and
+    The pipeline deliberately stops after heuristic scoring until selection and
     final artifact publication are available. Raising here prevents the CLI
     from reporting a completed run for a partial pipeline.
     """
@@ -269,7 +350,15 @@ def run_pipeline(
         hard_failed,
         len(evaluation.shortlist_ids),
     )
+    scores = load_or_score_candidates(
+        config,
+        source,
+        transcript,
+        evaluation,
+        scorer=heuristic_scorer,
+    )
+    logger.info("stage=score complete count=%d", len(scores))
     raise PipelineNotReadyError(
-        "Pipeline stops after candidate generation and candidate evaluation "
-        "until scoring and final artifact publication are implemented"
+        "Pipeline stops after heuristic scoring until selection and final "
+        "artifact publication are implemented"
     )

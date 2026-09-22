@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 009.003 Compose final scores and penalties |
 | PR | — |
