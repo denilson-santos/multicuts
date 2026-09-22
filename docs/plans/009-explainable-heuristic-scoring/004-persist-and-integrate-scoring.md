@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 009.003 Compose final scores and penalties |
 | PR | [#33](https://github.com/denilson-santos/multicuts/pull/33) |

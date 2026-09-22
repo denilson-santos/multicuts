@@ -185,6 +185,10 @@ multicuts "https://www.youtube.com/watch?v=..." \
   --min-score 65
 ```
 
+Selection suppresses temporal overlap at an inclusive `0.60` ratio and
+normalized near-duplicate text at `0.90` by default. Override these policies
+with `--overlap-threshold` and `--text-threshold`.
+
 ### Keep the original aspect ratio
 
 ```bash

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M1 — Source and transcript |
-| Status | in-review |
+| Status | completed |
 | Priority | P2 |
 | Depends on | 003 CLI and pipeline foundation; 004 Local source and media; 006 Transcript cache |
 | Unlocks | YouTube-source parity with the local transcription/intelligence path |
@@ -66,9 +66,9 @@ accept an explicit workspace.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define source routing and metadata contracts](001-define-source-routing.md) | in-review | P2 | Packages 003, 004 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Explicit local/YouTube routing and safe normalized source metadata |
-| [002 Implement the yt-dlp adapter](002-implement-youtube-adapter.md) | in-review | P2 | 001 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Controlled download and stable provider-independent result |
-| [003 Integrate and verify YouTube acquisition](003-integrate-youtube-acquisition.md) | in-review | P2 | 002, Package 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Remote sources enter the existing probe/transcript path safely |
+| [001 Define source routing and metadata contracts](001-define-source-routing.md) | completed | P2 | Packages 003, 004 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Explicit local/YouTube routing and safe normalized source metadata |
+| [002 Implement the yt-dlp adapter](002-implement-youtube-adapter.md) | completed | P2 | 001 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Controlled download and stable provider-independent result |
+| [003 Integrate and verify YouTube acquisition](003-integrate-youtube-acquisition.md) | completed | P2 | 002, Package 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Remote sources enter the existing probe/transcript path safely |
 
 ## Current implementation notes
 

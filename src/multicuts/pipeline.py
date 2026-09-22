@@ -26,6 +26,13 @@ from multicuts.candidates.generator import (
     CANDIDATE_GENERATOR_VERSION,
     generate_candidates,
 )
+from multicuts.candidates.ranking import NormalizedTextRedundancy, select_candidates
+from multicuts.candidates.selection_artifacts import (
+    InvalidSelectionArtifactError,
+    read_selection,
+    selection_cache_key,
+    write_selection,
+)
 from multicuts.config import RunConfig
 from multicuts.errors import ScoringError, TranscriptionError
 from multicuts.media import probe_media
@@ -38,6 +45,8 @@ from multicuts.models import (
     MediaInfo,
     ScoredCandidate,
     ScoreResult,
+    SelectionResult,
+    SelectionStatus,
     Transcript,
 )
 from multicuts.scoring.artifacts import (
@@ -296,6 +305,90 @@ def load_or_score_candidates(
     return completed
 
 
+def load_or_select_candidates(
+    config: RunConfig,
+    source: AcquiredSource,
+    transcript: Transcript,
+    evaluation: CandidateEvaluationArtifact,
+    scores: tuple[ScoredCandidate, ...],
+) -> SelectionResult:
+    """Reuse or publish deterministic top-K selection and suppression evidence."""
+    evaluation_key = candidate_evaluation_cache_key(
+        source_fingerprint=evaluation.source_fingerprint,
+        candidate_generator_version=evaluation.candidate_generator_version,
+        evaluation_version=evaluation.evaluation_version,
+        min_duration=evaluation.min_duration,
+        max_duration=evaluation.max_duration,
+        candidate_budget=evaluation.candidate_budget,
+    )
+    shortlisted = tuple(
+        sorted(
+            (
+                item
+                for item in evaluation.evaluations
+                if item.shortlist_rank is not None
+            ),
+            key=lambda item: item.shortlist_rank or 0,
+        )
+    )
+    scoring_key = scoring_cache_key(
+        evaluation_key=evaluation_key, shortlist=shortlisted
+    )
+    key = selection_cache_key(
+        scoring_key=scoring_key,
+        scores=scores,
+        top_k=config.clips,
+        min_score=config.min_score,
+        overlap_threshold=config.overlap_threshold,
+        text_similarity_threshold=config.text_similarity_threshold,
+    )
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    if not config.force_recompute:
+        try:
+            cached = read_selection(
+                paths,
+                cache_key=key,
+                evaluations=evaluation.evaluations,
+                scores=scores,
+                overlap_threshold=config.overlap_threshold,
+                text_similarity_threshold=config.text_similarity_threshold,
+            )
+        except InvalidSelectionArtifactError:
+            logger.warning("stage=select cache=invalid; recomputing")
+        else:
+            if cached is not None:
+                logger.info("stage=select cache=hit selected=%d", len(cached.selected))
+                return cached
+
+    logger.info("stage=select cache=miss candidates=%d", len(scores))
+    selection = select_candidates(
+        evaluation.evaluations,
+        scores,
+        top_k=config.clips,
+        min_score=config.min_score,
+        overlap_threshold=config.overlap_threshold,
+        redundancy_policy=NormalizedTextRedundancy(config.text_similarity_threshold),
+    )
+    write_selection(
+        paths,
+        selection,
+        cache_key=key,
+        evaluations=evaluation.evaluations,
+        scores=scores,
+        overlap_threshold=config.overlap_threshold,
+        text_similarity_threshold=config.text_similarity_threshold,
+        replace=paths.selection.exists(),
+    )
+    return selection
+
+
 def run_pipeline(
     config: RunConfig,
     *,
@@ -308,9 +401,9 @@ def run_pipeline(
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after heuristic scoring until selection and
-    final artifact publication are available. Raising here prevents the CLI
-    from reporting a completed run for a partial pipeline.
+    The pipeline deliberately stops after selection until boundary refinement
+    and final artifact publication are available. Raising here prevents the
+    CLI from reporting a completed run for a partial pipeline.
     """
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
@@ -362,7 +455,36 @@ def run_pipeline(
         scorer=heuristic_scorer,
     )
     logger.info("stage=score complete count=%d", len(scores))
+    selection = load_or_select_candidates(
+        config,
+        source,
+        transcript,
+        evaluation,
+        scores,
+    )
+    suppressed = sum(
+        decision.status
+        in (SelectionStatus.TEMPORAL_OVERLAP, SelectionStatus.TEXT_REDUNDANCY)
+        for decision in selection.decisions
+    )
+    eligible = sum(
+        decision.status is not SelectionStatus.BELOW_THRESHOLD
+        for decision in selection.decisions
+    )
+    logger.info(
+        "stage=select complete eligible=%d suppressed=%d selected=%d",
+        eligible,
+        suppressed,
+        len(selection.selected),
+    )
+    for selected in selection.selected:
+        logger.info(
+            "stage=select rank=%d candidate_id=%s score=%.2f",
+            selected.rank,
+            selected.candidate_id,
+            selected.result.score,
+        )
     raise PipelineNotReadyError(
-        "Pipeline stops after heuristic scoring until selection and final "
-        "artifact publication are implemented"
+        "Pipeline stops after candidate selection until boundary refinement "
+        "and final artifact publication are implemented"
     )

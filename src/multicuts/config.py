@@ -23,6 +23,8 @@ class RunConfig:
     min_duration: float = 15.0
     max_duration: float = 60.0
     candidate_budget: int = 50
+    overlap_threshold: float = 0.60
+    text_similarity_threshold: float = 0.90
     subtitle_template_dir: Path | None = None
     keep_intermediates: bool = False
     force_recompute: bool = False
@@ -64,6 +66,17 @@ class RunConfig:
             raise ConfigurationError("min_duration must not exceed max_duration")
         if type(self.candidate_budget) is not int or self.candidate_budget <= 0:
             raise ConfigurationError("candidate_budget must be a positive integer")
+        for field_name in ("overlap_threshold", "text_similarity_threshold"):
+            value = getattr(self, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ConfigurationError(
+                    f"{field_name} must be a finite ratio from 0 to 1"
+                )
 
         if self.language is not None:
             if not isinstance(self.language, str) or not self.language.strip():

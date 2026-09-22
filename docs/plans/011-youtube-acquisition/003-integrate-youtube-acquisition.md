@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P2 |
 | Depends on | 011.002 Implement the yt-dlp adapter; Package 006 Transcript cache |
 | PR | [#34](https://github.com/denilson-santos/multicuts/pull/34) |

@@ -27,6 +27,8 @@ DEFAULT_OUTPUT_DIR = Path("multicuts-output")
 DEFAULT_CLIPS = 5
 DEFAULT_MIN_SCORE = 0
 DEFAULT_CANDIDATE_BUDGET = 50
+DEFAULT_OVERLAP_THRESHOLD = 0.60
+DEFAULT_TEXT_SIMILARITY_THRESHOLD = 0.90
 DEFAULT_ASPECT_RATIO = "original"
 DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
 DEFAULT_SCORER = "heuristic"
@@ -177,6 +179,8 @@ def _build_run_config(
     min_duration: float,
     max_duration: float,
     candidate_budget: int,
+    overlap_threshold: float,
+    text_similarity_threshold: float,
     aspect_ratio: str,
     subtitle_template: str,
     subtitle_template_dir: Path | None,
@@ -200,6 +204,8 @@ def _build_run_config(
         min_duration=min_duration,
         max_duration=max_duration,
         candidate_budget=candidate_budget,
+        overlap_threshold=overlap_threshold,
+        text_similarity_threshold=text_similarity_threshold,
         subtitle_template_dir=(
             subtitle_template_dir.expanduser()
             if subtitle_template_dir is not None
@@ -278,6 +284,22 @@ def run_command(
             help="Maximum candidates sent to downstream scoring.",
         ),
     ] = DEFAULT_CANDIDATE_BUDGET,
+    overlap_threshold: Annotated[
+        float,
+        typer.Option(
+            "--overlap-threshold",
+            metavar="RATIO",
+            help="Inclusive temporal-overlap suppression threshold from 0 to 1.",
+        ),
+    ] = DEFAULT_OVERLAP_THRESHOLD,
+    text_similarity_threshold: Annotated[
+        float,
+        typer.Option(
+            "--text-threshold",
+            metavar="RATIO",
+            help="Inclusive normalized-text redundancy threshold from 0 to 1.",
+        ),
+    ] = DEFAULT_TEXT_SIMILARITY_THRESHOLD,
     aspect_ratio: Annotated[
         str,
         typer.Option(
@@ -343,6 +365,8 @@ def run_command(
         min_duration=min_duration,
         max_duration=max_duration,
         candidate_budget=candidate_budget,
+        overlap_threshold=overlap_threshold,
+        text_similarity_threshold=text_similarity_threshold,
         aspect_ratio=aspect_ratio,
         subtitle_template=subtitle_template,
         subtitle_template_dir=subtitle_template_dir,

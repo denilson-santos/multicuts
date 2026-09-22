@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 010.003 Select and persist top-K candidates |
-| PR | — |
+| PR | [#35](https://github.com/denilson-santos/multicuts/pull/35) |
 
 ## Objective
 

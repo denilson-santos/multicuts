@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P2 |
 | Depends on | Packages 003 CLI and pipeline foundation, 004 Local source and media |
 | PR | [#34](https://github.com/denilson-santos/multicuts/pull/34) |

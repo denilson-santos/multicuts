@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 009 Explainable heuristic scoring |
 | Unlocks | Boundary refinement and media-output packages |
-| PRs | — |
+| PRs | [#35](https://github.com/denilson-santos/multicuts/pull/35) |
 
 ## Objective and expected outcome
 
@@ -64,10 +64,10 @@ redundancy with temporal overlap.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define ranking primitives and order](001-define-ranking-primitives.md) | planned | P1 | Package 009 | — | Valid selected-candidate values and deterministic total order |
-| [002 Implement overlap and redundancy policies](002-implement-redundancy-policies.md) | planned | P1 | 001 | — | Explainable temporal suppression and an extensible diversity boundary |
-| [003 Select and persist top-K candidates](003-select-and-persist-top-k.md) | planned | P1 | 002 | — | Thresholded, non-redundant, reusable selection results |
-| [004 Integrate selection into the pipeline](004-integrate-selection-stage.md) | planned | P1 | 003 | — | Intelligence pipeline reaches selected candidates and stops before M3 |
+| [001 Define ranking primitives and order](001-define-ranking-primitives.md) | in-review | P1 | Package 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Valid selected-candidate values and deterministic total order |
+| [002 Implement overlap and redundancy policies](002-implement-redundancy-policies.md) | in-review | P1 | 001 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Explainable temporal suppression and an extensible diversity boundary |
+| [003 Select and persist top-K candidates](003-select-and-persist-top-k.md) | in-review | P1 | 002 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Thresholded, non-redundant, reusable selection results |
+| [004 Integrate selection into the pipeline](004-integrate-selection-stage.md) | in-review | P1 | 003 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Intelligence pipeline reaches selected candidates and stops before M3 |
 
 ## Suggested task sequence
 
@@ -92,14 +92,17 @@ stage and move the pipeline stopping point to the M3 handoff.
 
 ## Risks, assumptions, and open questions
 
-- The PRD suggests but does not mandate a `0.60` overlap threshold. Task 002 must
-  record the initial default before implementation and keep it configurable.
-- The PRD leaves embeddings versus deterministic text similarity open. This
-  package assumes a small deterministic strategy or no semantic suppression
-  beyond an extensible policy; it must not add a remote embedding dependency.
-- Semantic completeness is part of the tie order but lacks a standalone model
-  field. Task 001 must derive it from existing validated score/checklist evidence
-  or record a narrow field without recomputing semantic judgments.
 - Boundary refinement may later alter intervals. The next package must retain
   the scored span and rescore or mark material text changes as required by
   FR-BND-003.
+
+## Implementation decisions
+
+- Temporal overlap uses the documented intersection-over-shorter-interval
+  metric. The initial default is `0.60`, equality suppresses the weaker
+  candidate, and `--overlap-threshold` configures it.
+- Non-temporal redundancy uses a replaceable policy. The initial local policy
+  computes Jaccard similarity over case-folded alphanumeric token sets, defaults
+  to the inclusive `0.90` threshold, and is configurable with `--text-threshold`.
+- Static semantic completeness comes from the validated `standalone_context`
+  score dimension. Ranking does not create or recompute a semantic judgment.
