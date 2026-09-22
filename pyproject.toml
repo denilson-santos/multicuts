@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "typer>=0.27.2,<0.28",
+    "yt-dlp>=2025.1,<2027",
     "multisubs[whisperx] @ https://github.com/denilson-santos/multisubs/releases/download/v4.2.0/multisubs-4.2.0-py3-none-any.whl#sha256=1f7cf94c1cd123974a1173e1bc05812b5152e7e0b27df7fb05f132e8b830ce5c",
 ]
 classifiers = [

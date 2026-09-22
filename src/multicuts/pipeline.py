@@ -28,7 +28,6 @@ from multicuts.candidates.generator import (
 )
 from multicuts.config import RunConfig
 from multicuts.errors import ScoringError, TranscriptionError
-from multicuts.local_source import acquire_local_source
 from multicuts.media import probe_media
 from multicuts.models import (
     AcquiredSource,
@@ -48,8 +47,12 @@ from multicuts.scoring.artifacts import (
     write_scores,
 )
 from multicuts.scoring.heuristic import score_heuristically
+from multicuts.source import (
+    acquire_source,
+    prepare_acquisition_workspace,
+)
 
-AcquireSource = Callable[[str], AcquiredSource]
+AcquireSource = Callable[[str, Path], AcquiredSource]
 ProbeMedia = Callable[[AcquiredSource], MediaInfo]
 
 logger = logging.getLogger(__name__)
@@ -296,7 +299,7 @@ def load_or_score_candidates(
 def run_pipeline(
     config: RunConfig,
     *,
-    acquire: AcquireSource = acquire_local_source,
+    acquire: AcquireSource = acquire_source,
     probe: ProbeMedia = probe_media,
     transcriber: TranscriptionProvider | None = None,
     candidate_generator: CandidateGenerator = generate_candidates,
@@ -311,7 +314,8 @@ def run_pipeline(
     """
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
-    source = acquire(config.source)
+    workspace = prepare_acquisition_workspace(config.output_dir)
+    source = acquire(config.source, workspace)
     logger.info("stage=acquire complete origin=%s", source_origin)
     logger.info("stage=probe origin=%s", source_origin)
     media = probe(source)

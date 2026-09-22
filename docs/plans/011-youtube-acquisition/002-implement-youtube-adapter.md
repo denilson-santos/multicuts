@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | 011.001 Define source routing and metadata contracts |
 | PR | — |

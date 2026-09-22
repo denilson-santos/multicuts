@@ -44,7 +44,9 @@ from the default Python package index. The dependency selects the provider's
 `whisperx` extra so a full install preserves the current transcription backend
 and resolves its Torch/WhisperX dependencies. The hermetic CI checks install
 the project without runtime dependencies and install development tools
-separately; real transcription requires the full installation above.
+separately; real transcription requires the full installation above. YouTube
+sources use the `yt-dlp` Python API and must be publicly accessible; the
+downloaded media is kept in the run's controlled workspace before probing.
 
 Run the local quality and build checks from the activated environment:
 

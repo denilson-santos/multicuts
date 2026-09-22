@@ -25,6 +25,30 @@ def test_acquired_source_model_keeps_identity_without_file_access() -> None:
         source.fingerprint = "other"  # type: ignore[misc]
 
 
+def test_acquired_source_model_keeps_safe_remote_metadata() -> None:
+    source = AcquiredSource(
+        Path("/workspace/video.mp4"),
+        "youtube-sha256-v1:abc123",
+        source_kind="youtube",
+        provider_id="abc123",
+        title="A video",
+        original_url="https://www.youtube.com/watch?v=abc123",
+    )
+
+    assert source.source_id == "abc123"
+    assert source.source_title == "A video"
+    assert source.original_url == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_acquired_source_model_rejects_remote_metadata_on_local_source() -> None:
+    with pytest.raises(ValueError, match="local sources"):
+        AcquiredSource(
+            Path("/workspace/video.mp4"),
+            "sha256-v1:abc123",
+            title="Should not be fabricated",
+        )
+
+
 def test_media_info_model_distinguishes_coded_and_presentation_geometry() -> None:
     media = MediaInfo(
         duration=93.5,

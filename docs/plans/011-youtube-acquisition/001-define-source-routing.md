@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | Packages 003 CLI and pipeline foundation, 004 Local source and media |
 | PR | — |

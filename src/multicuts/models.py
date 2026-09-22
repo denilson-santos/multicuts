@@ -16,14 +16,51 @@ def _validate_interval(start: float | None, end: float | None) -> None:
 
 @dataclass(frozen=True, slots=True)
 class AcquiredSource:
-    """A source available locally with a stable identity for stage caches."""
+    """A source available locally with identity and safe origin metadata.
+
+    ``provider_id``, ``title``, and ``original_url`` are populated only for
+    remote providers.  Keeping these values optional lets local acquisition
+    retain its existing semantics without fabricating remote metadata.
+    """
 
     local_path: Path
     fingerprint: str
+    source_kind: str = "local"
+    provider_id: str | None = None
+    title: str | None = None
+    original_url: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.fingerprint:
+        if not isinstance(self.local_path, Path):
+            raise ValueError("source local path must be a Path")
+        if not isinstance(self.fingerprint, str) or not self.fingerprint.strip():
             raise ValueError("source fingerprint must not be empty")
+        if self.source_kind not in ("local", "youtube"):
+            raise ValueError("source kind must be 'local' or 'youtube'")
+        for field_name in ("provider_id", "title", "original_url"):
+            value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"source {field_name} must be non-empty when present")
+        if self.source_kind == "local" and (
+            self.provider_id is not None
+            or self.title is not None
+            or self.original_url is not None
+        ):
+            raise ValueError("local sources must not carry remote metadata")
+        if self.source_kind == "youtube" and (
+            self.provider_id is None or self.title is None or self.original_url is None
+        ):
+            raise ValueError("YouTube sources require ID, title, and original URL")
+
+    @property
+    def source_id(self) -> str | None:
+        """Return the provider ID under the source-oriented metadata name."""
+        return self.provider_id
+
+    @property
+    def source_title(self) -> str | None:
+        """Return the normalized title under an explicit metadata name."""
+        return self.title
 
 
 @dataclass(frozen=True, slots=True)

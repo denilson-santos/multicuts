@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | 011.002 Implement the yt-dlp adapter; Package 006 Transcript cache |
 | PR | — |
