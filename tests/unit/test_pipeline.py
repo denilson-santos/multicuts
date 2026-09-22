@@ -417,7 +417,7 @@ def test_pipeline_rejects_unsupported_scorer_after_reusing_transcript(
     with pytest.raises(ScoringError, match="Unsupported scorer"):
         run_pipeline(
             replace(config, scorer="hybrid"),
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=FakeTranscriber(transcript),
         )
@@ -452,7 +452,7 @@ def test_pipeline_scores_shortlist_before_selection_boundary(
     with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
         run_pipeline(
             config,
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=FakeTranscriber(transcript),
             candidate_generator=lambda *_args, **_kwargs: (candidate,),
