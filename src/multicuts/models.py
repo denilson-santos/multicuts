@@ -637,3 +637,132 @@ class ScoredCandidate:
             raise ValueError("scored candidate ID must not be empty")
         if not isinstance(self.result, ScoreResult):
             raise ValueError("scored candidate result must be a score")
+
+
+class SelectionStatus(str, Enum):
+    """The closed set of outcomes for one ranked candidate."""
+
+    SELECTED = "selected"
+    BELOW_THRESHOLD = "below_threshold"
+    TEMPORAL_OVERLAP = "temporal_overlap"
+    TEXT_REDUNDANCY = "text_redundancy"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionDecision:
+    """Explain why one scored candidate was selected or omitted."""
+
+    candidate_id: str
+    status: SelectionStatus
+    reason_code: str
+    rank: int | None = None
+    suppressed_by: str | None = None
+    evidence: float | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("candidate_id", "reason_code"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"selection {field_name} must not be empty")
+        if isinstance(self.status, str):
+            try:
+                object.__setattr__(self, "status", SelectionStatus(self.status))
+            except ValueError as exc:
+                raise ValueError("selection status is invalid") from exc
+        elif not isinstance(self.status, SelectionStatus):
+            raise ValueError("selection status is invalid")
+        if self.rank is not None and (type(self.rank) is not int or self.rank <= 0):
+            raise ValueError("selection rank must be a positive integer")
+        if self.suppressed_by is not None and (
+            not isinstance(self.suppressed_by, str) or not self.suppressed_by.strip()
+        ):
+            raise ValueError("selection suppressor must be non-empty when present")
+        if self.evidence is not None and (
+            isinstance(self.evidence, bool)
+            or not isinstance(self.evidence, (int, float))
+            or not isfinite(self.evidence)
+            or not 0.0 <= self.evidence <= 1.0
+        ):
+            raise ValueError("selection evidence must be a finite ratio from 0 to 1")
+        if self.status is SelectionStatus.SELECTED:
+            if self.rank is None or self.suppressed_by is not None:
+                raise ValueError("selected decisions require rank and no suppressor")
+        elif self.rank is not None:
+            raise ValueError("omitted decisions cannot have a rank")
+        if self.status in (
+            SelectionStatus.TEMPORAL_OVERLAP,
+            SelectionStatus.TEXT_REDUNDANCY,
+        ):
+            if self.suppressed_by is None or self.evidence is None:
+                raise ValueError("redundancy decisions require suppressor and evidence")
+        elif self.suppressed_by is not None:
+            raise ValueError("non-redundancy decisions cannot have a suppressor")
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedCandidate:
+    """One ranked candidate with its original evidence and scored interval."""
+
+    evaluation: CandidateEvaluation
+    scored: ScoredCandidate
+    rank: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scored, ScoredCandidate):
+            raise ValueError("selected candidate score link is invalid")
+        if self.evaluation.candidate.candidate_id != self.scored.candidate_id:
+            raise ValueError("selected candidate identity is inconsistent")
+        if self.evaluation.hard_failed or self.evaluation.shortlist_rank is None:
+            raise ValueError("selected candidates must come from the scoring shortlist")
+        if type(self.rank) is not int or self.rank <= 0:
+            raise ValueError("selected candidate rank must be positive")
+
+    @property
+    def candidate_id(self) -> str:
+        return self.evaluation.candidate.candidate_id
+
+    @property
+    def result(self) -> ScoreResult:
+        return self.scored.result
+
+    @property
+    def start(self) -> float:
+        return self.evaluation.candidate.start
+
+    @property
+    def end(self) -> float:
+        return self.evaluation.candidate.end
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionResult:
+    """Selected candidates and a decision for every scored candidate."""
+
+    selected: tuple[SelectedCandidate, ...]
+    decisions: tuple[SelectionDecision, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.selected, tuple) or not isinstance(
+            self.decisions, tuple
+        ):
+            raise ValueError("selection values must be tuples")
+        selected_ids = tuple(item.candidate_id for item in self.selected)
+        decision_ids = tuple(item.candidate_id for item in self.decisions)
+        if len(set(selected_ids)) != len(selected_ids):
+            raise ValueError("selected candidate IDs must be unique")
+        if len(set(decision_ids)) != len(decision_ids):
+            raise ValueError("selection decision IDs must be unique")
+        if tuple(item.rank for item in self.selected) != tuple(
+            range(1, len(self.selected) + 1)
+        ):
+            raise ValueError("selected candidate ranks must be contiguous")
+        selected_decisions = tuple(
+            item for item in self.decisions if item.status is SelectionStatus.SELECTED
+        )
+        if tuple(
+            item.candidate_id for item in selected_decisions
+        ) != selected_ids or tuple(item.rank for item in selected_decisions) != tuple(
+            item.rank for item in self.selected
+        ):
+            raise ValueError("selected candidates and decisions must agree")

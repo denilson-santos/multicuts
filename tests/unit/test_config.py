@@ -28,6 +28,8 @@ def test_run_config_uses_explicit_defaults_without_external_access(
     assert valid_config.language is None
     assert valid_config.min_duration == 15.0
     assert valid_config.max_duration == 60.0
+    assert valid_config.overlap_threshold == 0.60
+    assert valid_config.text_similarity_threshold == 0.90
     assert valid_config.subtitle_template_dir is None
     assert not valid_config.keep_intermediates
     assert not valid_config.force_recompute
@@ -86,6 +88,16 @@ def test_run_config_accepts_score_boundaries(
     valid_config: RunConfig, min_score: int
 ) -> None:
     assert replace(valid_config, min_score=min_score).min_score == min_score
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, True, float("inf"), float("nan")])
+def test_run_config_rejects_invalid_selection_thresholds(
+    valid_config: RunConfig, value: float
+) -> None:
+    with pytest.raises(ConfigurationError, match="overlap_threshold"):
+        replace(valid_config, overlap_threshold=value)
+    with pytest.raises(ConfigurationError, match="text_similarity_threshold"):
+        replace(valid_config, text_similarity_threshold=value)
 
 
 @pytest.mark.parametrize("duration", [0.0, -1.0, float("inf"), float("nan")])

@@ -109,7 +109,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
         return ()
 
     transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
+    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
         run_pipeline(
             config,
             acquire=acquire,
@@ -423,7 +423,7 @@ def test_pipeline_rejects_unsupported_scorer_after_reusing_transcript(
         )
 
 
-def test_pipeline_scores_shortlist_before_selection_boundary(
+def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     config: RunConfig, transcript: Transcript
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
@@ -449,7 +449,7 @@ def test_pipeline_scores_shortlist_before_selection_boundary(
     def evaluator(*_args: object, **_kwargs: object) -> CandidateEvaluationBatch:
         return CandidateEvaluationBatch((evaluated,), (evaluated,))
 
-    with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
+    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
         run_pipeline(
             config,
             acquire=lambda _value, _workspace: source,
@@ -463,3 +463,7 @@ def test_pipeline_scores_shortlist_before_selection_boundary(
     assert '"candidate_id": "candidate-v1:one"' in score_path.read_text(
         encoding="utf-8"
     )
+    selection_path = next(config.output_dir.rglob("selection.json"))
+    selection_payload = selection_path.read_text(encoding="utf-8")
+    assert '"candidate_id": "candidate-v1:one"' in selection_payload
+    assert '"status": "selected"' in selection_payload
