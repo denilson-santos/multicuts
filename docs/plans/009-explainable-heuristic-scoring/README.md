@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 008 Candidate evaluation |
 | Unlocks | 010 Ranking and selection; future semantic/hybrid scorer integration |
-| PRs | — |
+| PRs | [#33](https://github.com/denilson-santos/multicuts/pull/33) |
 
 ## Objective and expected outcome
 
@@ -65,10 +65,10 @@ than imply statistical calibration.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define versioned score contracts](001-define-score-contracts.md) | planned | P1 | Package 008 | — | Valid score dimensions, confidence, penalties, reason, and provenance |
-| [002 Implement heuristic judgments](002-implement-heuristic-judgments.md) | planned | P1 | 001 | — | Deterministic dimension evidence without fabricated provider output |
-| [003 Compose final scores and penalties](003-compose-scores-and-penalties.md) | planned | P1 | 002 | — | Reproducible weighted `0..100` results under `scoring-v1` |
-| [004 Persist and integrate heuristic scoring](004-persist-and-integrate-scoring.md) | planned | P1 | 003 | — | Reusable scored candidates and an operational heuristic pipeline path |
+| [001 Define versioned score contracts](001-define-score-contracts.md) | in-review | P1 | Package 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Valid score dimensions, confidence, penalties, reason, and provenance |
+| [002 Implement heuristic judgments](002-implement-heuristic-judgments.md) | in-review | P1 | 001 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Deterministic dimension evidence without fabricated provider output |
+| [003 Compose final scores and penalties](003-compose-scores-and-penalties.md) | in-review | P1 | 002 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reproducible weighted `0..100` results under `scoring-v1` |
+| [004 Persist and integrate heuristic scoring](004-persist-and-integrate-scoring.md) | in-review | P1 | 003 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Reusable scored candidates and an operational heuristic pipeline path |
 
 ## Suggested task sequence
 
@@ -105,3 +105,26 @@ fully reproducible result only after those three contracts have invariant tests.
   here rather than make provider output authoritative.
 - The meaning of heuristic confidence needs an explicit deterministic definition
   (for example, evidence completeness), not a probability claim.
+
+## Implementation decisions
+
+- `scoring-v1` maps opening quality to hook, standalone-context and payoff
+  features to their matching dimensions, the mean of available ASR confidence
+  and timing coverage to clarity, and words per second divided by `3.0`
+  (capped at `1.0`) to information density. Each available ratio becomes a
+  `0..100` dimension value. Missing evidence receives a neutral `50`, and the
+  reason names missing signals. Emotion/surprise and quotability remain neutral
+  because the current deterministic features do not observe them.
+- Confidence is the number of observed opening, context, payoff, ASR confidence,
+  timing, density, pause, and filler signals divided by `10`. Its maximum is
+  `0.8` because the two semantic dimensions remain unobserved; it is an evidence
+  completeness indicator, not a probability.
+- Distinct `scoring-v1` penalties are `6` points for duration outside the
+  preferred `25–45` second band, `5` for transcript-gap pause ratio above
+  `0.55`, and `4` for filler ratio above `0.30`. These signals do not feed a
+  dimension, avoiding a second subtraction for the same evidence. Transcript
+  gaps remain a pause proxy, not measured audio silence.
+- Weighted base and clamped final scores are rounded to two decimal places with
+  Python's `round`. The scoring cache includes exact shortlisted evidence,
+  evaluation identity, algorithm version, weights, and thresholds. Geometry,
+  subtitle styling, `min_score`, and requested clip count do not invalidate it.

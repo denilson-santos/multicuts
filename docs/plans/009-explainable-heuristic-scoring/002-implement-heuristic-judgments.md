@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 009.001 Define versioned score contracts |
-| PR | — |
+| PR | [#33](https://github.com/denilson-santos/multicuts/pull/33) |
 
 ## Objective
 

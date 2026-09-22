@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 007 Semantic candidates |
 | Unlocks | 009 Explainable heuristic scoring |
-| PRs | — |
+| PRs | [#31](https://github.com/denilson-santos/multicuts/pull/31) |
 
 ## Objective and expected outcome
 
@@ -67,10 +67,10 @@ a configurable upper bound on candidates sent downstream.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define feature and checklist contracts](001-define-evaluation-contracts.md) | in-progress | P1 | Package 007 | — | Typed reusable features and explicit rule outcomes |
-| [002 Compute deterministic features](002-compute-deterministic-features.md) | in-progress | P1 | 001 | — | Tested structural and transcript-quality evidence |
-| [003 Apply checklist rules and scoring budget](003-apply-checklist-and-budget.md) | in-progress | P1 | 002 | — | Hard-filtered, traceable, bounded shortlist |
-| [004 Persist and integrate candidate evaluation](004-persist-and-integrate-evaluation.md) | in-progress | P1 | 003 | — | Reusable candidate artifact and pipeline handoff to scoring |
+| [001 Define feature and checklist contracts](001-define-evaluation-contracts.md) | completed | P1 | Package 007 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Typed reusable features and explicit rule outcomes |
+| [002 Compute deterministic features](002-compute-deterministic-features.md) | completed | P1 | 001 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Tested structural and transcript-quality evidence |
+| [003 Apply checklist rules and scoring budget](003-apply-checklist-and-budget.md) | completed | P1 | 002 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Hard-filtered, traceable, bounded shortlist |
+| [004 Persist and integrate candidate evaluation](004-persist-and-integrate-evaluation.md) | completed | P1 | 003 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Reusable candidate artifact and pipeline handoff to scoring |
 
 ## Suggested task sequence
 

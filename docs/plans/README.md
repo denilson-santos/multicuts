@@ -4,14 +4,12 @@
 
 `multicuts` has completed the project bootstrap, domain foundation, local
 source/media preflight, CLI foundation, `multisubs` transcription adapter, the
-output-local transcript cache, and package 007 semantic candidate generation.
-The production pipeline reaches deterministic candidate generation from a
-persisted or reused normalized transcript, then deliberately stops before
-candidate evaluation.
+output-local transcript cache, semantic candidate generation, and deterministic
+candidate evaluation. The integrated pipeline stops before heuristic scoring.
 
-Packages 008–011 remain the immediate implementation queue: deterministic
-evaluation, explainable heuristic scoring, non-redundant top-K selection, and
-YouTube acquisition. This planning batch adds package 012 as the parallel
+Packages 009–011 remain the immediate implementation queue: explainable
+heuristic scoring, non-redundant top-K selection, and YouTube acquisition.
+This planning batch adds package 012 as the parallel
 semantic/hybrid scoring track and packages 013–016 as the M3 path from selected
 candidates through refined boundaries, final-geometry rendering, subtitles,
 and complete run artifacts. M4 release hardening remains later work.
@@ -22,6 +20,7 @@ Package and task status use this vocabulary:
 
 - `planned`: approved for the roadmap but not started;
 - `in-progress`: active implementation exists on a delivery branch;
+- `in-review`: implementation and validation are complete with an open PR;
 - `blocked`: work cannot continue until a named dependency or open decision is
   resolved;
 - `completed`: acceptance criteria and required validation have passed and the
@@ -49,8 +48,8 @@ completed and its package-level completion criteria pass.
 | [005 Multisubs transcription](005-multisubs-transcription/) | M1 | completed | P1 | 002, 004 | [#16](https://github.com/denilson-santos/multicuts/pull/16), [#18](https://github.com/denilson-santos/multicuts/pull/18) | Public-API transcription adapter and normalized transcript |
 | [006 Transcript cache](006-transcript-cache/) | M1 | completed | P1 | 005 | [#21](https://github.com/denilson-santos/multicuts/pull/21) | Safely persisted and reusable normalized transcripts |
 | [007 Semantic candidates](007-semantic-candidates/) | M2 | completed | P1 | 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic semantic units and bounded candidate windows with stable identities |
-| [008 Candidate evaluation](008-candidate-evaluation/) | M2 | in-progress | P1 | 007 | — | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
-| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | planned | P1 | 008 | — | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
+| [008 Candidate evaluation](008-candidate-evaluation/) | M2 | completed | P1 | 007 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
+| [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | in-review | P1 | 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
 | [010 Ranking and selection](010-ranking-selection/) | M2 | planned | P1 | 009 | — | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | planned | P2 | 003, 004, 006 | — | Supported YouTube URLs normalized to controlled local media and safe metadata |
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | planned | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
@@ -77,7 +76,7 @@ The main dependency path is:
 010 -> 013 -> 014 -> 015 -> 016
 ```
 
-Packages 008–010 and 013–016 are the recommended critical path for the first
+Packages 009–010 and 013–016 are the remaining critical path for the first
 complete local output and should execute in order. Package 011 should proceed in
 parallel and joins package 016 for final local/YouTube acceptance. Package 012
 may start after package 009 once the provider decision is recorded; ranking and

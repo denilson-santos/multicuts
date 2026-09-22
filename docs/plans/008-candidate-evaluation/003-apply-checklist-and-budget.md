@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 008.002 Compute deterministic features |
-| PR | — |
+| PR | [#31](https://github.com/denilson-santos/multicuts/pull/31) |
 
 ## Objective
 
