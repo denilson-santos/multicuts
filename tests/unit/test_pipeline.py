@@ -85,7 +85,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
 
-    def acquire(value: str) -> AcquiredSource:
+    def acquire(value: str, _workspace: Path) -> AcquiredSource:
         events.append(("acquire", value))
         return source
 
@@ -131,12 +131,37 @@ def test_pipeline_runs_acquisition_before_media_probe(
     assert (config.output_dir).is_dir()
 
 
+def test_pipeline_passes_explicit_acquisition_workspace(
+    config: RunConfig,
+    transcript: Transcript,
+) -> None:
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
+    calls: list[tuple[str, Path]] = []
+
+    def acquire(value: str, workspace: Path) -> AcquiredSource:
+        calls.append((value, workspace))
+        return source
+
+    with pytest.raises(PipelineNotReadyError):
+        run_pipeline(
+            config,
+            acquire=acquire,
+            probe=lambda _source: media,
+            transcriber=FakeTranscriber(transcript),
+        )
+
+    assert calls == [
+        (config.source, (config.output_dir / ".work" / "acquisition").resolve())
+    ]
+
+
 def test_pipeline_propagates_acquisition_errors_without_probing(
     config: RunConfig,
 ) -> None:
     called = False
 
-    def acquire(_value: str) -> AcquiredSource:
+    def acquire(_value: str, _workspace: Path) -> AcquiredSource:
         raise AcquisitionError("source unavailable")
 
     def probe(_value: AcquiredSource) -> MediaInfo:
@@ -155,7 +180,7 @@ def test_pipeline_propagates_media_errors_without_fabricating_completion(
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
 
-    def acquire(_value: str) -> AcquiredSource:
+    def acquire(_value: str, _workspace: Path) -> AcquiredSource:
         return source
 
     def probe(_value: AcquiredSource) -> MediaInfo:
@@ -181,7 +206,7 @@ def test_pipeline_logs_stage_and_safe_resource_context(
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 config,
-                acquire=lambda _value: source,
+                acquire=lambda _value, _workspace: source,
                 probe=lambda _value: media,
                 transcriber=FakeTranscriber(transcript),
             )
@@ -219,7 +244,7 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 config,
-                acquire=lambda _value: source,
+                acquire=lambda _value, _workspace: source,
                 probe=lambda _value: media,
                 transcriber=transcriber,
                 candidate_generator=generate,
@@ -248,7 +273,7 @@ def test_pipeline_propagates_candidate_generation_errors(
     with pytest.raises(ValueError, match="candidate generation failed"):
         run_pipeline(
             config,
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=FakeTranscriber(transcript),
             candidate_generator=generate,
@@ -264,10 +289,18 @@ def test_pipeline_reuses_same_content_after_source_rename(
     transcriber = FakeTranscriber(transcript)
 
     for source in (first, renamed):
+
+        def acquire(
+            _value: str,
+            _workspace: Path,
+            selected: AcquiredSource = source,
+        ) -> AcquiredSource:
+            return selected
+
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 config,
-                acquire=lambda _value, selected=source: selected,
+                acquire=acquire,
                 probe=lambda _value: media,
                 transcriber=transcriber,
             )
@@ -286,7 +319,7 @@ def test_pipeline_invalid_cache_is_recomputed(
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 config,
-                acquire=lambda _value: source,
+                acquire=lambda _value, _workspace: source,
                 probe=lambda _value: media,
                 transcriber=transcriber,
             )
@@ -310,7 +343,7 @@ def test_pipeline_rejects_incompatible_provider_provenance_before_publication(
     with pytest.raises(TranscriptionError, match="incompatible provenance"):
         run_pipeline(
             config,
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=transcriber,
         )
@@ -330,7 +363,7 @@ def test_pipeline_force_recompute_bypasses_cache_but_not_completed_output(
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 run_config,
-                acquire=lambda _value: source,
+                acquire=lambda _value, _workspace: source,
                 probe=lambda _value: media,
                 transcriber=transcriber,
             )
@@ -343,7 +376,7 @@ def test_pipeline_force_recompute_bypasses_cache_but_not_completed_output(
     with pytest.raises(ArtifactError, match="Completed output already exists"):
         run_pipeline(
             forced,
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=transcriber,
         )
@@ -368,7 +401,7 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
         with pytest.raises(PipelineNotReadyError):
             run_pipeline(
                 run_config,
-                acquire=lambda _value: source,
+                acquire=lambda _value, _workspace: source,
                 probe=lambda _value: media,
                 transcriber=transcriber,
             )
@@ -384,7 +417,7 @@ def test_pipeline_rejects_unsupported_scorer_after_reusing_transcript(
     with pytest.raises(ScoringError, match="Unsupported scorer"):
         run_pipeline(
             replace(config, scorer="hybrid"),
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=FakeTranscriber(transcript),
         )
@@ -419,7 +452,7 @@ def test_pipeline_scores_shortlist_before_selection_boundary(
     with pytest.raises(PipelineNotReadyError, match="after heuristic scoring"):
         run_pipeline(
             config,
-            acquire=lambda _value: source,
+            acquire=lambda _value, _workspace: source,
             probe=lambda _value: media,
             transcriber=FakeTranscriber(transcript),
             candidate_generator=lambda *_args, **_kwargs: (candidate,),

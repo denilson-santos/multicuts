@@ -10,8 +10,14 @@ LOCAL_FINGERPRINT_VERSION = "sha256-v1"
 _HASH_CHUNK_SIZE = 1024 * 1024
 
 
-def acquire_local_source(source: str | Path) -> AcquiredSource:
+def acquire_local_source(
+    source: str | Path, workspace: Path | None = None
+) -> AcquiredSource:
     """Resolve a regular file and fingerprint its complete contents in chunks."""
+    # ``workspace`` keeps this function compatible with the common source
+    # provider boundary. Local acquisition deliberately does not copy the
+    # user's file into that workspace.
+    del workspace
     try:
         local_path = Path(source).expanduser().resolve(strict=True)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
