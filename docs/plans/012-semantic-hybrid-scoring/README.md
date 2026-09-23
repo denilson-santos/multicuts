@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | in-progress |
+| Status | completed |
 | Priority | P2 |
 | Depends on | 008 Candidate evaluation; 009 Explainable heuristic scoring |
 | Unlocks | Configured semantic judgments and hybrid score provenance |
-| PRs | — |
+| PRs | [#36](https://github.com/denilson-santos/multicuts/pull/36) |
 
 ## Objective and expected outcome
 
@@ -67,10 +67,10 @@ configured.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define the semantic provider contract and configuration](001-define-provider-contract.md) | in-progress | P2 | Packages 008, 009 | — | Explicit provider choice, minimal requests, and project-owned validated judgments |
-| [002 Implement the initial semantic adapter](002-implement-semantic-adapter.md) | in-progress | P2 | 001 | — | Bounded external calls normalized without provider leakage |
-| [003 Compose hybrid results and fallback behavior](003-compose-hybrid-results.md) | in-progress | P2 | 002 | — | Explainable hybrid scores and honest heuristic fallback provenance |
-| [004 Persist and integrate hybrid scoring](004-persist-and-integrate-hybrid-scoring.md) | in-progress | P2 | 003 | — | Cache-safe, configured hybrid execution in the synchronous pipeline |
+| [001 Define the semantic provider contract and configuration](001-define-provider-contract.md) | completed | P2 | Packages 008, 009 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Explicit provider choice, minimal requests, and project-owned validated judgments |
+| [002 Implement the initial semantic adapter](002-implement-semantic-adapter.md) | completed | P2 | 001 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Bounded external calls normalized without provider leakage |
+| [003 Compose hybrid results and fallback behavior](003-compose-hybrid-results.md) | completed | P2 | 002 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Explainable hybrid scores and honest heuristic fallback provenance |
+| [004 Persist and integrate hybrid scoring](004-persist-and-integrate-hybrid-scoring.md) | completed | P2 | 003 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Cache-safe, configured hybrid execution in the synchronous pipeline |
 
 ## Suggested task sequence
 
@@ -121,3 +121,15 @@ and pipeline routing only after the failure and fallback semantics are stable.
 - Provider failures are persisted per candidate. The default explicit fallback
   is heuristic scoring; `none` omits the failed candidate without fabricating a
   semantic result.
+
+## Completion record
+
+- PR [#36](https://github.com/denilson-santos/multicuts/pull/36) was merged into
+  `main` at merge commit `9c6e65d`.
+- GitHub Actions run
+  [#35879716125](https://github.com/denilson-santos/multicuts/actions/runs/35879716125)
+  passed both the Python 3.10 quality job and the Python 3.13 compatibility job.
+  The quality job passed formatting, Ruff, Pyright, 306 hermetic tests (with 2
+  skipped and 4 deselected), and distribution builds.
+- Live provider calls remain opt-in; completion is based on the hermetic adapter,
+  fallback, cache, and pipeline coverage required by this package.

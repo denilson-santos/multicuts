@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P2 |
 | Depends on | Packages 008 Candidate evaluation; 009 Explainable heuristic scoring |
-| PR | — |
+| PR | [#36](https://github.com/denilson-santos/multicuts/pull/36) |
 
 ## Objective
 

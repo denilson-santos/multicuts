@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P2 |
 | Depends on | 012.003 Compose hybrid results and fallback behavior |
-| PR | — |
+| PR | [#36](https://github.com/denilson-santos/multicuts/pull/36) |
 
 ## Objective
 
