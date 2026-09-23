@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 009 Explainable heuristic scoring |
 | Unlocks | Boundary refinement and media-output packages |
@@ -64,10 +64,10 @@ redundancy with temporal overlap.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define ranking primitives and order](001-define-ranking-primitives.md) | in-review | P1 | Package 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Valid selected-candidate values and deterministic total order |
-| [002 Implement overlap and redundancy policies](002-implement-redundancy-policies.md) | in-review | P1 | 001 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Explainable temporal suppression and an extensible diversity boundary |
-| [003 Select and persist top-K candidates](003-select-and-persist-top-k.md) | in-review | P1 | 002 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Thresholded, non-redundant, reusable selection results |
-| [004 Integrate selection into the pipeline](004-integrate-selection-stage.md) | in-review | P1 | 003 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Intelligence pipeline reaches selected candidates and stops before M3 |
+| [001 Define ranking primitives and order](001-define-ranking-primitives.md) | completed | P1 | Package 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Valid selected-candidate values and deterministic total order |
+| [002 Implement overlap and redundancy policies](002-implement-redundancy-policies.md) | completed | P1 | 001 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Explainable temporal suppression and an extensible diversity boundary |
+| [003 Select and persist top-K candidates](003-select-and-persist-top-k.md) | completed | P1 | 002 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Thresholded, non-redundant, reusable selection results |
+| [004 Integrate selection into the pipeline](004-integrate-selection-stage.md) | completed | P1 | 003 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Intelligence pipeline reaches selected candidates and stops before M3 |
 
 ## Suggested task sequence
 

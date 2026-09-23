@@ -41,6 +41,10 @@ def test_generate_defaults_are_converted_to_run_config() -> None:
     assert config.subtitle_template == "yellow-pop"
     assert config.scorer == "heuristic"
     assert config.model == "default"
+    assert config.semantic_provider == "openai"
+    assert config.semantic_model == "gpt-6-luna"
+    assert config.semantic_reasoning_effort == "max"
+    assert config.semantic_fallback == "heuristic"
 
 
 def test_generate_maps_explicit_options_without_accessing_source(
@@ -78,6 +82,14 @@ def test_generate_maps_explicit_options_without_accessing_source(
             "hybrid",
             "--model",
             "large-v3",
+            "--semantic-provider",
+            "openai",
+            "--semantic-model",
+            "gpt-6-luna",
+            "--semantic-effort",
+            "max",
+            "--semantic-fallback",
+            "none",
             "--keep-intermediates",
             "--force-recompute",
             "--verbose",
@@ -96,6 +108,10 @@ def test_generate_maps_explicit_options_without_accessing_source(
     assert config.subtitle_template_dir == template_dir
     assert config.scorer == "hybrid"
     assert config.model == "large-v3"
+    assert config.semantic_provider == "openai"
+    assert config.semantic_model == "gpt-6-luna"
+    assert config.semantic_reasoning_effort == "max"
+    assert config.semantic_fallback == "none"
     assert config.keep_intermediates
     assert config.force_recompute
     assert config.verbose
@@ -157,6 +173,10 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
         "--subtitle-template-dir",
         "--scorer",
         "--model",
+        "--semantic-provider",
+        "--semantic-model",
+        "--semantic-effort",
+        "--semantic-fallback",
         "--keep-intermediates",
         "--force-recompute",
         "--verbose",

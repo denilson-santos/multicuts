@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | Packages 008 Candidate evaluation; 009 Explainable heuristic scoring |
 | PR | — |
@@ -15,10 +15,11 @@ judgments.
 
 ## Context and inputs
 
-The PRD requires a provider boundary and recommends hybrid scoring but leaves
-the default provider/model and fully local support open. Package 009 already
-owns score dimensions, composition, and penalties, so this task must not create
-a second scoring schema.
+The PRD requires a provider boundary and recommends hybrid scoring. Decision
+D-013 selects OpenAI with `gpt-6-luna` at reasoning effort `max` and defers a
+fully local semantic model. Package 009 already owns score dimensions,
+composition, and penalties, so this task must not create a second scoring
+schema.
 
 ## Expected changes
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | 012.002 Implement the initial semantic adapter |
 | PR | — |

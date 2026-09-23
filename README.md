@@ -38,6 +38,13 @@ python --version
 python -m pip install --editable ".[dev]"
 ```
 
+Install the optional OpenAI scoring adapter when hybrid semantic scoring is
+needed:
+
+```bash
+python -m pip install --editable ".[dev,openai]"
+```
+
 The runtime dependency on `multisubs` currently installs its v4.2.0 wheel from
 the official GitHub Release with a pinned SHA-256 checksum; it is not available
 from the default Python package index. The dependency selects the provider's
@@ -188,6 +195,31 @@ multicuts "https://www.youtube.com/watch?v=..." \
 Selection suppresses temporal overlap at an inclusive `0.60` ratio and
 normalized near-duplicate text at `0.90` by default. Override these policies
 with `--overlap-threshold` and `--text-threshold`.
+
+### Hybrid semantic scoring
+
+The default `heuristic` scorer stays local and requires no API credential. The
+optional `hybrid` scorer sends only candidate text, up to 500 characters of
+surrounding transcript on each side, and derived features to OpenAI. It never
+sends media, requests stateless responses with `store=false`, and uses
+`gpt-6-luna` with reasoning effort `max` by default.
+
+Copy `.env.example` to `.env` in the directory where you run `multicuts`, then
+replace the placeholder with your OpenAI API key. The `.env` file is ignored by
+Git. An existing `OPENAI_API_KEY` environment variable takes precedence over
+`.env`.
+
+```bash
+multicuts ./interview.mp4 \
+  --scorer hybrid \
+  --semantic-model gpt-6-luna \
+  --semantic-effort max \
+  --semantic-fallback heuristic
+```
+
+Provider failures are recorded per candidate. The default fallback produces an
+explicitly labeled heuristic result; use `--semantic-fallback none` to omit a
+failed candidate instead.
 
 ### Keep the original aspect ratio
 

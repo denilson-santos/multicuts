@@ -358,7 +358,7 @@ def test_pipeline_reuses_candidate_evaluation_without_recomputing_it(
         config, source, transcript, candidates, evaluator=evaluator
     )
     second = load_or_evaluate_candidates(
-        replace(config, scorer="different", aspect_ratio="9:16"),
+        replace(config, scorer="hybrid", aspect_ratio="9:16"),
         source,
         transcript,
         candidates,

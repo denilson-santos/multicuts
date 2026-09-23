@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | 012.001 Define the semantic provider contract and configuration |
 | PR | — |

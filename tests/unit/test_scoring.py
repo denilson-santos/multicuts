@@ -18,6 +18,7 @@ from multicuts.models import (
     ScoredCandidate,
     ScoreDimension,
     ScorePenalty,
+    ScoringBatch,
     Transcript,
     TranscriptSegment,
 )
@@ -131,12 +132,13 @@ def test_score_cache_roundtrip_invalidation_and_corrupt_result(tmp_path: Path) -
         ),
     )
 
-    write_scores(paths, scored, cache_key=key, replace=False)
+    batch = ScoringBatch(scored)
+    write_scores(paths, batch, cache_key=key, replace=False)
     assert (
         read_scores(
             paths, cache_key=key, expected_ids=(evaluation.candidate.candidate_id,)
         )
-        == scored
+        == batch
     )
     assert (
         read_scores(
@@ -215,6 +217,7 @@ def test_pipeline_score_cache_reuses_compatible_result_across_geometry(
     )
 
     assert first == second
+    assert first.scores
     assert calls == 1
 
     score_path = next(tmp_path.rglob("scores.json"))

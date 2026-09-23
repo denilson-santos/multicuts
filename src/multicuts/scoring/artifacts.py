@@ -13,10 +13,13 @@ from multicuts.artifacts import WorkspacePaths
 from multicuts.errors import ArtifactError
 from multicuts.models import (
     CandidateEvaluation,
+    CandidateScoringFailure,
     ScoredCandidate,
     ScoreDimension,
     ScorePenalty,
     ScoreResult,
+    ScoringBatch,
+    ScoringProvenance,
 )
 from multicuts.scoring.heuristic import (
     PENALTY_POINTS,
@@ -26,8 +29,12 @@ from multicuts.scoring.heuristic import (
     SCORING_WEIGHTS,
     compose_score,
 )
+from multicuts.scoring.hybrid import (
+    HYBRID_ALGORITHM_VERSION,
+    HYBRID_FALLBACK_ALGORITHM_VERSION,
+)
 
-SCORING_STAGE_VERSION = 1
+SCORING_STAGE_VERSION = 2
 
 
 class InvalidScoringArtifactError(ArtifactError):
@@ -35,15 +42,53 @@ class InvalidScoringArtifactError(ArtifactError):
 
 
 def scoring_cache_key(
-    *, evaluation_key: str, shortlist: tuple[CandidateEvaluation, ...]
+    *,
+    evaluation_key: str,
+    shortlist: tuple[CandidateEvaluation, ...],
+    scorer: str = "heuristic",
+    semantic_provider: str | None = None,
+    semantic_model: str | None = None,
+    semantic_prompt_version: str | None = None,
+    semantic_reasoning_effort: str | None = None,
+    semantic_fallback: str | None = None,
 ) -> str:
     """Tie scores to exact evidence and scoring meaning, never output styling."""
     if not evaluation_key.startswith("sha256-v1:"):
         raise ArtifactError("Scoring evaluation identity is invalid")
+    if scorer not in ("heuristic", "hybrid"):
+        raise ArtifactError("Scoring mode is invalid")
+    semantic_values = (
+        semantic_provider,
+        semantic_model,
+        semantic_prompt_version,
+        semantic_reasoning_effort,
+        semantic_fallback,
+    )
+    if scorer == "heuristic" and any(value is not None for value in semantic_values):
+        raise ArtifactError("Heuristic scoring identity must not include semantics")
+    if scorer == "hybrid" and any(
+        not isinstance(value, str) or not value.strip() for value in semantic_values
+    ):
+        raise ArtifactError("Hybrid scoring identity is incomplete")
     identity = {
         "evaluation_key": evaluation_key,
         "shortlist": [asdict(item) for item in shortlist],
-        "algorithm_version": SCORING_ALGORITHM_VERSION,
+        "scorer": scorer,
+        "semantic_provider": semantic_provider,
+        "semantic_model": semantic_model,
+        "semantic_prompt_version": semantic_prompt_version,
+        "semantic_reasoning_effort": semantic_reasoning_effort,
+        "semantic_fallback": semantic_fallback,
+        "algorithm_version": (
+            HYBRID_ALGORITHM_VERSION
+            if scorer == "hybrid"
+            else SCORING_ALGORITHM_VERSION
+        ),
+        "fallback_algorithm_version": (
+            HYBRID_FALLBACK_ALGORITHM_VERSION
+            if scorer == "hybrid" and semantic_fallback == "heuristic"
+            else None
+        ),
         "schema_version": SCORING_SCHEMA_VERSION,
         "stage_version": SCORING_STAGE_VERSION,
         "weights": SCORING_WEIGHTS,
@@ -173,10 +218,15 @@ def _decode_score(value: object) -> ScoredCandidate:
         raise InvalidScoringArtifactError(
             "Scoring artifact has invalid score values"
         ) from exc
+    expected_algorithm = {
+        "heuristic": SCORING_ALGORITHM_VERSION,
+        "hybrid": HYBRID_ALGORITHM_VERSION,
+        "heuristic-fallback": HYBRID_FALLBACK_ALGORITHM_VERSION,
+    }.get(scored.result.scorer)
     if (
-        scored.result.scorer != "heuristic"
+        expected_algorithm is None
         or scored.result.scoring_schema_version != SCORING_SCHEMA_VERSION
-        or scored.result.scoring_algorithm_version != SCORING_ALGORITHM_VERSION
+        or scored.result.scoring_algorithm_version != expected_algorithm
     ):
         _invalid("scoring provenance")
     allowed_penalties = dict(PENALTY_POINTS)
@@ -194,9 +244,77 @@ def _decode_score(value: object) -> ScoredCandidate:
     return scored
 
 
+def _decode_failure(value: object) -> CandidateScoringFailure:
+    record = _object(
+        value,
+        "scoring failure",
+        {
+            "candidate_id",
+            "code",
+            "warning",
+            "provider",
+            "model",
+            "prompt_version",
+            "retryable",
+        },
+    )
+    if type(record["retryable"]) is not bool:
+        _invalid("failure retryable flag")
+    try:
+        return CandidateScoringFailure(
+            candidate_id=_text(record["candidate_id"], "failure candidate ID"),
+            code=_text(record["code"], "failure code"),
+            warning=_text(record["warning"], "failure warning"),
+            provider=_text(record["provider"], "failure provider"),
+            model=_text(record["model"], "failure model"),
+            prompt_version=_text(record["prompt_version"], "failure prompt version"),
+            retryable=record["retryable"],
+        )
+    except ValueError as exc:
+        raise InvalidScoringArtifactError(
+            "Scoring artifact has invalid failure values"
+        ) from exc
+
+
+def _decode_provenance(value: object) -> ScoringProvenance:
+    record = _object(
+        value,
+        "scoring provenance",
+        {
+            "mode",
+            "provider",
+            "model",
+            "prompt_version",
+            "reasoning_effort",
+            "fallback",
+        },
+    )
+    try:
+        return ScoringProvenance(
+            mode=_text(record["mode"], "scoring mode"),
+            provider=_optional_text(record["provider"], "semantic provider"),
+            model=_optional_text(record["model"], "semantic model"),
+            prompt_version=_optional_text(
+                record["prompt_version"], "semantic prompt version"
+            ),
+            reasoning_effort=_optional_text(
+                record["reasoning_effort"], "semantic reasoning effort"
+            ),
+            fallback=_optional_text(record["fallback"], "semantic fallback"),
+        )
+    except ValueError as exc:
+        raise InvalidScoringArtifactError(
+            "Scoring artifact has invalid provenance values"
+        ) from exc
+
+
 def _decode_payload(
-    payload: object, *, cache_key: str, expected_ids: tuple[str, ...]
-) -> tuple[ScoredCandidate, ...] | None:
+    payload: object,
+    *,
+    cache_key: str,
+    expected_ids: tuple[str, ...],
+    expected_provenance: ScoringProvenance | None = None,
+) -> ScoringBatch | None:
     root = _object(
         payload,
         "root object",
@@ -209,7 +327,9 @@ def _decode_payload(
             "weights",
             "thresholds",
             "penalty_points",
+            "provenance",
             "scores",
+            "failures",
         },
     )
     if (
@@ -224,22 +344,51 @@ def _decode_payload(
         _invalid("cache key")
     if root["cache_key"] != cache_key:
         return None
+    provenance = _decode_provenance(root["provenance"])
+    if expected_provenance is not None and provenance != expected_provenance:
+        _invalid("scoring provenance")
+    expected_algorithm = (
+        HYBRID_ALGORITHM_VERSION
+        if provenance.mode == "hybrid"
+        else SCORING_ALGORITHM_VERSION
+    )
     if (
-        root["algorithm_version"] != SCORING_ALGORITHM_VERSION
+        root["algorithm_version"] != expected_algorithm
         or root["weights"] != [list(item) for item in SCORING_WEIGHTS]
         or root["thresholds"] != [list(item) for item in SCORING_THRESHOLDS]
         or root["penalty_points"] != [list(item) for item in PENALTY_POINTS]
     ):
         _invalid("scoring configuration")
     scores = tuple(_decode_score(item) for item in _items(root["scores"], "scores"))
-    if tuple(item.candidate_id for item in scores) != expected_ids:
+    failures = tuple(
+        _decode_failure(item) for item in _items(root["failures"], "failures")
+    )
+    score_ids = tuple(item.candidate_id for item in scores)
+    failure_ids = tuple(item.candidate_id for item in failures)
+    if (
+        len(set(score_ids)) != len(score_ids)
+        or len(set(failure_ids)) != len(failure_ids)
+        or set(score_ids) | set(failure_ids) != set(expected_ids)
+        or tuple(item for item in expected_ids if item in set(score_ids)) != score_ids
+        or tuple(item for item in expected_ids if item in set(failure_ids))
+        != failure_ids
+    ):
         _invalid("shortlist membership")
-    return scores
+    try:
+        return ScoringBatch(scores, failures, provenance)
+    except ValueError as exc:
+        raise InvalidScoringArtifactError(
+            "Scoring artifact has invalid batch values"
+        ) from exc
 
 
 def read_scores(
-    paths: WorkspacePaths, *, cache_key: str, expected_ids: tuple[str, ...]
-) -> tuple[ScoredCandidate, ...] | None:
+    paths: WorkspacePaths,
+    *,
+    cache_key: str,
+    expected_ids: tuple[str, ...],
+    expected_provenance: ScoringProvenance | None = None,
+) -> ScoringBatch | None:
     """Return validated matching scores, a miss, or a corrupt-cache error."""
     if paths.scores.is_symlink():
         raise ArtifactError("Scoring artifact must be a regular file")
@@ -254,12 +403,17 @@ def read_scores(
         raise InvalidScoringArtifactError("Scoring artifact is not valid JSON") from exc
     except OSError as exc:
         raise ArtifactError("Could not read the scoring artifact") from exc
-    return _decode_payload(payload, cache_key=cache_key, expected_ids=expected_ids)
+    return _decode_payload(
+        payload,
+        cache_key=cache_key,
+        expected_ids=expected_ids,
+        expected_provenance=expected_provenance,
+    )
 
 
 def write_scores(
     paths: WorkspacePaths,
-    scores: tuple[ScoredCandidate, ...],
+    batch: ScoringBatch,
     *,
     cache_key: str,
     replace: bool,
@@ -276,16 +430,28 @@ def write_scores(
         "stage_version": SCORING_STAGE_VERSION,
         "task": "scoring",
         "cache_key": cache_key,
-        "algorithm_version": SCORING_ALGORITHM_VERSION,
+        "algorithm_version": (
+            HYBRID_ALGORITHM_VERSION
+            if batch.provenance.mode == "hybrid"
+            else SCORING_ALGORITHM_VERSION
+        ),
         "weights": SCORING_WEIGHTS,
         "thresholds": SCORING_THRESHOLDS,
         "penalty_points": PENALTY_POINTS,
-        "scores": [asdict(item) for item in scores],
+        "provenance": asdict(batch.provenance),
+        "scores": [asdict(item) for item in batch.scores],
+        "failures": [asdict(item) for item in batch.failures],
     }
     _decode_payload(
         json.loads(json.dumps(payload, allow_nan=False)),
         cache_key=cache_key,
-        expected_ids=tuple(item.candidate_id for item in scores),
+        expected_ids=tuple(
+            dict.fromkeys(
+                [item.candidate_id for item in batch.scores]
+                + [item.candidate_id for item in batch.failures]
+            )
+        ),
+        expected_provenance=batch.provenance,
     )
     temporary: Path | None = None
     try:

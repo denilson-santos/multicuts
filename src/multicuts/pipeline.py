@@ -7,6 +7,7 @@ from typing import NoReturn, Protocol
 from urllib.parse import urlsplit
 
 from multicuts.adapters.multisubs import MultisubsAdapter
+from multicuts.adapters.scoring import OpenAISemanticAdapter
 from multicuts.artifacts import (
     InvalidCandidateEvaluationArtifactError,
     InvalidTranscriptArtifactError,
@@ -42,9 +43,12 @@ from multicuts.models import (
     CandidateEvaluation,
     CandidateEvaluationArtifact,
     CandidateEvaluationBatch,
+    CandidateScoringFailure,
     MediaInfo,
     ScoredCandidate,
     ScoreResult,
+    ScoringBatch,
+    ScoringProvenance,
     SelectionResult,
     SelectionStatus,
     Transcript,
@@ -56,6 +60,13 @@ from multicuts.scoring.artifacts import (
     write_scores,
 )
 from multicuts.scoring.heuristic import score_heuristically
+from multicuts.scoring.hybrid import compose_hybrid_score, score_with_heuristic_fallback
+from multicuts.scoring.semantic import (
+    SEMANTIC_PROMPT_VERSION,
+    SemanticProviderError,
+    SemanticScorer,
+    build_semantic_request,
+)
 from multicuts.source import (
     acquire_source,
     prepare_acquisition_workspace,
@@ -115,6 +126,42 @@ class PipelineNotReadyError(RuntimeError):
 
 
 HeuristicScorer = Callable[[CandidateEvaluation], ScoreResult]
+
+
+def _scoring_provenance(config: RunConfig) -> ScoringProvenance:
+    if config.scorer == "heuristic":
+        return ScoringProvenance("heuristic")
+    return ScoringProvenance(
+        mode="hybrid",
+        provider=config.semantic_provider,
+        model=config.semantic_model,
+        prompt_version=SEMANTIC_PROMPT_VERSION,
+        reasoning_effort=config.semantic_reasoning_effort,
+        fallback=config.semantic_fallback,
+    )
+
+
+def _scoring_cache_key(
+    config: RunConfig,
+    *,
+    evaluation_key: str,
+    shortlist: tuple[CandidateEvaluation, ...],
+) -> str:
+    if config.scorer == "heuristic":
+        return scoring_cache_key(
+            evaluation_key=evaluation_key,
+            shortlist=shortlist,
+        )
+    return scoring_cache_key(
+        evaluation_key=evaluation_key,
+        shortlist=shortlist,
+        scorer="hybrid",
+        semantic_provider=config.semantic_provider,
+        semantic_model=config.semantic_model,
+        semantic_prompt_version=SEMANTIC_PROMPT_VERSION,
+        semantic_reasoning_effort=config.semantic_reasoning_effort,
+        semantic_fallback=config.semantic_fallback,
+    )
 
 
 def _source_origin(source: str) -> str:
@@ -245,10 +292,9 @@ def load_or_score_candidates(
     evaluation: CandidateEvaluationArtifact,
     *,
     scorer: HeuristicScorer = score_heuristically,
-) -> tuple[ScoredCandidate, ...]:
+    semantic_scorer: SemanticScorer | None = None,
+) -> ScoringBatch:
     """Reuse or publish scores for the bounded, eligible candidate shortlist."""
-    if config.scorer != "heuristic":
-        raise ScoringError(f"Unsupported scorer: {config.scorer}")
     evaluation_key = candidate_evaluation_cache_key(
         source_fingerprint=evaluation.source_fingerprint,
         candidate_generator_version=evaluation.candidate_generator_version,
@@ -267,7 +313,9 @@ def load_or_score_candidates(
             key=lambda item: item.shortlist_rank or 0,
         )
     )
-    key = scoring_cache_key(evaluation_key=evaluation_key, shortlist=shortlisted)
+    key = _scoring_cache_key(
+        config, evaluation_key=evaluation_key, shortlist=shortlisted
+    )
     transcription_key = transcription_cache_key(
         source_fingerprint=source.fingerprint,
         provider=TRANSCRIPTION_PROVIDER,
@@ -279,28 +327,87 @@ def load_or_score_candidates(
     if not config.force_recompute:
         try:
             cached = read_scores(
-                paths, cache_key=key, expected_ids=evaluation.shortlist_ids
+                paths,
+                cache_key=key,
+                expected_ids=evaluation.shortlist_ids,
+                expected_provenance=_scoring_provenance(config),
             )
         except InvalidScoringArtifactError:
             logger.warning("stage=score cache=invalid; recomputing")
         else:
             if cached is not None:
-                logger.info("stage=score cache=hit count=%d", len(cached))
+                logger.info(
+                    "stage=score cache=hit count=%d failures=%d",
+                    len(cached.scores),
+                    len(cached.failures),
+                )
                 return cached
 
     logger.info("stage=score cache=miss count=%d", len(shortlisted))
     scores: list[ScoredCandidate] = []
+    failures: list[CandidateScoringFailure] = []
+    provider = semantic_scorer
+    if config.scorer == "hybrid" and provider is None and shortlisted:
+        provider = OpenAISemanticAdapter.from_environment(
+            model=config.semantic_model,
+            reasoning_effort=config.semantic_reasoning_effort,
+        )
     for item in shortlisted:
+        if config.scorer == "heuristic":
+            try:
+                result = scorer(item)
+                if result.scorer != "heuristic":
+                    raise ValueError("scorer returned incompatible provenance")
+                scores.append(ScoredCandidate(item.candidate.candidate_id, result))
+            except ValueError as exc:
+                raise ScoringError(
+                    "Heuristic scoring failed for a shortlisted candidate"
+                ) from exc
+            continue
+
+        if provider is None:
+            raise AssertionError("hybrid scoring provider was not initialized")
         try:
-            result = scorer(item)
-            if result.scorer != "heuristic":
-                raise ValueError("scorer returned incompatible provenance")
+            judgment = provider.score(build_semantic_request(item, transcript))
+            result = compose_hybrid_score(item, judgment)
+            if (
+                result.provider != config.semantic_provider
+                or result.model != config.semantic_model
+                or result.prompt_version != SEMANTIC_PROMPT_VERSION
+            ):
+                raise ValueError("semantic scorer returned incompatible provenance")
             scores.append(ScoredCandidate(item.candidate.candidate_id, result))
+        except SemanticProviderError as exc:
+            failure = CandidateScoringFailure(
+                candidate_id=item.candidate.candidate_id,
+                code=exc.code,
+                warning=exc.warning,
+                provider=config.semantic_provider,
+                model=config.semantic_model,
+                prompt_version=SEMANTIC_PROMPT_VERSION,
+                retryable=exc.retryable,
+            )
+            failures.append(failure)
+            logger.warning(
+                "stage=score candidate_id=%s provider_failure=%s fallback=%s",
+                item.candidate.candidate_id,
+                exc.code,
+                config.semantic_fallback,
+            )
+            if config.semantic_fallback == "heuristic":
+                scores.append(
+                    ScoredCandidate(
+                        item.candidate.candidate_id,
+                        score_with_heuristic_fallback(item, scorer=scorer),
+                    )
+                )
         except ValueError as exc:
             raise ScoringError(
-                "Heuristic scoring failed for a shortlisted candidate"
+                "Hybrid scoring returned incompatible candidate evidence"
             ) from exc
-    completed = tuple(scores)
+    completed = ScoringBatch(
+        tuple(scores), tuple(failures), _scoring_provenance(config)
+    )
     write_scores(paths, completed, cache_key=key, replace=paths.scores.exists())
     return completed
 
@@ -331,8 +438,14 @@ def load_or_select_candidates(
             key=lambda item: item.shortlist_rank or 0,
         )
     )
-    scoring_key = scoring_cache_key(
-        evaluation_key=evaluation_key, shortlist=shortlisted
+    scoring_key = _scoring_cache_key(
+        config, evaluation_key=evaluation_key, shortlist=shortlisted
+    )
+    score_ids = {item.candidate_id for item in scores}
+    selection_evaluations = tuple(
+        item
+        for item in evaluation.evaluations
+        if item.shortlist_rank is None or item.candidate.candidate_id in score_ids
     )
     key = selection_cache_key(
         scoring_key=scoring_key,
@@ -355,7 +468,7 @@ def load_or_select_candidates(
             cached = read_selection(
                 paths,
                 cache_key=key,
-                evaluations=evaluation.evaluations,
+                evaluations=selection_evaluations,
                 scores=scores,
                 overlap_threshold=config.overlap_threshold,
                 text_similarity_threshold=config.text_similarity_threshold,
@@ -369,7 +482,7 @@ def load_or_select_candidates(
 
     logger.info("stage=select cache=miss candidates=%d", len(scores))
     selection = select_candidates(
-        evaluation.evaluations,
+        selection_evaluations,
         scores,
         top_k=config.clips,
         min_score=config.min_score,
@@ -380,7 +493,7 @@ def load_or_select_candidates(
         paths,
         selection,
         cache_key=key,
-        evaluations=evaluation.evaluations,
+        evaluations=selection_evaluations,
         scores=scores,
         overlap_threshold=config.overlap_threshold,
         text_similarity_threshold=config.text_similarity_threshold,
@@ -398,6 +511,7 @@ def run_pipeline(
     candidate_generator: CandidateGenerator = generate_candidates,
     candidate_evaluator: CandidateEvaluator = evaluate_candidates,
     heuristic_scorer: HeuristicScorer = score_heuristically,
+    semantic_scorer: SemanticScorer | None = None,
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
@@ -447,14 +561,20 @@ def run_pipeline(
         hard_failed,
         len(evaluation.shortlist_ids),
     )
-    scores = load_or_score_candidates(
+    scoring = load_or_score_candidates(
         config,
         source,
         transcript,
         evaluation,
         scorer=heuristic_scorer,
+        semantic_scorer=semantic_scorer,
     )
-    logger.info("stage=score complete count=%d", len(scores))
+    scores = scoring.scores
+    logger.info(
+        "stage=score complete count=%d failures=%d",
+        len(scores),
+        len(scoring.failures),
+    )
     selection = load_or_select_candidates(
         config,
         source,
