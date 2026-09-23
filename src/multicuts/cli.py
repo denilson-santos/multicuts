@@ -32,6 +32,8 @@ DEFAULT_TEXT_SIMILARITY_THRESHOLD = 0.90
 DEFAULT_REFINEMENT_PRE_ROLL = 0.15
 DEFAULT_REFINEMENT_POST_ROLL = 0.25
 DEFAULT_ASPECT_RATIO = "original"
+DEFAULT_VERTICAL_WIDTH = 1080
+DEFAULT_VERTICAL_HEIGHT = 1920
 DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
 DEFAULT_SCORER = "heuristic"
 DEFAULT_MODEL = "default"
@@ -190,6 +192,8 @@ def _build_run_config(
     refinement_pre_roll: float,
     refinement_post_roll: float,
     aspect_ratio: str,
+    vertical_width: int,
+    vertical_height: int,
     subtitle_template: str,
     subtitle_template_dir: Path | None,
     scorer: str,
@@ -209,6 +213,8 @@ def _build_run_config(
         clips=clips,
         min_score=min_score,
         aspect_ratio=aspect_ratio,
+        vertical_width=vertical_width,
+        vertical_height=vertical_height,
         subtitle_template=subtitle_template,
         scorer=scorer,
         model=model,
@@ -342,6 +348,22 @@ def run_command(
             help="Output presentation geometry.",
         ),
     ] = DEFAULT_ASPECT_RATIO,
+    vertical_width: Annotated[
+        int,
+        typer.Option(
+            "--vertical-width",
+            metavar="PIXELS",
+            help="Width of the 9:16 output; default 1080.",
+        ),
+    ] = DEFAULT_VERTICAL_WIDTH,
+    vertical_height: Annotated[
+        int,
+        typer.Option(
+            "--vertical-height",
+            metavar="PIXELS",
+            help="Height of the 9:16 output; default 1920.",
+        ),
+    ] = DEFAULT_VERTICAL_HEIGHT,
     subtitle_template: Annotated[
         str,
         typer.Option(
@@ -440,6 +462,8 @@ def run_command(
         refinement_pre_roll=refinement_pre_roll,
         refinement_post_roll=refinement_post_roll,
         aspect_ratio=aspect_ratio,
+        vertical_width=vertical_width,
+        vertical_height=vertical_height,
         subtitle_template=subtitle_template,
         subtitle_template_dir=subtitle_template_dir,
         scorer=scorer,

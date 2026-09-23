@@ -7,6 +7,7 @@ import pytest
 from multicuts.errors import MediaError
 from multicuts.media import (
     check_media_tools,
+    inspect_media_path,
     normalize_media_probe,
     probe_media,
     validate_media_for_transcription,
@@ -296,6 +297,29 @@ def test_preflight_rejects_missing_audio_after_probe(
     assert not media.has_audio
     with pytest.raises(MediaError, match="No usable audio stream"):
         validate_media_for_transcription(media)
+
+
+def test_rendered_media_inspection_allows_video_without_audio(
+    probe_payload: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = probe_payload["streams"]
+    assert isinstance(streams, list)
+    streams.pop()
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if "-version" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(probe_payload), "")
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", fake_run)
+
+    media = inspect_media_path(tmp_path / "raw.mp4")
+    assert not media.has_audio
+    assert media.presentation_width == 1920
 
 
 def test_probe_preserves_process_failure_cause_without_exposing_path(

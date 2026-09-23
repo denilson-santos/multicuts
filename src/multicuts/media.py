@@ -3,6 +3,7 @@
 import json
 import subprocess
 from math import isclose, isfinite
+from pathlib import Path
 
 from multicuts.errors import MediaError
 from multicuts.models import AcquiredSource, MediaInfo
@@ -39,7 +40,14 @@ def check_media_tools() -> None:
 
 
 def probe_media(source: AcquiredSource) -> MediaInfo:
-    """Inspect a local source with ffprobe and return project-owned metadata."""
+    """Inspect a source and require the audio needed for transcription."""
+    media = inspect_media_path(source.local_path)
+    validate_media_for_transcription(media)
+    return media
+
+
+def inspect_media_path(path: Path) -> MediaInfo:
+    """Inspect local media with ffprobe without imposing ASR audio requirements."""
     check_media_tools()
     command = [
         "ffprobe",
@@ -49,7 +57,7 @@ def probe_media(source: AcquiredSource) -> MediaInfo:
         "-show_streams",
         "-of",
         "json",
-        str(source.local_path),
+        str(path),
     ]
     try:
         result = subprocess.run(
@@ -76,9 +84,7 @@ def probe_media(source: AcquiredSource) -> MediaInfo:
         payload: object = json.loads(result.stdout)
     except ValueError as exc:
         raise MediaError("ffprobe returned invalid JSON") from exc
-    media = normalize_media_probe(payload)
-    validate_media_for_transcription(media)
-    return media
+    return normalize_media_probe(payload)
 
 
 def validate_media_for_transcription(media: MediaInfo) -> None:

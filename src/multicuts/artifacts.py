@@ -51,6 +51,8 @@ class WorkspacePaths:
     scores: Path
     selection: Path
     refinement: Path
+    raw_clips: Path
+    rendering: Path
     work: Path
 
 
@@ -152,6 +154,8 @@ def prepare_workspace(
         scores=root / "scoring" / "scores.json",
         selection=root / "selection" / "selection.json",
         refinement=root / "refinement" / "refinement.json",
+        raw_clips=root / "clips" / "raw",
+        rendering=root / "rendering",
         work=root / ".work",
     )
     try:
@@ -164,6 +168,9 @@ def prepare_workspace(
             paths.scores.parent,
             paths.selection.parent,
             paths.refinement.parent,
+            paths.raw_clips.parent,
+            paths.raw_clips,
+            paths.rendering,
             paths.work,
         ):
             directory.mkdir(exist_ok=True)

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 014.001 Define rendering contracts and the FFmpeg boundary |
 | PR | — |

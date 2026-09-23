@@ -1,6 +1,7 @@
 """Synchronous orchestration boundary for one multicuts run."""
 
 import logging
+import secrets
 from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn, Protocol
@@ -42,7 +43,12 @@ from multicuts.candidates.selection_artifacts import (
     write_selection,
 )
 from multicuts.config import RunConfig
-from multicuts.errors import ScoringError, TranscriptionError
+from multicuts.errors import (
+    ArtifactError,
+    RenderingError,
+    ScoringError,
+    TranscriptionError,
+)
 from multicuts.media import probe_media
 from multicuts.models import (
     AcquiredSource,
@@ -53,6 +59,8 @@ from multicuts.models import (
     CandidateScoringFailure,
     MediaInfo,
     RefinedSelection,
+    RenderedClip,
+    RenderRequest,
     ScoredCandidate,
     ScoreResult,
     ScoringBatch,
@@ -61,6 +69,14 @@ from multicuts.models import (
     SelectionStatus,
     Transcript,
 )
+from multicuts.rendering.artifacts import (
+    InvalidRenderArtifactError,
+    read_render,
+    render_cache_key,
+    render_paths,
+    write_render,
+)
+from multicuts.rendering.cutter import FfmpegRenderer
 from multicuts.scoring.artifacts import (
     InvalidScoringArtifactError,
     read_scores,
@@ -100,6 +116,16 @@ class TranscriptionProvider(Protocol):
         model: str,
         workspace: Path,
     ) -> Transcript: ...
+
+
+class RenderProvider(Protocol):
+    """The substitutable FFmpeg rendering boundary."""
+
+    def version(self) -> str: ...
+
+    def inspect(self, path: Path) -> MediaInfo: ...
+
+    def render(self, request: RenderRequest) -> RenderedClip: ...
 
 
 class CandidateGenerator(Protocol):
@@ -575,6 +601,91 @@ def load_or_refine_selection(
     return refined
 
 
+def load_or_render_selection(
+    config: RunConfig,
+    source: AcquiredSource,
+    media: MediaInfo,
+    transcript: Transcript,
+    refined: tuple[RefinedSelection, ...],
+    *,
+    renderer: RenderProvider | None = None,
+) -> tuple[RenderedClip, ...]:
+    """Render safe refined intervals and reuse only validated raw clips."""
+    safe = tuple(item for item in refined if not item.requires_rescore)
+    if len(safe) != len(refined):
+        logger.warning(
+            "stage=render skipped_requires_rescore=%d",
+            len(refined) - len(safe),
+        )
+    if not safe:
+        logger.info("stage=render skipped eligible=0")
+        return ()
+
+    backend = renderer if renderer is not None else FfmpegRenderer()
+    version = backend.version()
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    rendered: list[RenderedClip] = []
+    for item in safe:
+        key = render_cache_key(
+            item,
+            media,
+            source_fingerprint=source.fingerprint,
+            aspect_ratio=config.aspect_ratio,
+            target_width=config.vertical_width,
+            target_height=config.vertical_height,
+            renderer_version=version,
+        )
+        output_path, metadata_path = render_paths(paths, item, key)
+        temporary_path = paths.work / f"render-{secrets.token_hex(16)}.mp4"
+        request = RenderRequest(
+            source=source,
+            media=media,
+            refined=item,
+            aspect_ratio=config.aspect_ratio,
+            target_width=config.vertical_width,
+            target_height=config.vertical_height,
+            temporary_path=temporary_path,
+            output_path=output_path,
+            renderer_version=version,
+            cache_key=key,
+        )
+        if not config.force_recompute:
+            try:
+                cached = read_render(request, metadata_path, inspect=backend.inspect)
+            except InvalidRenderArtifactError as exc:
+                raise ArtifactError(
+                    "Existing raw render is invalid; remove its artifact to retry"
+                ) from exc
+            if cached is not None:
+                logger.info("stage=render cache=hit rank=%d", item.rank)
+                rendered.append(cached)
+                continue
+        if output_path.exists() or output_path.is_symlink():
+            raise RenderingError(
+                "Raw clip already exists; refusing to overwrite completed media"
+            )
+        logger.info("stage=render cache=miss rank=%d", item.rank)
+        result = backend.render(request)
+        try:
+            write_render(paths, request, result, metadata_path)
+        except Exception:
+            # The raw clip was just published, but without valid metadata it is
+            # incomplete as a reusable stage artifact.
+            if result.path == output_path:
+                output_path.unlink(missing_ok=True)
+            raise
+        rendered.append(result)
+    logger.info("stage=render complete count=%d", len(rendered))
+    return tuple(rendered)
+
+
 def run_pipeline(
     config: RunConfig,
     *,
@@ -585,10 +696,11 @@ def run_pipeline(
     candidate_evaluator: CandidateEvaluator = evaluate_candidates,
     heuristic_scorer: HeuristicScorer = score_heuristically,
     semantic_scorer: SemanticScorer | None = None,
+    renderer: RenderProvider | None = None,
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after boundary refinement until rendering
+    The pipeline deliberately stops after raw rendering until subtitles
     and final artifact publication are available. Raising here prevents the
     CLI from reporting a completed run for a partial pipeline.
     """
@@ -692,7 +804,15 @@ def run_pipeline(
             ",".join(reason.value for reason in item.reasons),
             item.requires_rescore,
         )
+    load_or_render_selection(
+        config,
+        source,
+        media,
+        transcript,
+        refined,
+        renderer=renderer,
+    )
     raise PipelineNotReadyError(
-        "Pipeline stops after boundary refinement until rendering and final "
+        "Pipeline stops after raw clip rendering until subtitles and final "
         "artifact publication are implemented"
     )

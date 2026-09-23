@@ -25,6 +25,8 @@ class RunConfig:
     candidate_budget: int = 50
     overlap_threshold: float = 0.60
     text_similarity_threshold: float = 0.90
+    vertical_width: int = 1080
+    vertical_height: int = 1920
     refinement_pre_roll: float = 0.15
     refinement_post_roll: float = 0.25
     refinement_search_radius: float = 0.5
@@ -69,6 +71,18 @@ class RunConfig:
             raise ConfigurationError("min_score must be an integer from 0 to 100")
         if self.aspect_ratio not in ("original", "9:16"):
             raise ConfigurationError("aspect_ratio must be 'original' or '9:16'")
+        if (
+            type(self.vertical_width) is not int
+            or type(self.vertical_height) is not int
+            or self.vertical_width <= 0
+            or self.vertical_height <= 0
+            or self.vertical_width % 2
+            or self.vertical_height % 2
+            or self.vertical_width * 16 != self.vertical_height * 9
+        ):
+            raise ConfigurationError(
+                "vertical target must be even, positive, and exactly 9:16"
+            )
         if self.scorer not in ("heuristic", "hybrid"):
             raise ConfigurationError("scorer must be 'heuristic' or 'hybrid'")
         if self.semantic_provider != "openai":
