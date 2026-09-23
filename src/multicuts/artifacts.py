@@ -50,6 +50,7 @@ class WorkspacePaths:
     candidates: Path
     scores: Path
     selection: Path
+    refinement: Path
     work: Path
 
 
@@ -150,6 +151,7 @@ def prepare_workspace(
         candidates=root / "candidates" / "candidates.json",
         scores=root / "scoring" / "scores.json",
         selection=root / "selection" / "selection.json",
+        refinement=root / "refinement" / "refinement.json",
         work=root / ".work",
     )
     try:
@@ -161,6 +163,7 @@ def prepare_workspace(
             paths.candidates.parent,
             paths.scores.parent,
             paths.selection.parent,
+            paths.refinement.parent,
             paths.work,
         ):
             directory.mkdir(exist_ok=True)

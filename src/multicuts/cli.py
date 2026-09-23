@@ -29,6 +29,8 @@ DEFAULT_MIN_SCORE = 0
 DEFAULT_CANDIDATE_BUDGET = 50
 DEFAULT_OVERLAP_THRESHOLD = 0.60
 DEFAULT_TEXT_SIMILARITY_THRESHOLD = 0.90
+DEFAULT_REFINEMENT_PRE_ROLL = 0.15
+DEFAULT_REFINEMENT_POST_ROLL = 0.25
 DEFAULT_ASPECT_RATIO = "original"
 DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
 DEFAULT_SCORER = "heuristic"
@@ -185,6 +187,8 @@ def _build_run_config(
     candidate_budget: int,
     overlap_threshold: float,
     text_similarity_threshold: float,
+    refinement_pre_roll: float,
+    refinement_post_roll: float,
     aspect_ratio: str,
     subtitle_template: str,
     subtitle_template_dir: Path | None,
@@ -218,6 +222,8 @@ def _build_run_config(
         candidate_budget=candidate_budget,
         overlap_threshold=overlap_threshold,
         text_similarity_threshold=text_similarity_threshold,
+        refinement_pre_roll=refinement_pre_roll,
+        refinement_post_roll=refinement_post_roll,
         subtitle_template_dir=(
             subtitle_template_dir.expanduser()
             if subtitle_template_dir is not None
@@ -312,6 +318,22 @@ def run_command(
             help="Inclusive normalized-text redundancy threshold from 0 to 1.",
         ),
     ] = DEFAULT_TEXT_SIMILARITY_THRESHOLD,
+    refinement_pre_roll: Annotated[
+        float,
+        typer.Option(
+            "--pre-roll",
+            metavar="SECONDS",
+            help="Padding before each refined cut in seconds.",
+        ),
+    ] = DEFAULT_REFINEMENT_PRE_ROLL,
+    refinement_post_roll: Annotated[
+        float,
+        typer.Option(
+            "--post-roll",
+            metavar="SECONDS",
+            help="Padding after each refined cut in seconds.",
+        ),
+    ] = DEFAULT_REFINEMENT_POST_ROLL,
     aspect_ratio: Annotated[
         str,
         typer.Option(
@@ -415,6 +437,8 @@ def run_command(
         candidate_budget=candidate_budget,
         overlap_threshold=overlap_threshold,
         text_similarity_threshold=text_similarity_threshold,
+        refinement_pre_roll=refinement_pre_roll,
+        refinement_post_roll=refinement_post_roll,
         aspect_ratio=aspect_ratio,
         subtitle_template=subtitle_template,
         subtitle_template_dir=subtitle_template_dir,

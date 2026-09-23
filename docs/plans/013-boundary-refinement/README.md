@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 010 Ranking and selection |
 | Unlocks | 014 Clip rendering; 015 clip-local transcript extraction |
-| PRs | — |
+| PRs | [#37](https://github.com/denilson-santos/multicuts/pull/37) |
 
 ## Objective and expected outcome
 
@@ -60,9 +60,9 @@ unmodified score.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | planned | P1 | Package 010 | — | Traceable scored and render spans with validated bounds |
-| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | planned | P1 | 001 | — | Cleaner word/pause-aligned cuts with bounded padding |
-| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | planned | P1 | 002 | — | Persisted refined selections that cannot silently inherit invalid scores |
+| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | in-review | P1 | Package 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Traceable scored and render spans with validated bounds |
+| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | in-review | P1 | 001 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Cleaner word/pause-aligned cuts with bounded padding |
+| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | in-review | P1 | 002 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Persisted refined selections that cannot silently inherit invalid scores |
 
 ## Suggested task sequence
 
@@ -95,3 +95,15 @@ covered by tests.
   are preferable to fabricated precision.
 - This package does not require semantic-provider package 012; any explicit
   rescoring path must work through the configured scorer boundary.
+
+## Implementation decisions
+
+- Refinement searches at most `0.5` seconds on either side of each selected
+  boundary. A measured gap of at least `0.4` seconds counts as a pause. These
+  thresholds belong to refinement version `boundary-refinement-v1`.
+- Default padding is `0.15` seconds before and `0.25` seconds after the semantic
+  cut; `--pre-roll` and `--post-roll` configure it per run.
+- A changed set of observed transcript word or segment indexes marks the result
+  `requires_rescore`. Such a result retains the selected score only as provenance,
+  and downstream rendering must not treat it as an approved score for the new
+  content. With no usable timing evidence, boundaries remain unchanged.

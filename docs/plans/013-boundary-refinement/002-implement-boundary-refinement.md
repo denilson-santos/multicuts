@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 013.001 Define refined interval contracts |
-| PR | — |
+| PR | [#37](https://github.com/denilson-santos/multicuts/pull/37) |
 
 ## Objective
 

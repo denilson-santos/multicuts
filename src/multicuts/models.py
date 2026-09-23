@@ -964,3 +964,110 @@ class SelectionResult:
             item.rank for item in self.selected
         ):
             raise ValueError("selected candidates and decisions must agree")
+
+
+class RefinementReason(str, Enum):
+    """Closed reason codes describing one boundary-refinement result."""
+
+    UNCHANGED = "unchanged"
+    WORD_ALIGNED = "word_aligned"
+    SEGMENT_ALIGNED = "segment_aligned"
+    PAUSE_ALIGNED = "pause_aligned"
+    PADDED = "padded"
+    CLAMPED = "clamped"
+    REJECTED = "rejected"
+    REQUIRES_RESCORE = "requires_rescore"
+
+
+@dataclass(frozen=True, slots=True)
+class RefinedSelection:
+    """A selected candidate with a source-bounded interval for rendering.
+
+    The selected value remains the sole owner of candidate, checklist, score,
+    rank, and provider provenance. The render interval is kept separately so a
+    padded cut cannot be mistaken for the interval that was scored.
+    Pre-roll and post-roll are the padding actually present after source
+    duration clamping.
+    """
+
+    selected: SelectedCandidate
+    render_start: float
+    render_end: float
+    pre_roll: float
+    post_roll: float
+    reasons: tuple[RefinementReason, ...]
+    version: str
+    source_duration: float
+    requires_rescore: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.selected, SelectedCandidate):
+            raise ValueError("refined selection must retain a selected candidate")
+        if (
+            isinstance(self.source_duration, bool)
+            or not isinstance(self.source_duration, (int, float))
+            or not isfinite(self.source_duration)
+            or self.source_duration <= 0
+        ):
+            raise ValueError("refined source duration must be finite and positive")
+        if self.selected.end > self.source_duration:
+            raise ValueError("selected candidate must fit within source duration")
+        for field_name in ("render_start", "render_end", "pre_roll", "post_roll"):
+            value = getattr(self, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+            ):
+                raise ValueError(f"refined {field_name} must be finite")
+        if (
+            self.render_start < 0
+            or self.render_end <= self.render_start
+            or self.render_end > self.source_duration
+        ):
+            raise ValueError("refined render interval is outside source duration")
+        if self.pre_roll < 0 or self.post_roll < 0:
+            raise ValueError("refined padding must be non-negative")
+        if self.render_start + self.pre_roll >= self.render_end - self.post_roll:
+            raise ValueError("refined padding leaves no semantic interval")
+        if not isinstance(self.reasons, tuple) or not self.reasons:
+            raise ValueError("refinement reasons must be a non-empty tuple")
+        normalized_reasons: list[RefinementReason] = []
+        for reason in self.reasons:
+            if isinstance(reason, str):
+                try:
+                    reason = RefinementReason(reason)
+                except ValueError as exc:
+                    raise ValueError("refinement reason is invalid") from exc
+            elif not isinstance(reason, RefinementReason):
+                raise ValueError("refinement reason is invalid")
+            normalized_reasons.append(reason)
+        if len(set(normalized_reasons)) != len(normalized_reasons):
+            raise ValueError("refinement reasons must be unique")
+        object.__setattr__(self, "reasons", tuple(normalized_reasons))
+        if not isinstance(self.version, str) or not self.version.strip():
+            raise ValueError("refinement version must not be empty")
+        if type(self.requires_rescore) is not bool:
+            raise ValueError("refinement rescore flag must be boolean")
+        if self.requires_rescore != (RefinementReason.REQUIRES_RESCORE in self.reasons):
+            raise ValueError("refinement rescore flag and reason must agree")
+
+    @property
+    def candidate_id(self) -> str:
+        """Return the retained candidate identity."""
+        return self.selected.candidate_id
+
+    @property
+    def rank(self) -> int:
+        """Return the retained selection rank."""
+        return self.selected.rank
+
+    @property
+    def scored_start(self) -> float:
+        """Return the original start timestamp used for scoring."""
+        return self.selected.start
+
+    @property
+    def scored_end(self) -> float:
+        """Return the original end timestamp used for scoring."""
+        return self.selected.end
