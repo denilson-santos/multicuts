@@ -25,6 +25,10 @@ class RunConfig:
     candidate_budget: int = 50
     overlap_threshold: float = 0.60
     text_similarity_threshold: float = 0.90
+    refinement_pre_roll: float = 0.15
+    refinement_post_roll: float = 0.25
+    refinement_search_radius: float = 0.5
+    refinement_pause_threshold: float = 0.4
     semantic_provider: str = "openai"
     semantic_model: str = "gpt-6-luna"
     semantic_reasoning_effort: str = "max"
@@ -105,6 +109,27 @@ class RunConfig:
                 raise ConfigurationError(
                     f"{field_name} must be a finite ratio from 0 to 1"
                 )
+
+        for field_name in (
+            "refinement_pre_roll",
+            "refinement_post_roll",
+            "refinement_search_radius",
+            "refinement_pause_threshold",
+        ):
+            value = getattr(self, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value < 0
+            ):
+                raise ConfigurationError(
+                    f"{field_name} must be finite and non-negative"
+                )
+        if self.refinement_search_radius <= 0 or self.refinement_pause_threshold <= 0:
+            raise ConfigurationError(
+                "refinement search and pause thresholds must be positive"
+            )
 
         if self.language is not None:
             if not isinstance(self.language, str) or not self.language.strip():

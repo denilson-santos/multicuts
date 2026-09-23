@@ -196,6 +196,11 @@ Selection suppresses temporal overlap at an inclusive `0.60` ratio and
 normalized near-duplicate text at `0.90` by default. Override these policies
 with `--overlap-threshold` and `--text-threshold`.
 
+Boundary refinement uses observed transcript timing after selection. It adds
+`0.15` seconds before and `0.25` seconds after each cut by default; configure
+these with `--pre-roll` and `--post-roll`. A refined span that changes the
+transcript content is marked for rescoring before rendering.
+
 ### Hybrid semantic scoring
 
 The default `heuristic` scorer stays local and requires no API credential. The

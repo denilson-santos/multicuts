@@ -28,6 +28,13 @@ from multicuts.candidates.generator import (
     generate_candidates,
 )
 from multicuts.candidates.ranking import NormalizedTextRedundancy, select_candidates
+from multicuts.candidates.refinement import refine_selection
+from multicuts.candidates.refinement_artifacts import (
+    InvalidRefinementArtifactError,
+    read_refinement,
+    refinement_cache_key,
+    write_refinement,
+)
 from multicuts.candidates.selection_artifacts import (
     InvalidSelectionArtifactError,
     read_selection,
@@ -45,6 +52,7 @@ from multicuts.models import (
     CandidateEvaluationBatch,
     CandidateScoringFailure,
     MediaInfo,
+    RefinedSelection,
     ScoredCandidate,
     ScoreResult,
     ScoringBatch,
@@ -502,6 +510,71 @@ def load_or_select_candidates(
     return selection
 
 
+def load_or_refine_selection(
+    config: RunConfig,
+    source: AcquiredSource,
+    media: MediaInfo,
+    transcript: Transcript,
+    selection: SelectionResult,
+) -> tuple[RefinedSelection, ...]:
+    """Reuse or publish transcript-aware intervals for selected candidates."""
+    if not selection.selected:
+        logger.info("stage=refine skipped selected=0")
+        return ()
+    key = refinement_cache_key(
+        selection,
+        transcript,
+        source_fingerprint=source.fingerprint,
+        source_duration=media.duration,
+        pre_roll=config.refinement_pre_roll,
+        post_roll=config.refinement_post_roll,
+        search_radius=config.refinement_search_radius,
+        pause_threshold=config.refinement_pause_threshold,
+    )
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    if not config.force_recompute:
+        try:
+            cached = read_refinement(
+                paths,
+                cache_key=key,
+                selection=selection,
+                source_duration=media.duration,
+            )
+        except InvalidRefinementArtifactError:
+            logger.warning("stage=refine cache=invalid; recomputing")
+        else:
+            if cached is not None:
+                logger.info("stage=refine cache=hit selected=%d", len(cached))
+                return cached
+
+    logger.info("stage=refine cache=miss selected=%d", len(selection.selected))
+    refined = refine_selection(
+        selection,
+        transcript,
+        media.duration,
+        pre_roll=config.refinement_pre_roll,
+        post_roll=config.refinement_post_roll,
+        search_radius=config.refinement_search_radius,
+        pause_threshold=config.refinement_pause_threshold,
+    )
+    write_refinement(
+        paths,
+        refined,
+        cache_key=key,
+        selection=selection,
+        source_duration=media.duration,
+        replace=paths.refinement.exists(),
+    )
+    return refined
+
+
 def run_pipeline(
     config: RunConfig,
     *,
@@ -515,7 +588,7 @@ def run_pipeline(
 ) -> NoReturn:
     """Run the implemented synchronous stages for one validated configuration.
 
-    The pipeline deliberately stops after selection until boundary refinement
+    The pipeline deliberately stops after boundary refinement until rendering
     and final artifact publication are available. Raising here prevents the
     CLI from reporting a completed run for a partial pipeline.
     """
@@ -604,7 +677,22 @@ def run_pipeline(
             selected.candidate_id,
             selected.result.score,
         )
+    refined = load_or_refine_selection(config, source, media, transcript, selection)
+    requires_rescore = sum(item.requires_rescore for item in refined)
+    logger.info(
+        "stage=refine complete selected=%d requires_rescore=%d",
+        len(refined),
+        requires_rescore,
+    )
+    for item in refined:
+        logger.info(
+            "stage=refine rank=%d candidate_id=%s reasons=%s requires_rescore=%s",
+            item.selected.rank,
+            item.selected.candidate_id,
+            ",".join(reason.value for reason in item.reasons),
+            item.requires_rescore,
+        )
     raise PipelineNotReadyError(
-        "Pipeline stops after candidate selection until boundary refinement "
-        "and final artifact publication are implemented"
+        "Pipeline stops after boundary refinement until rendering and final "
+        "artifact publication are implemented"
     )

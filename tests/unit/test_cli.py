@@ -37,6 +37,8 @@ def test_generate_defaults_are_converted_to_run_config() -> None:
     assert config.max_duration == 60.0
     assert config.overlap_threshold == 0.60
     assert config.text_similarity_threshold == 0.90
+    assert config.refinement_pre_roll == 0.15
+    assert config.refinement_post_roll == 0.25
     assert config.aspect_ratio == "original"
     assert config.subtitle_template == "yellow-pop"
     assert config.scorer == "heuristic"
@@ -72,6 +74,10 @@ def test_generate_maps_explicit_options_without_accessing_source(
             "0.5",
             "--text-threshold",
             "0.95",
+            "--pre-roll",
+            "0.2",
+            "--post-roll",
+            "0.3",
             "--aspect-ratio",
             "9:16",
             "--subtitle-template",
@@ -103,6 +109,8 @@ def test_generate_maps_explicit_options_without_accessing_source(
     assert (config.min_duration, config.max_duration) == (20.0, 45.0)
     assert config.overlap_threshold == 0.5
     assert config.text_similarity_threshold == 0.95
+    assert config.refinement_pre_roll == 0.2
+    assert config.refinement_post_roll == 0.3
     assert config.aspect_ratio == "9:16"
     assert config.subtitle_template == "yellow-pop"
     assert config.subtitle_template_dir == template_dir
@@ -128,6 +136,7 @@ def test_auto_language_is_normalized_by_run_config() -> None:
         ("--min-score", "101", "min_score"),
         ("--aspect-ratio", "square", "aspect_ratio"),
         ("--overlap-threshold", "1.1", "overlap_threshold"),
+        ("--pre-roll", "-0.1", "refinement_pre_roll"),
     ],
 )
 def test_semantic_cli_errors_reach_run_config_validation(
@@ -168,6 +177,8 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
         "--candidate-budget",
         "--overlap-threshold",
         "--text-threshold",
+        "--pre-roll",
+        "--post-roll",
         "--aspect-ratio",
         "--subtitle-template",
         "--subtitle-template-dir",

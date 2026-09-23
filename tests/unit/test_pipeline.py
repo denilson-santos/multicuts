@@ -108,7 +108,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
         return ()
 
     transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
+    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
         run_pipeline(
             config,
             acquire=acquire,
@@ -128,6 +128,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
     assert len(transcriber.calls) == 1
     assert transcriber.calls[0][:3] == (source.local_path, None, "default")
     assert (config.output_dir).is_dir()
+    assert list(config.output_dir.rglob("refinement.json")) == []
 
 
 def test_pipeline_passes_explicit_acquisition_workspace(
@@ -413,7 +414,7 @@ def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
-    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
+    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
         run_pipeline(
             replace(config, scorer="hybrid"),
             acquire=lambda _value, _workspace: source,
@@ -423,7 +424,7 @@ def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty
 
 
 def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
-    config: RunConfig, transcript: Transcript
+    config: RunConfig, transcript: Transcript, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(40.0, 1920, 1080, 1920, 1080, 0, 1)
@@ -448,7 +449,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     def evaluator(*_args: object, **_kwargs: object) -> CandidateEvaluationBatch:
         return CandidateEvaluationBatch((evaluated,), (evaluated,))
 
-    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
+    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
         run_pipeline(
             config,
             acquire=lambda _value, _workspace: source,
@@ -466,3 +467,23 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     selection_payload = selection_path.read_text(encoding="utf-8")
     assert '"candidate_id": "candidate-v1:one"' in selection_payload
     assert '"status": "selected"' in selection_payload
+
+    refinement_path = next(config.output_dir.rglob("refinement.json"))
+    refinement_payload = refinement_path.read_text(encoding="utf-8")
+    assert '"candidate_id": "candidate-v1:one"' in refinement_payload
+    assert '"scored_end": 30.0' in refinement_payload
+    assert '"render_end": 30.25' in refinement_payload
+
+    def unexpected_refinement(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("matching refinement artifact should be reused")
+
+    monkeypatch.setattr("multicuts.pipeline.refine_selection", unexpected_refinement)
+    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
+        run_pipeline(
+            config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=FakeTranscriber(transcript),
+            candidate_generator=lambda *_args, **_kwargs: (candidate,),
+            candidate_evaluator=evaluator,
+        )
