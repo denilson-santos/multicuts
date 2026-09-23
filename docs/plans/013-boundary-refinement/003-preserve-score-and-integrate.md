@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 013.002 Implement deterministic boundary refinement |
-| PR | — |
+| PR | [#37](https://github.com/denilson-santos/multicuts/pull/37) |
 
 ## Objective
 

@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | in-progress |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 010 Ranking and selection |
 | Unlocks | 014 Clip rendering; 015 clip-local transcript extraction |
-| PRs | — |
+| PRs | [#37](https://github.com/denilson-santos/multicuts/pull/37) |
 
 ## Objective and expected outcome
 
@@ -60,9 +60,9 @@ unmodified score.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | in-progress | P1 | Package 010 | — | Traceable scored and render spans with validated bounds |
-| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | in-progress | P1 | 001 | — | Cleaner word/pause-aligned cuts with bounded padding |
-| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | in-progress | P1 | 002 | — | Persisted refined selections that cannot silently inherit invalid scores |
+| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | in-review | P1 | Package 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Traceable scored and render spans with validated bounds |
+| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | in-review | P1 | 001 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Cleaner word/pause-aligned cuts with bounded padding |
+| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | in-review | P1 | 002 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Persisted refined selections that cannot silently inherit invalid scores |
 
 ## Suggested task sequence
 

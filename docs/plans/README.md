@@ -54,7 +54,7 @@ completed and its package-level completion criteria pass.
 | [010 Ranking and selection](010-ranking-selection/) | M2 | completed | P1 | 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | completed | P2 | 003, 004, 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Supported YouTube URLs normalized to controlled local media and safe metadata |
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | completed | P2 | 008, 009 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
-| [013 Boundary refinement](013-boundary-refinement/) | M3 | in-progress | P1 | 010 | — | Clean source-bounded render intervals that preserve scored-content provenance |
+| [013 Boundary refinement](013-boundary-refinement/) | M3 | in-review | P1 | 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Clean source-bounded render intervals that preserve scored-content provenance |
 | [014 Clip rendering](014-clip-rendering/) | M3 | planned | P1 | 004, 013 | — | Safe accurate `original` and center-cropped `9:16` raw clips |
 | [015 Clip subtitles](015-clip-subtitles/) | M3 | planned | P1 | 005, 006, 013, 014 | — | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
 | [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | planned | P1 | 010, 011, 014, 015 | — | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
