@@ -30,6 +30,10 @@ def test_run_config_uses_explicit_defaults_without_external_access(
     assert valid_config.max_duration == 60.0
     assert valid_config.overlap_threshold == 0.60
     assert valid_config.text_similarity_threshold == 0.90
+    assert valid_config.semantic_provider == "openai"
+    assert valid_config.semantic_model == "gpt-6-luna"
+    assert valid_config.semantic_reasoning_effort == "max"
+    assert valid_config.semantic_fallback == "heuristic"
     assert valid_config.subtitle_template_dir is None
     assert not valid_config.keep_intermediates
     assert not valid_config.force_recompute
@@ -126,6 +130,22 @@ def test_run_config_rejects_unsupported_aspect_ratio(valid_config: RunConfig) ->
         replace(valid_config, aspect_ratio="square")
 
 
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"scorer": "semantic"}, "scorer"),
+        ({"semantic_provider": "other"}, "semantic_provider"),
+        ({"semantic_reasoning_effort": "extreme"}, "semantic_reasoning_effort"),
+        ({"semantic_fallback": "silent"}, "semantic_fallback"),
+    ],
+)
+def test_run_config_rejects_unsupported_semantic_configuration(
+    valid_config: RunConfig, changes: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        replace(valid_config, **changes)
+
+
 @pytest.mark.parametrize("aspect_ratio", ["original", "9:16"])
 def test_run_config_accepts_supported_aspect_ratios(
     valid_config: RunConfig, aspect_ratio: str
@@ -149,7 +169,17 @@ def test_run_config_validates_supplied_template_directory(
 
 
 @pytest.mark.parametrize(
-    "field_name", ["source", "subtitle_template", "scorer", "model"]
+    "field_name",
+    [
+        "source",
+        "subtitle_template",
+        "scorer",
+        "model",
+        "semantic_provider",
+        "semantic_model",
+        "semantic_reasoning_effort",
+        "semantic_fallback",
+    ],
 )
 def test_run_config_rejects_blank_required_names(
     valid_config: RunConfig, field_name: str

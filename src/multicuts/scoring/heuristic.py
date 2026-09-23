@@ -84,6 +84,37 @@ def compose_score(
     return base, final
 
 
+def deterministic_penalties(
+    evaluation: CandidateEvaluation,
+) -> tuple[ScorePenalty, ...]:
+    """Return the shared project-owned penalties for any scoring mode."""
+    features = evaluation.features
+    penalties: list[ScorePenalty] = []
+    if not PREFERRED_DURATION_MIN <= features.duration <= PREFERRED_DURATION_MAX:
+        penalties.append(
+            ScorePenalty(
+                "DURATION_FIT",
+                DURATION_FIT_PENALTY,
+                "Outside the preferred 25–45 second band",
+            )
+        )
+    if features.pause_ratio is not None and features.pause_ratio > MAX_PAUSE_RATIO:
+        penalties.append(
+            ScorePenalty(
+                "PAUSE_PROXY",
+                PAUSE_PROXY_PENALTY,
+                "Transcript gaps exceed the pause proxy threshold",
+            )
+        )
+    if features.filler_ratio is not None and features.filler_ratio > MAX_FILLER_RATIO:
+        penalties.append(
+            ScorePenalty(
+                "FILLER", FILLER_PENALTY, "Filler word ratio exceeds the threshold"
+            )
+        )
+    return tuple(penalties)
+
+
 def score_heuristically(evaluation: CandidateEvaluation) -> ScoreResult:
     """Judge only measured deterministic signals; no semantic inference is claimed."""
     if evaluation.hard_failed or evaluation.shortlist_rank is None:
@@ -110,29 +141,7 @@ def score_heuristically(evaluation: CandidateEvaluation) -> ScoreResult:
             strict=True,
         )
     )
-    penalties: list[ScorePenalty] = []
-    if not PREFERRED_DURATION_MIN <= features.duration <= PREFERRED_DURATION_MAX:
-        penalties.append(
-            ScorePenalty(
-                "DURATION_FIT",
-                DURATION_FIT_PENALTY,
-                "Outside the preferred 25–45 second band",
-            )
-        )
-    if features.pause_ratio is not None and features.pause_ratio > MAX_PAUSE_RATIO:
-        penalties.append(
-            ScorePenalty(
-                "PAUSE_PROXY",
-                PAUSE_PROXY_PENALTY,
-                "Transcript gaps exceed the pause proxy threshold",
-            )
-        )
-    if features.filler_ratio is not None and features.filler_ratio > MAX_FILLER_RATIO:
-        penalties.append(
-            ScorePenalty(
-                "FILLER", FILLER_PENALTY, "Filler word ratio exceeds the threshold"
-            )
-        )
+    penalties = deterministic_penalties(evaluation)
     measured = (
         features.opening_quality,
         features.standalone_context,
@@ -174,13 +183,13 @@ def score_heuristically(evaluation: CandidateEvaluation) -> ScoreResult:
         "and speech density signals; "
         "emotion/surprise and quotability held neutral; " + evidence_note + "."
     )
-    base, final = compose_score(dimensions, tuple(penalties))
+    base, final = compose_score(dimensions, penalties)
     return ScoreResult(
         score=final,
         base_score=base,
         confidence=confidence,
         dimensions=dimensions,
-        penalties=tuple(penalties),
+        penalties=penalties,
         reason=reason,
         scoring_schema_version=SCORING_SCHEMA_VERSION,
         scoring_algorithm_version=SCORING_ALGORITHM_VERSION,

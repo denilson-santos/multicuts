@@ -1737,23 +1737,22 @@ These decisions define the current MVP direction and may be revised through norm
 | D-010 | Version scoring schemas and algorithms. |
 | D-011 | Transcribe the source once and derive clip-local subtitle timelines without repeated ASR. |
 | D-012 | Reuse `multisubs` templates rather than maintaining a competing subtitle-preset catalog. |
+| D-013 | Use optional OpenAI Responses API hybrid scoring with `gpt-6-luna`, reasoning effort `max`, stateless requests, and explicit heuristic fallback; fully local semantic scoring is deferred while heuristic scoring remains local. |
 
 ---
 
 ## 26. Open product and engineering questions
 
-1. Which semantic scoring provider should be the default?
-2. Must the MVP support a fully local semantic-scoring mode?
-3. What duration ranges should be default for different short-form platforms?
-4. Should users be able to select a content profile such as educational, controversial, storytelling, humor, or motivational?
-5. Should scoring weights vary by target platform?
-6. How many candidates per hour of source video should reach the expensive scorer?
-7. What temporal-overlap threshold performs best on evaluation data?
-8. Should title/hook suggestions be generated with each selected clip?
-9. What public `multisubs` contract should generate ASS from an existing `ClipTranscript` for a target geometry without retranscription?
-10. Should cache/workspace data live inside the output directory or in a global cache?
-11. Is advanced yt-dlp cookie configuration required for the MVP?
-12. What should the retention policy be for downloaded remote sources?
-13. Should vertical output support manual crop offsets in the MVP?
-14. Which `multisubs` templates should be recommended as defaults for general short-form content?
-15. Should semantic near-duplicate detection use embeddings in the first release or only deterministic text similarity?
+1. What duration ranges should be default for different short-form platforms?
+2. Should users be able to select a content profile such as educational, controversial, storytelling, humor, or motivational?
+3. Should scoring weights vary by target platform?
+4. How many candidates per hour of source video should reach the expensive scorer?
+5. What temporal-overlap threshold performs best on evaluation data?
+6. Should title/hook suggestions be generated with each selected clip?
+7. What public `multisubs` contract should generate ASS from an existing `ClipTranscript` for a target geometry without retranscription?
+8. Should cache/workspace data live inside the output directory or in a global cache?
+9. Is advanced yt-dlp cookie configuration required for the MVP?
+10. What should the retention policy be for downloaded remote sources?
+11. Should vertical output support manual crop offsets in the MVP?
+12. Which `multisubs` templates should be recommended as defaults for general short-form content?
+13. Should semantic near-duplicate detection use embeddings in the first release or only deterministic text similarity?

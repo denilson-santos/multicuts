@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M2 — Intelligence |
-| Status | planned |
+| Status | in-progress |
 | Priority | P2 |
 | Depends on | 008 Candidate evaluation; 009 Explainable heuristic scoring |
 | Unlocks | Configured semantic judgments and hybrid score provenance |
@@ -19,11 +19,10 @@ without fabricating a semantic result.
 
 ## Context
 
-FR-SCORE-006–009 and decision D-006 establish hybrid scoring as the MVP
-direction, but the PRD does not choose a provider/model or require a fully local
-semantic mode. This package therefore includes an explicit provider decision
-gate and must not make `hybrid` appear operational before a real, validated
-adapter is configured.
+FR-SCORE-006–009 and decisions D-006 and D-013 establish hybrid scoring through
+an optional OpenAI boundary while preserving the local heuristic route. This
+package makes `hybrid` operational only when its real adapter and credential are
+configured.
 
 ## Included scope
 
@@ -68,10 +67,10 @@ adapter is configured.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define the semantic provider contract and configuration](001-define-provider-contract.md) | planned | P2 | Packages 008, 009 | — | Explicit provider choice, minimal requests, and project-owned validated judgments |
-| [002 Implement the initial semantic adapter](002-implement-semantic-adapter.md) | planned | P2 | 001 | — | Bounded external calls normalized without provider leakage |
-| [003 Compose hybrid results and fallback behavior](003-compose-hybrid-results.md) | planned | P2 | 002 | — | Explainable hybrid scores and honest heuristic fallback provenance |
-| [004 Persist and integrate hybrid scoring](004-persist-and-integrate-hybrid-scoring.md) | planned | P2 | 003 | — | Cache-safe, configured hybrid execution in the synchronous pipeline |
+| [001 Define the semantic provider contract and configuration](001-define-provider-contract.md) | in-progress | P2 | Packages 008, 009 | — | Explicit provider choice, minimal requests, and project-owned validated judgments |
+| [002 Implement the initial semantic adapter](002-implement-semantic-adapter.md) | in-progress | P2 | 001 | — | Bounded external calls normalized without provider leakage |
+| [003 Compose hybrid results and fallback behavior](003-compose-hybrid-results.md) | in-progress | P2 | 002 | — | Explainable hybrid scores and honest heuristic fallback provenance |
+| [004 Persist and integrate hybrid scoring](004-persist-and-integrate-hybrid-scoring.md) | in-progress | P2 | 003 | — | Cache-safe, configured hybrid execution in the synchronous pipeline |
 
 ## Suggested task sequence
 
@@ -98,10 +97,6 @@ and pipeline routing only after the failure and fallback semantics are stable.
 
 ## Risks, assumptions, and open questions
 
-- The initial semantic provider/model and whether a fully local semantic mode
-  is required remain open PRD questions. Task 001 is a decision gate; no adapter
-  should be implemented until that choice is recorded in an existing source
-  document or the package plan.
 - Provider schemas and model behavior can change. Contract tests should cover
   the narrow normalized response rather than expose an SDK response throughout
   the application.
@@ -109,3 +104,20 @@ and pipeline routing only after the failure and fallback semantics are stable.
   supplies semantic judgments, not an authoritative opaque final score.
 - This package can proceed independently of packages 010 and 013–016 and does
   not block the first heuristic local-rendering path.
+
+## Implementation decisions
+
+- The initial provider is OpenAI through the Responses API. The default semantic
+  model is `gpt-6-luna` with reasoning effort `max`.
+- Hybrid scoring is opt-in; heuristic scoring remains the default fully local
+  path. A fully local semantic model is deferred beyond the MVP.
+- Requests contain candidate text, derived features, and at most 500 characters
+  of transcript context on each side. Raw media is never sent and responses use
+  `store=false`.
+- OpenAI support is installed through the optional `openai` dependency extra;
+  credentials come only from `OPENAI_API_KEY`.
+- Semantic dimensions feed the established project-owned weights, followed by
+  the existing deterministic penalties exactly once.
+- Provider failures are persisted per candidate. The default explicit fallback
+  is heuristic scoring; `none` omits the failed candidate without fabricating a
+  semantic result.

@@ -26,6 +26,9 @@ classifiers = [
 multicuts = "multicuts.cli:main"
 
 [project.optional-dependencies]
+openai = [
+    "openai>=2,<3",
+]
 dev = [
     "build>=1.2,<2",
     "pyright>=1.1,<2",

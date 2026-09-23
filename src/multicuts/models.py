@@ -623,8 +623,22 @@ class ScoreResult:
                 for value in (self.provider, self.model, self.prompt_version)
             ):
                 raise ValueError("heuristic scores cannot claim semantic provenance")
+        elif self.scorer == "heuristic-fallback":
+            if any(
+                value is not None
+                for value in (self.provider, self.model, self.prompt_version)
+            ):
+                raise ValueError("fallback scores cannot claim semantic provenance")
+        elif self.scorer == "hybrid":
+            if any(
+                value is None
+                for value in (self.provider, self.model, self.prompt_version)
+            ):
+                raise ValueError("hybrid scores require semantic provenance")
         elif not isinstance(self.scorer, str) or not self.scorer.strip():
             raise ValueError("scorer must not be empty")
+        else:
+            raise ValueError("scorer is unsupported")
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,6 +651,190 @@ class ScoredCandidate:
             raise ValueError("scored candidate ID must not be empty")
         if not isinstance(self.result, ScoreResult):
             raise ValueError("scored candidate result must be a score")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticScoringRequest:
+    """Minimum project-owned text and evidence sent to a semantic scorer."""
+
+    candidate_id: str
+    candidate_text: str
+    context_before: str
+    context_after: str
+    features: CandidateFeatures
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.candidate_id, str) or not self.candidate_id.strip():
+            raise ValueError("semantic request candidate ID must not be empty")
+        if not isinstance(self.candidate_text, str) or not self.candidate_text.strip():
+            raise ValueError("semantic request candidate text must not be empty")
+        for field_name in ("context_before", "context_after"):
+            if not isinstance(getattr(self, field_name), str):
+                raise ValueError(f"semantic request {field_name} must be text")
+        if not isinstance(self.features, CandidateFeatures):
+            raise ValueError("semantic request features must be structured")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticJudgment:
+    """Validated semantic dimensions returned through a provider adapter."""
+
+    dimensions: tuple[ScoreDimension, ...]
+    confidence: float
+    reason: str
+    provider: str
+    model: str
+    prompt_version: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.dimensions, tuple)
+            or any(not isinstance(item, ScoreDimension) for item in self.dimensions)
+            or tuple(item.name for item in self.dimensions) != SCORE_DIMENSIONS
+        ):
+            raise ValueError("semantic dimensions must contain the closed ordered set")
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, (int, float))
+            or not isfinite(self.confidence)
+            or not 0 <= self.confidence <= 1
+        ):
+            raise ValueError("semantic confidence must be finite and within 0..1")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("semantic reason must not be empty")
+        for field_name in ("provider", "model", "prompt_version"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"semantic {field_name} must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateScoringFailure:
+    """Safe candidate-level provider failure retained for audit and fallback."""
+
+    candidate_id: str
+    code: str
+    warning: str
+    provider: str
+    model: str
+    prompt_version: str
+    retryable: bool
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "candidate_id",
+            "code",
+            "warning",
+            "provider",
+            "model",
+            "prompt_version",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"scoring failure {field_name} must not be empty")
+        if type(self.retryable) is not bool:
+            raise ValueError("scoring failure retryable flag must be boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoringProvenance:
+    """Configured scoring route persisted independently from provider secrets."""
+
+    mode: str
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    reasoning_effort: str | None = None
+    fallback: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("heuristic", "hybrid"):
+            raise ValueError("scoring provenance mode is unsupported")
+        semantic_values = (
+            self.provider,
+            self.model,
+            self.prompt_version,
+            self.reasoning_effort,
+            self.fallback,
+        )
+        if self.mode == "heuristic" and any(
+            value is not None for value in semantic_values
+        ):
+            raise ValueError("heuristic provenance cannot claim semantic settings")
+        if self.mode == "hybrid" and any(
+            not isinstance(value, str) or not value.strip() for value in semantic_values
+        ):
+            raise ValueError("hybrid provenance requires semantic settings")
+        if self.fallback is not None and self.fallback not in ("heuristic", "none"):
+            raise ValueError("scoring provenance fallback is unsupported")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoringBatch:
+    """Successful candidate scores and explicit provider failures for one stage."""
+
+    scores: tuple[ScoredCandidate, ...]
+    failures: tuple[CandidateScoringFailure, ...] = ()
+    provenance: ScoringProvenance = ScoringProvenance("heuristic")
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.scores, tuple)
+            or not isinstance(self.failures, tuple)
+            or not isinstance(self.provenance, ScoringProvenance)
+        ):
+            raise ValueError("scoring batch values must be tuples")
+        score_ids = tuple(item.candidate_id for item in self.scores)
+        failure_ids = tuple(item.candidate_id for item in self.failures)
+        if len(set(score_ids)) != len(score_ids):
+            raise ValueError("scored candidate IDs must be unique")
+        if len(set(failure_ids)) != len(failure_ids):
+            raise ValueError("scoring failure IDs must be unique")
+        if self.provenance.mode == "heuristic":
+            if self.failures or any(
+                item.result.scorer != "heuristic" for item in self.scores
+            ):
+                raise ValueError("heuristic batch cannot contain semantic outcomes")
+            return
+        failure_id_set = set(failure_ids)
+        fallback_id_set: set[str] = set()
+        for item in self.scores:
+            if item.result.scorer == "hybrid":
+                if (
+                    item.result.provider != self.provenance.provider
+                    or item.result.model != self.provenance.model
+                    or item.result.prompt_version != self.provenance.prompt_version
+                ):
+                    raise ValueError("hybrid score provenance must match the batch")
+            elif item.result.scorer == "heuristic-fallback":
+                fallback_id_set.add(item.candidate_id)
+                if (
+                    self.provenance.fallback != "heuristic"
+                    or item.candidate_id not in failure_id_set
+                ):
+                    raise ValueError("fallback scores require a matching failure")
+            else:
+                raise ValueError("hybrid batch contains an incompatible score")
+        if any(
+            failure.provider != self.provenance.provider
+            or failure.model != self.provenance.model
+            or failure.prompt_version != self.provenance.prompt_version
+            for failure in self.failures
+        ):
+            raise ValueError("provider failures must match the batch provenance")
+        scores_by_id = {item.candidate_id: item for item in self.scores}
+        if any(
+            failure.candidate_id in scores_by_id
+            and scores_by_id[failure.candidate_id].result.scorer != "heuristic-fallback"
+            for failure in self.failures
+        ):
+            raise ValueError(
+                "provider failures may overlap only heuristic fallback scores"
+            )
+        if self.provenance.fallback == "heuristic" and (
+            fallback_id_set != failure_id_set
+        ):
+            raise ValueError("each provider failure requires one heuristic fallback")
 
 
 class SelectionStatus(str, Enum):

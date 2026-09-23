@@ -25,13 +25,26 @@ class RunConfig:
     candidate_budget: int = 50
     overlap_threshold: float = 0.60
     text_similarity_threshold: float = 0.90
+    semantic_provider: str = "openai"
+    semantic_model: str = "gpt-6-luna"
+    semantic_reasoning_effort: str = "max"
+    semantic_fallback: str = "heuristic"
     subtitle_template_dir: Path | None = None
     keep_intermediates: bool = False
     force_recompute: bool = False
     verbose: bool = False
 
     def __post_init__(self) -> None:
-        for field_name in ("source", "subtitle_template", "scorer", "model"):
+        for field_name in (
+            "source",
+            "subtitle_template",
+            "scorer",
+            "model",
+            "semantic_provider",
+            "semantic_model",
+            "semantic_reasoning_effort",
+            "semantic_fallback",
+        ):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ConfigurationError(f"{field_name} must not be empty")
@@ -52,6 +65,21 @@ class RunConfig:
             raise ConfigurationError("min_score must be an integer from 0 to 100")
         if self.aspect_ratio not in ("original", "9:16"):
             raise ConfigurationError("aspect_ratio must be 'original' or '9:16'")
+        if self.scorer not in ("heuristic", "hybrid"):
+            raise ConfigurationError("scorer must be 'heuristic' or 'hybrid'")
+        if self.semantic_provider != "openai":
+            raise ConfigurationError("semantic_provider must be 'openai'")
+        if self.semantic_reasoning_effort not in (
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ):
+            raise ConfigurationError("semantic_reasoning_effort is unsupported")
+        if self.semantic_fallback not in ("heuristic", "none"):
+            raise ConfigurationError("semantic_fallback must be 'heuristic' or 'none'")
 
         for field_name in ("min_duration", "max_duration"):
             value = getattr(self, field_name)

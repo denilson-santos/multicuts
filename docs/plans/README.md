@@ -8,11 +8,10 @@ output-local transcript cache, semantic candidate generation, and deterministic
 candidate evaluation, explainable heuristic scoring, and YouTube acquisition.
 The integrated pipeline currently stops after deterministic candidate selection.
 
-Package 010 is the active critical-path implementation: non-redundant top-K
-selection. This planning batch adds package 012 as the parallel
-semantic/hybrid scoring track and packages 013–016 as the M3 path from selected
-candidates through refined boundaries, final-geometry rendering, subtitles,
-and complete run artifacts. M4 release hardening remains later work.
+Package 010 completed non-redundant top-K selection. Package 012 is the active
+semantic/hybrid scoring track, while packages 013–016 form the M3 path from
+selected candidates through refined boundaries, final-geometry rendering,
+subtitles, and complete run artifacts. M4 release hardening remains later work.
 
 ## Status and priority
 
@@ -50,9 +49,9 @@ completed and its package-level completion criteria pass.
 | [007 Semantic candidates](007-semantic-candidates/) | M2 | completed | P1 | 006 | [#24](https://github.com/denilson-santos/multicuts/pull/24) | Deterministic semantic units and bounded candidate windows with stable identities |
 | [008 Candidate evaluation](008-candidate-evaluation/) | M2 | completed | P1 | 007 | [#31](https://github.com/denilson-santos/multicuts/pull/31) | Traceable checklist outcomes, reusable deterministic features, and a bounded scoring shortlist |
 | [009 Explainable heuristic scoring](009-explainable-heuristic-scoring/) | M2 | completed | P1 | 008 | [#33](https://github.com/denilson-santos/multicuts/pull/33) | Versioned, reproducible `0..100` heuristic scores with dimensions and penalties |
-| [010 Ranking and selection](010-ranking-selection/) | M2 | in-review | P1 | 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Deterministic non-redundant top-K selection honoring the score threshold |
+| [010 Ranking and selection](010-ranking-selection/) | M2 | completed | P1 | 009 | [#35](https://github.com/denilson-santos/multicuts/pull/35) | Deterministic non-redundant top-K selection honoring the score threshold |
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | completed | P2 | 003, 004, 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Supported YouTube URLs normalized to controlled local media and safe metadata |
-| [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | planned | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
+| [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | in-progress | P2 | 008, 009 | — | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
 | [013 Boundary refinement](013-boundary-refinement/) | M3 | planned | P1 | 010 | — | Clean source-bounded render intervals that preserve scored-content provenance |
 | [014 Clip rendering](014-clip-rendering/) | M3 | planned | P1 | 004, 013 | — | Safe accurate `original` and center-cropped `9:16` raw clips |
 | [015 Clip subtitles](015-clip-subtitles/) | M3 | planned | P1 | 005, 006, 013, 014 | — | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
@@ -76,12 +75,10 @@ The main dependency path is:
 010 -> 013 -> 014 -> 015 -> 016
 ```
 
-Packages 009–010 and 013–016 are the remaining critical path for the first
-complete local output and should execute in order. Package 011 should proceed in
-parallel and joins package 016 for final local/YouTube acceptance. Package 012
-may start after package 009 once the provider decision is recorded; ranking and
-rendering do not depend on it because they consume the project-owned score
-contract and the heuristic path remains valid.
+Packages 013–016 are the remaining critical path for the first complete local
+output and should execute in order. Package 012 proceeds independently with the
+recorded OpenAI decision; ranking and rendering do not depend on it because they
+consume the project-owned score contract and the heuristic path remains valid.
 
 Within M3, task 015.001 may proceed alongside package 014 after package 013.
 Tasks 015.002–004 wait for the public `multisubs` capability. Parts of package
@@ -139,8 +136,7 @@ The source documents do not yet determine:
   and penalty points;
 - whether the suggested `0.60` temporal-overlap threshold should become the
   initial default;
-- which semantic provider/model will back hybrid scoring and whether semantic
-  near-duplicate detection initially uses embeddings;
+- whether semantic near-duplicate detection should later use embeddings;
 - advanced yt-dlp cookie behavior and downloaded-source retention policy;
 - which supported public `multisubs` release/API will build styled subtitle
   artifacts from an existing clip-local transcript and target geometry;

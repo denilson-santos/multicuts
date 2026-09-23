@@ -1,5 +1,6 @@
 # Local Python environment
 .venv/
+.env
 
 # Python caches and build artifacts
 __pycache__/

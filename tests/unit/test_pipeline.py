@@ -9,7 +9,6 @@ from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
     MediaError,
-    ScoringError,
     TranscriptionError,
 )
 from multicuts.models import (
@@ -409,12 +408,12 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
     assert len(transcriber.calls) == 1
 
 
-def test_pipeline_rejects_unsupported_scorer_after_reusing_transcript(
+def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty(
     config: RunConfig, transcript: Transcript
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
-    with pytest.raises(ScoringError, match="Unsupported scorer"):
+    with pytest.raises(PipelineNotReadyError, match="after candidate selection"):
         run_pipeline(
             replace(config, scorer="hybrid"),
             acquire=lambda _value, _workspace: source,

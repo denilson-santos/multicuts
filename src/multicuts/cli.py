@@ -33,6 +33,10 @@ DEFAULT_ASPECT_RATIO = "original"
 DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
 DEFAULT_SCORER = "heuristic"
 DEFAULT_MODEL = "default"
+DEFAULT_SEMANTIC_PROVIDER = "openai"
+DEFAULT_SEMANTIC_MODEL = "gpt-6-luna"
+DEFAULT_SEMANTIC_REASONING_EFFORT = "max"
+DEFAULT_SEMANTIC_FALLBACK = "heuristic"
 
 
 PipelineRunner = Callable[[RunConfig], None]
@@ -186,6 +190,10 @@ def _build_run_config(
     subtitle_template_dir: Path | None,
     scorer: str,
     model: str,
+    semantic_provider: str,
+    semantic_model: str,
+    semantic_reasoning_effort: str,
+    semantic_fallback: str,
     keep_intermediates: bool,
     force_recompute: bool,
     verbose: bool,
@@ -200,6 +208,10 @@ def _build_run_config(
         subtitle_template=subtitle_template,
         scorer=scorer,
         model=model,
+        semantic_provider=semantic_provider,
+        semantic_model=semantic_model,
+        semantic_reasoning_effort=semantic_reasoning_effort,
+        semantic_fallback=semantic_fallback,
         language=language,
         min_duration=min_duration,
         max_duration=max_duration,
@@ -326,12 +338,48 @@ def run_command(
     ] = None,
     scorer: Annotated[
         str,
-        typer.Option("--scorer", metavar="NAME", help="Scoring strategy name."),
+        typer.Option(
+            "--scorer",
+            metavar="heuristic|hybrid",
+            help="Local heuristic or network-dependent hybrid scoring.",
+        ),
     ] = DEFAULT_SCORER,
     model: Annotated[
         str,
-        typer.Option("--model", metavar="NAME", help="Provider model name."),
+        typer.Option("--model", metavar="NAME", help="Transcription model name."),
     ] = DEFAULT_MODEL,
+    semantic_provider: Annotated[
+        str,
+        typer.Option(
+            "--semantic-provider",
+            metavar="NAME",
+            help="Remote provider used by hybrid scoring.",
+        ),
+    ] = DEFAULT_SEMANTIC_PROVIDER,
+    semantic_model: Annotated[
+        str,
+        typer.Option(
+            "--semantic-model",
+            metavar="NAME",
+            help="Remote semantic model used by hybrid scoring.",
+        ),
+    ] = DEFAULT_SEMANTIC_MODEL,
+    semantic_reasoning_effort: Annotated[
+        str,
+        typer.Option(
+            "--semantic-effort",
+            metavar="LEVEL",
+            help="Semantic model reasoning effort.",
+        ),
+    ] = DEFAULT_SEMANTIC_REASONING_EFFORT,
+    semantic_fallback: Annotated[
+        str,
+        typer.Option(
+            "--semantic-fallback",
+            metavar="heuristic|none",
+            help="Behavior when semantic scoring fails for a candidate.",
+        ),
+    ] = DEFAULT_SEMANTIC_FALLBACK,
     keep_intermediates: Annotated[
         bool,
         typer.Option(
@@ -372,6 +420,10 @@ def run_command(
         subtitle_template_dir=subtitle_template_dir,
         scorer=scorer,
         model=model,
+        semantic_provider=semantic_provider,
+        semantic_model=semantic_model,
+        semantic_reasoning_effort=semantic_reasoning_effort,
+        semantic_fallback=semantic_fallback,
         keep_intermediates=keep_intermediates,
         force_recompute=force_recompute,
         verbose=verbose,

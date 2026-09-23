@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 010.001 Define ranking primitives and order |
 | PR | [#35](https://github.com/denilson-santos/multicuts/pull/35) |

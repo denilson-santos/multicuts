@@ -429,6 +429,13 @@ Final score composition and deterministic penalties remain project-owned behavio
 
 This prevents provider changes from silently changing core scoring rules.
 
+The initial remote boundary uses the OpenAI Responses API with structured
+output. It is optional, reads its credential only from `OPENAI_API_KEY`, sends
+bounded transcript text and derived features, and requests `store=false`.
+`gpt-6-luna` with reasoning effort `max` is the initial configured model.
+Heuristic scoring remains the default local route; a fully local semantic model
+is outside the MVP.
+
 ## 8. Candidate subsystem
 
 ### `candidates/generator.py`
