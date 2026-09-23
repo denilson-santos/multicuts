@@ -20,6 +20,8 @@ from multicuts.models import (
     ChecklistOutcome,
     ChecklistResult,
     MediaInfo,
+    RenderedClip,
+    RenderRequest,
     Transcript,
     TranscriptSegment,
     Word,
@@ -108,7 +110,7 @@ def test_pipeline_runs_acquisition_before_media_probe(
         return ()
 
     transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
+    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
         run_pipeline(
             config,
             acquire=acquire,
@@ -414,7 +416,7 @@ def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
-    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
+    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
         run_pipeline(
             replace(config, scorer="hybrid"),
             acquire=lambda _value, _workspace: source,
@@ -449,7 +451,28 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     def evaluator(*_args: object, **_kwargs: object) -> CandidateEvaluationBatch:
         return CandidateEvaluationBatch((evaluated,), (evaluated,))
 
-    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
+    class FakeRenderer:
+        def version(self) -> str:
+            return "ffmpeg test"
+
+        def inspect(self, path: Path) -> MediaInfo:
+            return MediaInfo(30.25, 1920, 1080, 1920, 1080, 0, 1)
+
+        def render(self, request: RenderRequest) -> RenderedClip:
+            request.output_path.write_bytes(b"fake media")
+            return RenderedClip(
+                request.refined,
+                request.output_path,
+                1920,
+                1080,
+                30.25,
+                True,
+                request.renderer_version,
+                request.cache_key,
+            )
+
+    renderer = FakeRenderer()
+    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
         run_pipeline(
             config,
             acquire=lambda _value, _workspace: source,
@@ -457,6 +480,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
             transcriber=FakeTranscriber(transcript),
             candidate_generator=lambda *_args, **_kwargs: (candidate,),
             candidate_evaluator=evaluator,
+            renderer=renderer,
         )
 
     score_path = next(config.output_dir.rglob("scores.json"))
@@ -478,7 +502,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
         raise AssertionError("matching refinement artifact should be reused")
 
     monkeypatch.setattr("multicuts.pipeline.refine_selection", unexpected_refinement)
-    with pytest.raises(PipelineNotReadyError, match="after boundary refinement"):
+    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
         run_pipeline(
             config,
             acquire=lambda _value, _workspace: source,
@@ -486,4 +510,5 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
             transcriber=FakeTranscriber(transcript),
             candidate_generator=lambda *_args, **_kwargs: (candidate,),
             candidate_evaluator=evaluator,
+            renderer=renderer,
         )

@@ -30,6 +30,7 @@ def test_run_config_uses_explicit_defaults_without_external_access(
     assert valid_config.max_duration == 60.0
     assert valid_config.overlap_threshold == 0.60
     assert valid_config.text_similarity_threshold == 0.90
+    assert (valid_config.vertical_width, valid_config.vertical_height) == (1080, 1920)
     assert valid_config.semantic_provider == "openai"
     assert valid_config.semantic_model == "gpt-6-luna"
     assert valid_config.semantic_reasoning_effort == "max"
@@ -123,6 +124,17 @@ def test_run_config_accepts_equal_duration_bounds(valid_config: RunConfig) -> No
     config = replace(valid_config, min_duration=30.0, max_duration=30.0)
 
     assert config.min_duration == config.max_duration == 30.0
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(0, 1920), (1080, -2), (719, 1280), (720, 1278), (True, 1920)],
+)
+def test_run_config_rejects_invalid_vertical_target(
+    valid_config: RunConfig, width: int, height: int
+) -> None:
+    with pytest.raises(ConfigurationError, match="vertical target"):
+        replace(valid_config, vertical_width=width, vertical_height=height)
 
 
 def test_run_config_rejects_unsupported_aspect_ratio(valid_config: RunConfig) -> None:

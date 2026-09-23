@@ -1071,3 +1071,85 @@ class RefinedSelection:
     def scored_end(self) -> float:
         """Return the original end timestamp used for scoring."""
         return self.selected.end
+
+
+@dataclass(frozen=True, slots=True)
+class RenderRequest:
+    """Validated input for rendering one refined clip."""
+
+    source: AcquiredSource
+    media: MediaInfo
+    refined: RefinedSelection
+    aspect_ratio: str
+    target_width: int
+    target_height: int
+    temporary_path: Path
+    output_path: Path
+    renderer_version: str
+    cache_key: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, AcquiredSource):
+            raise ValueError("render source is invalid")
+        if not isinstance(self.media, MediaInfo):
+            raise ValueError("render media is invalid")
+        if not isinstance(self.refined, RefinedSelection):
+            raise ValueError("render refinement is invalid")
+        if self.aspect_ratio not in ("original", "9:16"):
+            raise ValueError("render aspect ratio must be 'original' or '9:16'")
+        for field_name in ("target_width", "target_height"):
+            value = getattr(self, field_name)
+            if type(value) is not int or value <= 0 or value % 2:
+                raise ValueError(f"render {field_name} must be a positive even integer")
+        if self.aspect_ratio == "9:16" and (
+            self.target_width * 16 != self.target_height * 9
+        ):
+            raise ValueError(
+                "9:16 rendering requires target dimensions in a 9:16 ratio"
+            )
+        if not isinstance(self.temporary_path, Path):
+            raise ValueError("render temporary path must be a Path")
+        if not isinstance(self.output_path, Path):
+            raise ValueError("render output path must be a Path")
+        if self.temporary_path == self.output_path:
+            raise ValueError("render temporary and output paths must differ")
+        if self.refined.source_duration > self.media.duration + 1e-6:
+            raise ValueError("refined source duration exceeds media duration")
+        if self.refined.render_end > self.media.duration + 1e-6:
+            raise ValueError("refined render interval exceeds media duration")
+        for field_name in ("renderer_version", "cache_key"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"render {field_name} must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedClip:
+    """Validated metadata for one published raw clip."""
+
+    refined: RefinedSelection
+    path: Path
+    width: int
+    height: int
+    duration: float
+    has_audio: bool
+    renderer_version: str
+    cache_key: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.refined, RefinedSelection):
+            raise ValueError("rendered clip refinement is invalid")
+        if not isinstance(self.path, Path):
+            raise ValueError("rendered clip path must be a Path")
+        if type(self.width) is not int or self.width <= 0:
+            raise ValueError("rendered clip width must be positive")
+        if type(self.height) is not int or self.height <= 0:
+            raise ValueError("rendered clip height must be positive")
+        if not isfinite(self.duration) or self.duration <= 0:
+            raise ValueError("rendered clip duration must be finite and positive")
+        if type(self.has_audio) is not bool:
+            raise ValueError("rendered clip audio flag must be boolean")
+        for field_name in ("renderer_version", "cache_key"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"rendered clip {field_name} must not be empty")

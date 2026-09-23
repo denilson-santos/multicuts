@@ -241,6 +241,11 @@ multicuts ./interview.mp4 \
   --subtitle-template yellow-pop
 ```
 
+Vertical raw clips default to `1080x1920`. Use `--vertical-width` and
+`--vertical-height` together to choose another even, positive `9:16` size,
+for example `720x1280`. Rendering produces validated raw clips in the run
+workspace; subtitle burn-in and final publication remain subsequent stages.
+
 ### Custom subtitle template directory
 
 ```bash

@@ -40,6 +40,7 @@ def test_generate_defaults_are_converted_to_run_config() -> None:
     assert config.refinement_pre_roll == 0.15
     assert config.refinement_post_roll == 0.25
     assert config.aspect_ratio == "original"
+    assert (config.vertical_width, config.vertical_height) == (1080, 1920)
     assert config.subtitle_template == "yellow-pop"
     assert config.scorer == "heuristic"
     assert config.model == "default"
@@ -80,6 +81,10 @@ def test_generate_maps_explicit_options_without_accessing_source(
             "0.3",
             "--aspect-ratio",
             "9:16",
+            "--vertical-width",
+            "720",
+            "--vertical-height",
+            "1280",
             "--subtitle-template",
             "yellow-pop",
             "--subtitle-template-dir",
@@ -112,6 +117,7 @@ def test_generate_maps_explicit_options_without_accessing_source(
     assert config.refinement_pre_roll == 0.2
     assert config.refinement_post_roll == 0.3
     assert config.aspect_ratio == "9:16"
+    assert (config.vertical_width, config.vertical_height) == (720, 1280)
     assert config.subtitle_template == "yellow-pop"
     assert config.subtitle_template_dir == template_dir
     assert config.scorer == "hybrid"
@@ -135,6 +141,7 @@ def test_auto_language_is_normalized_by_run_config() -> None:
         ("--clips", "0", "clips"),
         ("--min-score", "101", "min_score"),
         ("--aspect-ratio", "square", "aspect_ratio"),
+        ("--vertical-width", "719", "vertical target"),
         ("--overlap-threshold", "1.1", "overlap_threshold"),
         ("--pre-roll", "-0.1", "refinement_pre_roll"),
     ],
@@ -180,6 +187,8 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
         "--pre-roll",
         "--post-roll",
         "--aspect-ratio",
+        "--vertical-width",
+        "--vertical-height",
         "--subtitle-template",
         "--subtitle-template-dir",
         "--scorer",
