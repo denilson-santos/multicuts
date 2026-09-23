@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Packages 006 Transcript cache; 013 Boundary refinement |
 | PR | — |
@@ -43,6 +43,18 @@ shifted to clip-local time, and retained with source traceability.
   same project-owned payload.
 - The implementation performs no provider calls, filesystem media operations,
   or ASR.
+
+## Implemented boundary policy
+
+- Source intervals intersect the refined clip interval under a half-open
+  policy with a `1e-9` second tolerance. Elements whose overlap is at most the
+  tolerance are excluded.
+- Intersecting intervals are shifted to clip-local time and clamped to
+  `[0, clip_duration]`. Source indexes, word-to-segment relationships, and
+  provider provenance remain attached.
+- Untimed elements are omitted when their membership in a partial clip cannot
+  be established. Word animation is marked unsafe when source word timing is
+  incomplete.
 
 ## Tests and validation
 

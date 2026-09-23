@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Packages 004 Local source and media; 013 Boundary refinement |
-| PR | — |
+| PR | [#38](https://github.com/denilson-santos/multicuts/pull/38) |
 
 ## Objective
 

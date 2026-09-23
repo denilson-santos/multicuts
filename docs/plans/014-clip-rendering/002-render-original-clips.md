@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 014.001 Define rendering contracts and the FFmpeg boundary |
-| PR | — |
+| PR | [#38](https://github.com/denilson-santos/multicuts/pull/38) |
 
 ## Objective
 

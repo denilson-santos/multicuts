@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 004 Local source and media; 013 Boundary refinement |
 | Unlocks | 015 Clip subtitles; final clip publication for subtitle-disabled runs |
-| PRs | — |
+| PRs | [#38](https://github.com/denilson-santos/multicuts/pull/38) |
 
 ## Objective and expected outcome
 
@@ -65,10 +65,10 @@ rendered final geometry.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define rendering contracts and FFmpeg boundary](001-define-rendering-contracts.md) | in-progress | P1 | Packages 004, 013 | — | Valid render requests/results and inspectable argument-list commands |
-| [002 Render accurate original-geometry clips](002-render-original-clips.md) | in-progress | P1 | 001 | — | Temporally accurate clips preserving presentation aspect ratio |
-| [003 Render center-cropped vertical clips](003-render-vertical-clips.md) | in-progress | P1 | 002 | — | Valid configurable `9:16` output from normalized source geometry |
-| [004 Publish, cache, and integrate raw clips](004-publish-and-integrate-rendering.md) | in-progress | P1 | 003 | — | Safe reusable raw clips at the subtitle/final-output handoff |
+| [001 Define rendering contracts and FFmpeg boundary](001-define-rendering-contracts.md) | completed | P1 | Packages 004, 013 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Valid render requests/results and inspectable argument-list commands |
+| [002 Render accurate original-geometry clips](002-render-original-clips.md) | completed | P1 | 001 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Temporally accurate clips preserving presentation aspect ratio |
+| [003 Render center-cropped vertical clips](003-render-vertical-clips.md) | completed | P1 | 002 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Valid configurable `9:16` output from normalized source geometry |
+| [004 Publish, cache, and integrate raw clips](004-publish-and-integrate-rendering.md) | completed | P1 | 003 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Safe reusable raw clips at the subtitle/final-output handoff |
 
 ## Suggested task sequence
 
@@ -102,3 +102,9 @@ the shared renderer.
   positive dimensions and an exact `9:16` ratio.
 - Cache reuse must validate the completed media artifact, not trust metadata
   alone. Detailed invalid-cache hardening may continue in M4.
+
+## Completion record
+
+- PR [#38](https://github.com/denilson-santos/multicuts/pull/38) was merged into `main` at commit `5dfb446`.
+- GitHub Actions run [#35898238448](https://github.com/denilson-santos/multicuts/actions/runs/35898238448) passed Python 3.10 quality and Python 3.13 compatibility checks.
+- The package passed the hermetic suite and four marked FFmpeg integration tests before integration.
