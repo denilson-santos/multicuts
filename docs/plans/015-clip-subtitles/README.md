@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription; 006 Transcript cache; 013 Boundary refinement; 014 Clip rendering |
 | Unlocks | Hard-subtitled final clips and subtitle provenance for package 016 |
@@ -69,7 +69,7 @@ are forbidden.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Derive clip-local transcripts](001-derive-clip-transcripts.md) | planned | P1 | Packages 006, 013 | — | Source-derived clip timelines with traceable real timestamps |
+| [001 Derive clip-local transcripts](001-derive-clip-transcripts.md) | in-progress | P1 | Packages 006, 013 | — | Source-derived clip timelines with traceable real timestamps |
 | [002 Establish the public `multisubs` subtitle-artifact contract](002-establish-multisubs-contract.md) | blocked — required public API is not yet documented as available | P1 | 001; supported `multisubs` release/API | — | Public creation of styled subtitle artifacts without ASR |
 | [003 Generate and burn final-geometry subtitles](003-generate-and-burn-subtitles.md) | planned | P1 | 002; Package 014 | — | Valid hard-subtitled clips using provider templates and real timing |
 | [004 Persist provenance and integrate subtitle rendering](004-persist-and-integrate-subtitles.md) | planned | P1 | 003 | — | Cache-safe subtitle execution and final clip handoff |

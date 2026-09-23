@@ -59,3 +59,7 @@ pyright
   revised). Do not work around it with private imports or per-clip ASR.
 - Changes to the `multisubs` repository/release are external coordination and
   are not implementation scope for this plan package.
+- As verified on 2026-09-23, the latest supported release is
+  [`v4.2.0`](https://github.com/denilson-santos/multisubs/releases/tag/v4.2.0),
+  whose [public package exports](https://github.com/denilson-santos/multisubs/blob/v4.2.0/multisubs/__init__.py)
+  include transcription and ASS embedding but no subtitle-artifact builder.

@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 014.002 Render accurate original-geometry clips |
-| PR | — |
+| PR | [#38](https://github.com/denilson-santos/multicuts/pull/38) |
 
 ## Objective
 

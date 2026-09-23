@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 014.003 Render center-cropped vertical clips |
-| PR | — |
+| PR | [#38](https://github.com/denilson-santos/multicuts/pull/38) |
 
 ## Objective
 

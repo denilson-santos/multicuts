@@ -6,11 +6,11 @@
 source/media preflight, CLI foundation, `multisubs` transcription adapter, the
 output-local transcript cache, semantic candidate generation, and deterministic
 candidate evaluation, explainable heuristic scoring, and YouTube acquisition.
-The integrated pipeline currently stops after boundary refinement.
+The integrated pipeline currently stops after raw clip rendering.
 
-Packages 010–013 completed selection, semantic/hybrid scoring, and boundary
-refinement. Package 014 is now active on the M3 path through final-geometry
-rendering, subtitles, and complete run artifacts. M4 release hardening remains
+Packages 010–014 completed selection, semantic/hybrid scoring, boundary
+refinement, and raw clip rendering. Package 015 is now active on the M3 path
+through subtitles and complete run artifacts. M4 release hardening remains
 later work.
 
 ## Status and priority
@@ -53,8 +53,8 @@ completed and its package-level completion criteria pass.
 | [011 YouTube acquisition](011-youtube-acquisition/) | M1 | completed | P2 | 003, 004, 006 | [#34](https://github.com/denilson-santos/multicuts/pull/34) | Supported YouTube URLs normalized to controlled local media and safe metadata |
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | completed | P2 | 008, 009 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
 | [013 Boundary refinement](013-boundary-refinement/) | M3 | completed | P1 | 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Clean source-bounded render intervals that preserve scored-content provenance |
-| [014 Clip rendering](014-clip-rendering/) | M3 | in-progress | P1 | 004, 013 | — | Safe accurate `original` and center-cropped `9:16` raw clips |
-| [015 Clip subtitles](015-clip-subtitles/) | M3 | planned | P1 | 005, 006, 013, 014 | — | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
+| [014 Clip rendering](014-clip-rendering/) | M3 | completed | P1 | 004, 013 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Safe accurate `original` and center-cropped `9:16` raw clips |
+| [015 Clip subtitles](015-clip-subtitles/) | M3 | in-progress | P1 | 005, 006, 013, 014 | — | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
 | [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | planned | P1 | 010, 011, 014, 015 | — | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
 
 Package 015 can begin with clip-local transcript work, but task 015.002 is
