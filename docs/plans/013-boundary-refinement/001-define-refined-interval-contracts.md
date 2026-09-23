@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Package 010 Ranking and selection |
 | PR | [#37](https://github.com/denilson-santos/multicuts/pull/37) |

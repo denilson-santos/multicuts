@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 004 Local source and media; 013 Boundary refinement |
 | Unlocks | 015 Clip subtitles; final clip publication for subtitle-disabled runs |
@@ -57,7 +57,7 @@ rendered final geometry.
 - render values in `src/multicuts/models.py`
 - `src/multicuts/rendering/cutter.py`
 - a narrow reusable FFmpeg execution helper near the media boundary
-- render paths/cache metadata in `src/multicuts/artifacts.py`
+- render paths/cache metadata in `src/multicuts/rendering/artifacts.py`
 - orchestration in `src/multicuts/pipeline.py`
 - unit and marked integration tests with small generated fixtures
 
@@ -65,10 +65,10 @@ rendered final geometry.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define rendering contracts and FFmpeg boundary](001-define-rendering-contracts.md) | planned | P1 | Packages 004, 013 | — | Valid render requests/results and inspectable argument-list commands |
-| [002 Render accurate original-geometry clips](002-render-original-clips.md) | planned | P1 | 001 | — | Temporally accurate clips preserving presentation aspect ratio |
-| [003 Render center-cropped vertical clips](003-render-vertical-clips.md) | planned | P1 | 002 | — | Valid configurable `9:16` output from normalized source geometry |
-| [004 Publish, cache, and integrate raw clips](004-publish-and-integrate-rendering.md) | planned | P1 | 003 | — | Safe reusable raw clips at the subtitle/final-output handoff |
+| [001 Define rendering contracts and FFmpeg boundary](001-define-rendering-contracts.md) | in-progress | P1 | Packages 004, 013 | — | Valid render requests/results and inspectable argument-list commands |
+| [002 Render accurate original-geometry clips](002-render-original-clips.md) | in-progress | P1 | 001 | — | Temporally accurate clips preserving presentation aspect ratio |
+| [003 Render center-cropped vertical clips](003-render-vertical-clips.md) | in-progress | P1 | 002 | — | Valid configurable `9:16` output from normalized source geometry |
+| [004 Publish, cache, and integrate raw clips](004-publish-and-integrate-rendering.md) | in-progress | P1 | 003 | — | Safe reusable raw clips at the subtitle/final-output handoff |
 
 ## Suggested task sequence
 
@@ -98,7 +98,7 @@ the shared renderer.
 - Rotation and display geometry can differ from coded width/height. Commands
   must consume normalized presentation metadata rather than recalculate it
   inconsistently.
-- The PRD suggests `1080x1920`; task 001 must record the actual default as a
-  versioned configuration decision.
+- The vertical default is `1080x1920`. Alternate targets must have even,
+  positive dimensions and an exact `9:16` ratio.
 - Cache reuse must validate the completed media artifact, not trust metadata
   alone. Detailed invalid-cache hardening may continue in M4.

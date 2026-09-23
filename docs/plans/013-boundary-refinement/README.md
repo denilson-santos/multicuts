@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 010 Ranking and selection |
 | Unlocks | 014 Clip rendering; 015 clip-local transcript extraction |
@@ -60,9 +60,9 @@ unmodified score.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | in-review | P1 | Package 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Traceable scored and render spans with validated bounds |
-| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | in-review | P1 | 001 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Cleaner word/pause-aligned cuts with bounded padding |
-| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | in-review | P1 | 002 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Persisted refined selections that cannot silently inherit invalid scores |
+| [001 Define refined interval contracts](001-define-refined-interval-contracts.md) | completed | P1 | Package 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Traceable scored and render spans with validated bounds |
+| [002 Implement deterministic boundary refinement](002-implement-boundary-refinement.md) | completed | P1 | 001 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Cleaner word/pause-aligned cuts with bounded padding |
+| [003 Preserve score meaning and integrate refinement](003-preserve-score-and-integrate.md) | completed | P1 | 002 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Persisted refined selections that cannot silently inherit invalid scores |
 
 ## Suggested task sequence
 
@@ -107,3 +107,9 @@ covered by tests.
   `requires_rescore`. Such a result retains the selected score only as provenance,
   and downstream rendering must not treat it as an approved score for the new
   content. With no usable timing evidence, boundaries remain unchanged.
+
+## Completion record
+
+- PR [#37](https://github.com/denilson-santos/multicuts/pull/37) was merged into `main` at commit `f061e3e`.
+- GitHub Actions run [#35889466803](https://github.com/denilson-santos/multicuts/actions/runs/35889466803) passed Python 3.10 quality and Python 3.13 compatibility checks.
+- The branch implementation passed the package acceptance checks and the hermetic suite before integration.
