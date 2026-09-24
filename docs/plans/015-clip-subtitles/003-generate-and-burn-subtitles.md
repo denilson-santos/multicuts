@@ -23,9 +23,9 @@ font, animation, and ASS-generation behavior.
 - Call the task 002 public adapter operation with the raw clip,
   `ClipTranscript`, requested template/template directory, and controlled work
   path.
-- Validate returned subtitle artifacts before burn-in.
-- Use the public `multisubs` embedding operation (or its supported public
-  equivalent) to render to a temporary final-video path.
+- Validate the complete subtitle artifact set after the provider's burn-in.
+- Use the multisubs 4.3.0 timed-cue operation, which generates SRT, ASS, and
+  the rendered video together, and validate the resulting final video.
 - Enable word animation/highlighting only when safe aligned word timing exists;
   otherwise use supported cue-level behavior or fail clearly.
 - Validate completed video timing/geometry and publish only after success.

@@ -116,11 +116,11 @@ A concrete module is preferred to:
 - Python `>=3.10,<3.14`;
 - FFmpeg;
 - ffprobe;
-- `multisubs >=4.1,<5`;
+- `multisubs >=4.3,<5`;
 - yt-dlp.
 
 During early implementation, the runtime dependency pins the official
-`multisubs[whisperx]` 4.2.0 wheel for reproducibility. The extra preserves the
+`multisubs[whisperx]` 4.3.0 wheel for reproducibility. The extra preserves the
 current WhisperX backend now that `multisubs` packages ASR runtimes separately.
 
 ### Development
@@ -611,7 +611,7 @@ Outputs:
 - subtitle artifacts needed for diagnostics/reuse;
 - final hard-subtitled video.
 
-Word animations may be used only when safe aligned word timing is available.
+The supported multisubs 4.3 CLI consumes versioned timed-cue JSON and the raw clip, probes that clip's geometry, and publishes SRT, ASS, and a rendered video together. The adapter owns the JSON translation and validates the output set. Each cue requires exact text-to-word mapping and complete observed word times; missing word timing fails clearly rather than triggering ASR or fabricated alignment.
 
 ## 12. Workspace and artifacts
 

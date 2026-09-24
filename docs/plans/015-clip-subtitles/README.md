@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription; 006 Transcript cache; 013 Boundary refinement; 014 Clip rendering |
 | Unlocks | Hard-subtitled final clips and subtitle provenance for package 016 |
-| PRs | — |
+| PRs | [#39](https://github.com/denilson-santos/multicuts/pull/39) |
 
 ## Objective and expected outcome
 
@@ -19,11 +19,10 @@ new ASR pass.
 ## Context
 
 FR-REN-005–008 and decision D-011 require transcript reuse and final-geometry
-layout. The documented `multisubs` contract currently covers transcription and
-embedding an existing ASS file but does not expose the required public middle
-step for generating styled ASS from an existing transcript/cue set. Task 002 is
-blocked until that public contract is available and supported; private imports
-are forbidden.
+layout. The supported `multisubs 4.3.0` timed-cue JSON contract creates styled SRT,
+ASS, and a rendered video together from an existing transcript and raw clip.
+Its public CLI accepts templates. Task 002 integrates that boundary; private
+imports and per-clip ASR remain forbidden.
 
 ## Included scope
 
@@ -50,7 +49,7 @@ are forbidden.
 
 - [PRD: rendering](../../prd.md#910-rendering)
 - [PRD: `multisubs` per-clip flow](../../prd.md#186-recommended-per-clip-flow)
-- [PRD: current public-contract gap](../../prd.md#187-current-public-contract-gap)
+- [PRD: public timed-cue contract](../../prd.md#187-public-timed-cue-contract)
 - [Architecture: clip-local transcript](../../architecture.md#112-clip-local-transcript)
 - [Architecture: subtitle rendering](../../architecture.md#113-subtitle-rendering)
 - [Conventions: `multisubs`](../../conventions.md#15-multisubs-conventions)
@@ -69,17 +68,16 @@ are forbidden.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Derive clip-local transcripts](001-derive-clip-transcripts.md) | in-progress | P1 | Packages 006, 013 | — | Source-derived clip timelines with traceable real timestamps |
-| [002 Establish the public `multisubs` subtitle-artifact contract](002-establish-multisubs-contract.md) | blocked — required public API is not yet documented as available | P1 | 001; supported `multisubs` release/API | — | Public creation of styled subtitle artifacts without ASR |
+| [001 Derive clip-local transcripts](001-derive-clip-transcripts.md) | completed | P1 | Packages 006, 013 | [#39](https://github.com/denilson-santos/multicuts/pull/39) | Source-derived clip timelines with traceable real timestamps |
+| [002 Establish the public `multisubs` subtitle-artifact contract](002-establish-multisubs-contract.md) | in-progress | P1 | 001; supported `multisubs` release/API | — | Public creation of styled subtitle artifacts without ASR |
 | [003 Generate and burn final-geometry subtitles](003-generate-and-burn-subtitles.md) | planned | P1 | 002; Package 014 | — | Valid hard-subtitled clips using provider templates and real timing |
 | [004 Persist provenance and integrate subtitle rendering](004-persist-and-integrate-subtitles.md) | planned | P1 | 003 | — | Cache-safe subtitle execution and final clip handoff |
 
 ## Suggested task sequence
 
-Task 001 can proceed against project-owned transcript models. Before tasks
-002–004, confirm or promote a supported public `multisubs` operation that builds
-subtitle artifacts from existing timed cues for a target video. Then extend the
-adapter, implement burn-in, and integrate cache/provenance behavior.
+Task 001 is integrated. Task 002 consumes the published multisubs 4.3.0
+contract, followed by task 003 for validated final-geometry output and task
+004 for cache/provenance and pipeline integration.
 
 ## Completion criteria
 
@@ -87,7 +85,7 @@ adapter, implement burn-in, and integrate cache/provenance behavior.
   time `0`, is clamped to clip duration, and preserves source indexes/provenance.
 - No selected clip triggers another transcription/ASR operation.
 - All `multisubs` use is through supported public APIs covered by a contract
-  test for the accepted `>=4.1,<5` range or a deliberately narrowed compatible
+  test for the accepted `>=4.3,<5` range or a deliberately narrowed compatible
   range.
 - Subtitle layout is resolved against the probed raw clip geometry, including
   the final `9:16` crop/resize.
@@ -99,12 +97,11 @@ adapter, implement burn-in, and integrate cache/provenance behavior.
 
 ## Risks, assumptions, and open questions
 
-- **Blocker:** the required public `multisubs` subtitle-artifact builder is not
-  documented as available. The blocker can be cleared only by a supported
-  public release/API or an explicit product decision changing the requirement;
-  importing private modules is not an option.
-- The exact public function name and artifact schema belong to `multisubs` and
-  must be normalized inside the adapter rather than copied into domain models.
+- The published v4.3.0 schema requires exact text-to-word mapping and complete
+  word times. The adapter fails clearly when a clip cannot satisfy it.
+- The CLI publishes SRT, ASS, and video together. Template source/base metadata
+  is not returned, so only requested/resolved template name can be recorded
+  until the provider exposes more provenance.
 - The default recommended template remains an open product question. Existing
   configured CLI behavior should be preserved until explicitly changed.
 - Template-only changes should invalidate subtitle/final render artifacts, not

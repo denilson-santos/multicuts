@@ -1,4 +1,4 @@
-"""Source transcription through the public multisubs package API."""
+"""Transcription and subtitles through supported multisubs boundaries."""
 
 import importlib
 import importlib.metadata
@@ -8,8 +8,9 @@ from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
 
+from multicuts.adapters.multisubs_subtitles import SubtitleArtifacts, render_subtitles
 from multicuts.errors import TranscriptionError
-from multicuts.models import Transcript, TranscriptSegment, Word
+from multicuts.models import ClipTranscript, Transcript, TranscriptSegment, Word
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +157,25 @@ def _normalize_artifact(artifact: TranscriptionArtifact) -> Transcript:
 
 
 class MultisubsAdapter:
-    """Transcribe a source through multisubs and normalize its JSON artifact."""
+    """Normalize source transcription and render source-derived clip subtitles."""
+
+    def subtitle_clip(
+        self,
+        video_path: Path,
+        clip: ClipTranscript,
+        *,
+        template: str | None,
+        template_dir: Path | None,
+        workspace: Path,
+    ) -> SubtitleArtifacts:
+        """Render existing clip words without starting a new ASR pass."""
+        return render_subtitles(
+            video_path,
+            clip,
+            template=template,
+            template_dir=template_dir,
+            workspace=workspace,
+        )
 
     def version(self) -> str:
         """Read installed provider metadata without loading a transcription model."""
