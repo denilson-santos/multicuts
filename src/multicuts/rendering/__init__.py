@@ -1,4 +1,4 @@
-"""Raw clip rendering boundary."""
+"""Raw and subtitled clip rendering boundaries."""
 
 from multicuts.rendering.cutter import (
     DEFAULT_TARGET_HEIGHT,
@@ -9,6 +9,7 @@ from multicuts.rendering.cutter import (
     expected_geometry,
     validate_rendered_media,
 )
+from multicuts.rendering.subtitles import SubtitledClip, SubtitleRenderer
 
 __all__ = [
     "DEFAULT_TARGET_HEIGHT",
@@ -18,4 +19,6 @@ __all__ = [
     "build_ffmpeg_command",
     "expected_geometry",
     "validate_rendered_media",
+    "SubtitleRenderer",
+    "SubtitledClip",
 ]

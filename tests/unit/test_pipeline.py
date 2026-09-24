@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from multicuts.adapters.multisubs_subtitles import SubtitleArtifacts
 from multicuts.config import RunConfig
 from multicuts.errors import (
     AcquisitionError,
@@ -19,6 +20,7 @@ from multicuts.models import (
     CandidateFeatures,
     ChecklistOutcome,
     ChecklistResult,
+    ClipTranscript,
     MediaInfo,
     RenderedClip,
     RenderRequest,
@@ -26,7 +28,8 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
-from multicuts.pipeline import PipelineNotReadyError, run_pipeline
+from multicuts.pipeline import run_pipeline
+from multicuts.rendering.subtitles import SubtitledClip
 
 
 @pytest.fixture
@@ -62,6 +65,46 @@ class FakeTranscriber:
     ) -> Transcript:
         self.calls.append((video_path, language, model, workspace))
         return self.transcript
+
+
+class FakeSubtitleRenderer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def version(self) -> str:
+        return "4.3.0"
+
+    def inspect(self, path: Path) -> MediaInfo:
+        del path
+        return MediaInfo(30.25, 1920, 1080, 1920, 1080, 0, 1)
+
+    def render(
+        self,
+        raw: RenderedClip,
+        clip: ClipTranscript,
+        *,
+        output_path: Path,
+        workspace: Path,
+        template: str | None,
+        template_dir: Path | None,
+    ) -> SubtitledClip:
+        del clip, template_dir
+        self.calls += 1
+        workspace.mkdir(parents=True)
+        cues = workspace / "clip.cues.json"
+        srt = workspace / "clip.srt"
+        ass = workspace / "clip.ass"
+        for path, content in (
+            (cues, b"{}"),
+            (srt, b"1\n00:00:00,000 --> 00:00:01,000\ncaption"),
+            (ass, b"[Script Info]"),
+        ):
+            path.write_bytes(content)
+        output_path.write_bytes(b"subtitled media")
+        artifacts = SubtitleArtifacts(
+            cues, srt, ass, output_path, "4.3.0", template, template or "default"
+        )
+        return SubtitledClip(raw, output_path, 1920, 1080, 30.25, True, artifacts)
 
 
 @pytest.fixture
@@ -110,14 +153,13 @@ def test_pipeline_runs_acquisition_before_media_probe(
         return ()
 
     transcriber = FakeTranscriber(transcript)
-    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
-        run_pipeline(
-            config,
-            acquire=acquire,
-            probe=probe,
-            transcriber=transcriber,
-            candidate_generator=generate,
-        )
+    run_pipeline(
+        config,
+        acquire=acquire,
+        probe=probe,
+        transcriber=transcriber,
+        candidate_generator=generate,
+    )
 
     assert events == [
         ("acquire", "source.mp4"),
@@ -145,13 +187,12 @@ def test_pipeline_passes_explicit_acquisition_workspace(
         calls.append((value, workspace))
         return source
 
-    with pytest.raises(PipelineNotReadyError):
-        run_pipeline(
-            config,
-            acquire=acquire,
-            probe=lambda _source: media,
-            transcriber=FakeTranscriber(transcript),
-        )
+    run_pipeline(
+        config,
+        acquire=acquire,
+        probe=lambda _source: media,
+        transcriber=FakeTranscriber(transcript),
+    )
 
     assert calls == [
         (config.source, (config.output_dir / ".work" / "acquisition").resolve())
@@ -205,13 +246,12 @@ def test_pipeline_logs_stage_and_safe_resource_context(
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
 
     with caplog.at_level(logging.INFO, logger="multicuts.pipeline"):
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                config,
-                acquire=lambda _value, _workspace: source,
-                probe=lambda _value: media,
-                transcriber=FakeTranscriber(transcript),
-            )
+        run_pipeline(
+            config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=FakeTranscriber(transcript),
+        )
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("stage=acquire origin=remote" in message for message in messages)
@@ -243,14 +283,13 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
         return ()
 
     for _ in range(2):
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                config,
-                acquire=lambda _value, _workspace: source,
-                probe=lambda _value: media,
-                transcriber=transcriber,
-                candidate_generator=generate,
-            )
+        run_pipeline(
+            config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+            candidate_generator=generate,
+        )
 
     assert len(transcriber.calls) == 1
     assert generated == [transcript, transcript]
@@ -299,13 +338,12 @@ def test_pipeline_reuses_same_content_after_source_rename(
         ) -> AcquiredSource:
             return selected
 
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                config,
-                acquire=acquire,
-                probe=lambda _value: media,
-                transcriber=transcriber,
-            )
+        run_pipeline(
+            config,
+            acquire=acquire,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+        )
 
     assert len(transcriber.calls) == 1
 
@@ -318,13 +356,12 @@ def test_pipeline_invalid_cache_is_recomputed(
     transcriber = FakeTranscriber(transcript)
 
     def run() -> None:
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                config,
-                acquire=lambda _value, _workspace: source,
-                probe=lambda _value: media,
-                transcriber=transcriber,
-            )
+        run_pipeline(
+            config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+        )
 
     run()
     artifact = next(config.output_dir.rglob("transcript.json"))
@@ -362,13 +399,12 @@ def test_pipeline_force_recompute_bypasses_cache_but_not_completed_output(
     forced = replace(config, force_recompute=True)
 
     for run_config in (config, forced):
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                run_config,
-                acquire=lambda _value, _workspace: source,
-                probe=lambda _value: media,
-                transcriber=transcriber,
-            )
+        run_pipeline(
+            run_config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+        )
     assert len(transcriber.calls) == 2
 
     manifest = (
@@ -400,13 +436,12 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
     )
 
     for run_config in (config, changed):
-        with pytest.raises(PipelineNotReadyError):
-            run_pipeline(
-                run_config,
-                acquire=lambda _value, _workspace: source,
-                probe=lambda _value: media,
-                transcriber=transcriber,
-            )
+        run_pipeline(
+            run_config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+        )
 
     assert len(transcriber.calls) == 1
 
@@ -416,13 +451,12 @@ def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty
 ) -> None:
     source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
     media = MediaInfo(12.0, 1920, 1080, 1920, 1080, 0, 1)
-    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
-        run_pipeline(
-            replace(config, scorer="hybrid"),
-            acquire=lambda _value, _workspace: source,
-            probe=lambda _value: media,
-            transcriber=FakeTranscriber(transcript),
-        )
+    run_pipeline(
+        replace(config, scorer="hybrid"),
+        acquire=lambda _value, _workspace: source,
+        probe=lambda _value: media,
+        transcriber=FakeTranscriber(transcript),
+    )
 
 
 def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
@@ -452,6 +486,9 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
         return CandidateEvaluationBatch((evaluated,), (evaluated,))
 
     class FakeRenderer:
+        def __init__(self) -> None:
+            self.render_calls = 0
+
         def version(self) -> str:
             return "ffmpeg test"
 
@@ -459,6 +496,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
             return MediaInfo(30.25, 1920, 1080, 1920, 1080, 0, 1)
 
         def render(self, request: RenderRequest) -> RenderedClip:
+            self.render_calls += 1
             request.output_path.write_bytes(b"fake media")
             return RenderedClip(
                 request.refined,
@@ -472,17 +510,21 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
             )
 
     renderer = FakeRenderer()
-    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
-        run_pipeline(
-            config,
-            acquire=lambda _value, _workspace: source,
-            probe=lambda _value: media,
-            transcriber=FakeTranscriber(transcript),
-            candidate_generator=lambda *_args, **_kwargs: (candidate,),
-            candidate_evaluator=evaluator,
-            renderer=renderer,
-        )
+    subtitle_renderer = FakeSubtitleRenderer()
+    first_outputs = run_pipeline(
+        config,
+        acquire=lambda _value, _workspace: source,
+        probe=lambda _value: media,
+        transcriber=FakeTranscriber(transcript),
+        candidate_generator=lambda *_args, **_kwargs: (candidate,),
+        candidate_evaluator=evaluator,
+        renderer=renderer,
+        subtitle_renderer=subtitle_renderer,
+    )
 
+    assert len(first_outputs) == 1
+    assert first_outputs[0].is_file()
+    assert subtitle_renderer.calls == 1
     score_path = next(config.output_dir.rglob("scores.json"))
     assert '"candidate_id": "candidate-v1:one"' in score_path.read_text(
         encoding="utf-8"
@@ -502,13 +544,29 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
         raise AssertionError("matching refinement artifact should be reused")
 
     monkeypatch.setattr("multicuts.pipeline.refine_selection", unexpected_refinement)
-    with pytest.raises(PipelineNotReadyError, match="after raw clip rendering"):
-        run_pipeline(
-            config,
-            acquire=lambda _value, _workspace: source,
-            probe=lambda _value: media,
-            transcriber=FakeTranscriber(transcript),
-            candidate_generator=lambda *_args, **_kwargs: (candidate,),
-            candidate_evaluator=evaluator,
-            renderer=renderer,
-        )
+    run_pipeline(
+        config,
+        acquire=lambda _value, _workspace: source,
+        probe=lambda _value: media,
+        transcriber=FakeTranscriber(transcript),
+        candidate_generator=lambda *_args, **_kwargs: (candidate,),
+        candidate_evaluator=evaluator,
+        renderer=renderer,
+        subtitle_renderer=subtitle_renderer,
+    )
+    assert subtitle_renderer.calls == 1
+    assert renderer.render_calls == 1
+
+    changed_template = replace(config, subtitle_template="different-template")
+    run_pipeline(
+        changed_template,
+        acquire=lambda _value, _workspace: source,
+        probe=lambda _value: media,
+        transcriber=FakeTranscriber(transcript),
+        candidate_generator=lambda *_args, **_kwargs: (candidate,),
+        candidate_evaluator=evaluator,
+        renderer=renderer,
+        subtitle_renderer=subtitle_renderer,
+    )
+    assert renderer.render_calls == 1
+    assert subtitle_renderer.calls == 2

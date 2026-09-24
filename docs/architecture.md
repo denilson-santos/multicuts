@@ -630,9 +630,11 @@ multicuts-output/
     ├── candidates/
     │   └── candidates.json
     ├── clips/
-    │   ├── 001-score-91.mp4
-    │   ├── 001-score-91.json
+    │   ├── raw/<render-id>.mp4
+    │   ├── <rank>-<clip-id>.mp4
     │   └── ...
+    ├── rendering/
+    │   └── subtitles/<clip-id>.{json,srt,ass,cues.json}
     └── .work/
         └── temporary artifacts
 ```
@@ -680,9 +682,10 @@ prompt version when applicable
 Must include at least:
 
 ```text
-selected source interval
+raw render identity
+clip-local transcript and word timing
 target geometry
-subtitle template/config
+subtitle template and custom template contents
 renderer/provider versions
 ```
 

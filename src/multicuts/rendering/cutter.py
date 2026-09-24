@@ -197,7 +197,7 @@ def _remove_private_path(path: Path) -> None:
         pass
 
 
-def _publish_without_overwrite(temporary_path: Path, output_path: Path) -> None:
+def publish_without_overwrite(temporary_path: Path, output_path: Path) -> None:
     """Publish by hard-linking, which is atomic and refuses existing paths."""
     if _path_exists_including_broken_symlink(output_path):
         raise RenderingError("render output already exists")
@@ -287,7 +287,7 @@ class FfmpegRenderer:
 
             rendered_media = self.inspect(request.temporary_path)
             validate_rendered_media(request, rendered_media)
-            _publish_without_overwrite(request.temporary_path, request.output_path)
+            publish_without_overwrite(request.temporary_path, request.output_path)
             return RenderedClip(
                 refined=request.refined,
                 path=request.output_path,

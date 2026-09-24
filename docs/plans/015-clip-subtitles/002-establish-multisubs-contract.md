@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 015.001 Derive clip-local transcripts; a supported public `multisubs` release/API that builds subtitle artifacts from existing timed transcript data |
-| PR | — |
+| PR | [#40](https://github.com/denilson-santos/multicuts/pull/40) |
 
 ## Objective
 

@@ -16,7 +16,6 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.pipeline import PipelineNotReadyError
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -42,6 +41,7 @@ def test_generate_defaults_are_converted_to_run_config() -> None:
     assert config.aspect_ratio == "original"
     assert (config.vertical_width, config.vertical_height) == (1080, 1920)
     assert config.subtitle_template == "yellow-pop"
+    assert config.subtitles_enabled
     assert config.scorer == "heuristic"
     assert config.model == "default"
     assert config.semantic_provider == "openai"
@@ -131,6 +131,12 @@ def test_generate_maps_explicit_options_without_accessing_source(
     assert config.verbose
 
 
+def test_no_subtitles_option_disables_burn_in() -> None:
+    config = parse_run_config(["source.mp4", "--no-subtitles"])
+
+    assert not config.subtitles_enabled
+
+
 def test_auto_language_is_normalized_by_run_config() -> None:
     assert parse_run_config(["source.mp4", "--lang", "auto"]).language is None
 
@@ -191,6 +197,7 @@ def test_help_exposes_the_documented_options_and_score_semantics() -> None:
         "--vertical-height",
         "--subtitle-template",
         "--subtitle-template-dir",
+        "--no-subtitles",
         "--scorer",
         "--model",
         "--semantic-provider",
@@ -243,7 +250,7 @@ def test_main_maps_incomplete_pipeline_to_unexpected_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def incomplete_pipeline(_config: RunConfig) -> None:
-        raise PipelineNotReadyError("pipeline incomplete")
+        raise RuntimeError("pipeline incomplete")
 
     monkeypatch.setattr("multicuts.cli.run_pipeline", incomplete_pipeline)
 
