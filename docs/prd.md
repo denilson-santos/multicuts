@@ -365,12 +365,13 @@ The normalized media model must distinguish coded dimensions from final presenta
 
 #### FR-TR-001 — Provider baseline
 
-The current provider baseline is **`multisubs 4.2.0`**.
+The current provider baseline is **`multisubs 4.3.0`**.
 
 The package maintains these public APIs:
 
 ```python
 multisubs.generate_transcriptions
+multisubs.generate_subtitles_from_json
 multisubs.embed_subtitles
 ```
 
@@ -381,6 +382,7 @@ In the current baseline:
 - `multicuts` currently keeps the established WhisperX default and installs the provider's `whisperx` extra;
 - `lang` may be `None`, enabling automatic source-language detection;
 - transcription uses WhisperX with word alignment;
+- `generate_subtitles_from_json(...)` creates SRT, ASS, and a subtitled video from existing timed words without ASR;
 - `embed_subtitles(...)` receives an ASS file and performs hard-subtitle rendering;
 - the presentation engine supports built-in/custom templates, bundled fonts, cue/word animations, and multilingual layout behavior;
 - the 4.2 line retains the schema-3 artifact contract and adds improved alignment and segmentation, bounded translation fallbacks, and scoped animation controls.
@@ -841,7 +843,7 @@ The CLI should accept:
 --subtitle-template-dir PATH
 ```
 
-The `multisubs 4.2.0` built-in catalog includes 16 presentations aimed at hooks, Reels, TikTok, Shorts, interviews, storytelling, tutorials, and educational content.
+The `multisubs 4.3.0` built-in catalog includes 16 presentations aimed at hooks, Reels, TikTok, Shorts, interviews, storytelling, tutorials, and educational content.
 
 Relevant examples:
 
@@ -1168,10 +1170,10 @@ Ranking tie-breakers must be deterministic.
 - Python `>=3.10,<3.14`;
 - FFmpeg;
 - ffprobe;
-- `multisubs >=4.1,<5`;
+- `multisubs >=4.3,<5`;
 - `yt-dlp` for remote source acquisition.
 
-The implementation dependency pins the official `multisubs[whisperx]` 4.2.0
+The implementation dependency pins the official `multisubs[whisperx]` 4.3.0
 wheel so the existing default backend remains installable and reproducible.
 
 ### Python dependency categories
@@ -1238,12 +1240,13 @@ Primary rule:
 
 ### 18.1 Baseline
 
-This PRD uses **`multisubs 4.2.0`** as the integration baseline.
+This PRD uses **`multisubs 4.3.0`** as the integration baseline.
 
 The package exposes:
 
 ```python
 multisubs.generate_transcriptions
+multisubs.generate_subtitles_from_json
 multisubs.embed_subtitles
 ```
 
@@ -1355,39 +1358,25 @@ shift timestamps to clip-local time
 resolve final clip geometry
     |
     v
-generate ASS with multisubs template/font/animation engine
+multisubs timed-cue JSON + raw clip + template
     |
     v
-multisubs.embed_subtitles(...)
+multisubs generates SRT, ASS, and the subtitled video
 ```
 
-### 18.7 Current public-contract gap
+### 18.7 Public timed-cue contract
 
-The current public API resolves two ends of the workflow:
+`multisubs 4.3.0` exposes `generate_subtitles_from_json(cues_json_path, video_path,
+output_dir, subtitle_config=None)`. Its versioned schema-1 input contains a
+language and cues with exact text-to-word mapping and complete observed word
+times. The function generates SRT, ASS, and a hard-subtitled video from the
+provided clip geometry without ASR. Its public CLI also accepts `--cues-json`,
+`--template`, and `--template-dir`; `multicuts` uses that CLI for template
+selection while keeping provider details inside `MultisubsAdapter`.
 
-1. `generate_transcriptions(...)` can create transcription artifacts without rendering a final video;
-2. `embed_subtitles(...)` can render an existing ASS file.
-
-The missing public contract for `multicuts` is the middle step:
-
-> build subtitle artifacts, especially ASS with templates, fonts, wrapping, and animations, from an **existing transcript/cue set** for a **target clip geometry**, without executing ASR again.
-
-If this capability remains private in `multisubs`, the preferred solution is to expose a small stable public API there rather than importing private modules from `multicuts`.
-
-A conceptual shape could be:
-
-```python
-build_subtitle_artifacts(
-    transcript,
-    *,
-    target_video,
-    template,
-    template_dir=None,
-    output_dir,
-) -> SubtitleArtifacts
-```
-
-The exact name and schema are implementation decisions for `multisubs`.
+The provider does not infer missing word times or expose template provenance in
+the returned artifact set. `multicuts` must fail clearly when a clip transcript
+cannot satisfy the schema and retain requested template metadata separately.
 
 ### 18.8 Restrictions
 
@@ -1408,14 +1397,14 @@ If an internal capability is required, prefer promoting it to a small public API
 Initial supported range:
 
 ```text
-multisubs >=4.1,<5
+multisubs >=4.3,<5
 ```
 
 During early implementation, the runtime dependency pins the official wheel and
 the backend extra used by the adapter:
 
 ```text
-multisubs[whisperx] 4.2.0
+multisubs[whisperx] 4.3.0
 ```
 
 CI contract tests should verify:
@@ -1444,7 +1433,7 @@ Source
   duration: 01:42:18
 
 Transcription
-  provider: multisubs 4.2.0
+  provider: multisubs 4.3.0
   language: pt
   words: 14,832
 
@@ -1524,7 +1513,7 @@ If the source and transcription-relevant options have not changed, a rerun can r
 
 ### AC-011 — `multisubs` contract
 
-A contract test confirms that `multisubs >=4.1,<5` provides the operations and minimum schema required by the adapter.
+A contract test confirms that `multisubs >=4.3,<5` provides the operations and minimum schema required by the adapter.
 
 ### AC-012 — Local offline media flow
 
@@ -1728,7 +1717,7 @@ These decisions define the current MVP direction and may be revised through norm
 | D-001 | Use Python `>=3.10,<3.14` initially to align with `multisubs`. |
 | D-002 | Require FFmpeg/ffprobe at runtime. |
 | D-003 | Use `yt-dlp` as the initial YouTube provider. |
-| D-004 | Use `multisubs >=4.1,<5` as transcription and subtitle-presentation provider behind an adapter. |
+| D-004 | Use `multisubs >=4.3,<5` as transcription and subtitle-presentation provider behind an adapter. |
 | D-005 | Use an explainable `0..100` score, not a probability. |
 | D-006 | Use hybrid scoring as the MVP direction. |
 | D-007 | Generate/filter candidates before expensive semantic scoring. |

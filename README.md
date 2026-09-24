@@ -45,7 +45,7 @@ needed:
 python -m pip install --editable ".[dev,openai]"
 ```
 
-The runtime dependency on `multisubs` currently installs its v4.2.0 wheel from
+The runtime dependency on `multisubs` currently installs its v4.3.0 wheel from
 the official GitHub Release with a pinned SHA-256 checksum; it is not available
 from the default Python package index. The dependency selects the provider's
 `whisperx` extra so a full install preserves the current transcription backend
@@ -92,9 +92,10 @@ The first MVP should be able to:
 
 `multicuts` should reuse [`multisubs`](https://github.com/denilson-santos/multisubs) as its transcription and subtitle-presentation engine whenever possible.
 
-The current project baseline is **`multisubs 4.2.0`**. Its public package API exposes:
+The current project baseline is **`multisubs 4.3.0`**. Its public package API exposes:
 
 - `generate_transcriptions`;
+- `generate_subtitles_from_json`;
 - `embed_subtitles`.
 
 In the current release, `generate_transcriptions(...)` creates JSON, SRT, and ASS artifacts without rendering a final video, accepts `lang=None` for automatic source-language detection, and supports an optional ASR-backend selector. `embed_subtitles(...)` receives an ASS file and burns it into a video through FFmpeg/libass. `multicuts` currently preserves the established WhisperX default and installs the corresponding optional dependency extra.
@@ -115,11 +116,9 @@ The current `multisubs` feature set is especially useful to `multicuts`:
 
 This changes the MVP strategy: `multicuts` should not maintain a parallel catalog of "viral subtitle presets" when the same presentation can be represented by a `multisubs` template. The CLI should expose a concept such as `--subtitle-template` and forward the resolved presentation through the adapter.
 
-The most important remaining integration gap is **per-clip subtitle artifact generation**. The source video should be transcribed only once, while each selected clip may have shifted timestamps and a different target geometry, especially in `9:16` mode. To reuse templates, font measurement, wrapping, and word animations without retranscribing each clip, the integration should eventually rely on a public `multisubs` contract that can build subtitle artifacts from existing transcript/cue data for a target geometry.
+Version 4.3.0 accepts versioned timed-cue JSON and a target video, then generates SRT, styled ASS, and a subtitled video without ASR. Its public CLI accepts built-in and custom templates. The `MultisubsAdapter` now prepares clip-local JSON and invokes that CLI; pipeline orchestration and artifact reuse remain tasks 015.003–004. The input requires exact text-to-word mapping and complete word times; incomplete source timing cannot be inferred.
 
-Until that contract exists, all `multisubs`-specific behavior must remain behind an adapter so the `multicuts` domain does not depend on private `multisubs` modules.
-
-> Compatibility target: `multisubs >=4.1,<5`, with contract tests in CI. The implementation dependency pins the official `4.2.0` wheel and selects its `whisperx` extra for reproducibility.
+> Subtitle rendering requires `multisubs >=4.3,<5`. The implementation dependency pins the official `4.3.0` wheel with its `whisperx` extra for reproducibility.
 
 ## Pipeline overview
 
@@ -464,7 +463,7 @@ For YouTube URLs:
 
 - `yt-dlp` is the initial acquisition adapter.
 
-`multisubs 4.2.0` ships the resources required by its multilingual presentation pipeline, including bundled OFL fonts and Unicode/Japanese/Chinese segmentation dependencies. ASR runtimes are optional provider extras; `multicuts` selects `whisperx` to preserve its current backend. The project should not duplicate those assets.
+`multisubs 4.3.0` ships the resources required by its multilingual presentation pipeline, including bundled OFL fonts and Unicode/Japanese/Chinese segmentation dependencies. ASR runtimes are optional provider extras; `multicuts` selects `whisperx` to preserve its current backend. The project should not duplicate those assets.
 
 ## Suggested project structure
 
