@@ -19,6 +19,7 @@ class RunConfig:
     subtitle_template: str
     scorer: str
     model: str
+    subtitles_enabled: bool = True
     language: str | None = None
     min_duration: float = 15.0
     max_duration: float = 60.0
@@ -71,6 +72,8 @@ class RunConfig:
             raise ConfigurationError("min_score must be an integer from 0 to 100")
         if self.aspect_ratio not in ("original", "9:16"):
             raise ConfigurationError("aspect_ratio must be 'original' or '9:16'")
+        if type(self.subtitles_enabled) is not bool:
+            raise ConfigurationError("subtitles_enabled must be boolean")
         if (
             type(self.vertical_width) is not int
             or type(self.vertical_height) is not int

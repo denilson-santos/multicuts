@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 015.002 Establish the public `multisubs` subtitle-artifact contract; Package 014 Clip rendering |
 | PR | — |

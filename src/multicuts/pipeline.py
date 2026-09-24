@@ -1,10 +1,12 @@
 """Synchronous orchestration boundary for one multicuts run."""
 
 import logging
+import os
 import secrets
+import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import NoReturn, Protocol
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from multicuts.adapters.multisubs import MultisubsAdapter
@@ -57,6 +59,7 @@ from multicuts.models import (
     CandidateEvaluationArtifact,
     CandidateEvaluationBatch,
     CandidateScoringFailure,
+    ClipTranscript,
     MediaInfo,
     RefinedSelection,
     RenderedClip,
@@ -76,7 +79,15 @@ from multicuts.rendering.artifacts import (
     render_paths,
     write_render,
 )
-from multicuts.rendering.cutter import FfmpegRenderer
+from multicuts.rendering.cutter import FfmpegRenderer, publish_without_overwrite
+from multicuts.rendering.subtitle_artifacts import (
+    final_clip_paths,
+    publish_copy_without_overwrite,
+    read_final_clip,
+    subtitle_cache_key,
+    write_final_clip_metadata,
+)
+from multicuts.rendering.subtitles import SubtitledClip, SubtitleRenderer
 from multicuts.scoring.artifacts import (
     InvalidScoringArtifactError,
     read_scores,
@@ -95,6 +106,7 @@ from multicuts.source import (
     acquire_source,
     prepare_acquisition_workspace,
 )
+from multicuts.transcripts import derive_clip_transcript
 
 AcquireSource = Callable[[str, Path], AcquiredSource]
 ProbeMedia = Callable[[AcquiredSource], MediaInfo]
@@ -128,6 +140,25 @@ class RenderProvider(Protocol):
     def render(self, request: RenderRequest) -> RenderedClip: ...
 
 
+class SubtitleRenderProvider(Protocol):
+    """The substitutable final subtitle-rendering boundary."""
+
+    def version(self) -> str: ...
+
+    def inspect(self, path: Path) -> MediaInfo: ...
+
+    def render(
+        self,
+        raw: RenderedClip,
+        clip: ClipTranscript,
+        *,
+        output_path: Path,
+        workspace: Path,
+        template: str | None,
+        template_dir: Path | None,
+    ) -> SubtitledClip: ...
+
+
 class CandidateGenerator(Protocol):
     """The substitutable pure candidate-generation boundary."""
 
@@ -153,10 +184,6 @@ class CandidateEvaluator(Protocol):
         max_duration: float,
         candidate_budget: int,
     ) -> CandidateEvaluationBatch: ...
-
-
-class PipelineNotReadyError(RuntimeError):
-    """Raised while downstream scoring and final publication are unavailable."""
 
 
 HeuristicScorer = Callable[[CandidateEvaluation], ScoreResult]
@@ -697,13 +724,9 @@ def run_pipeline(
     heuristic_scorer: HeuristicScorer = score_heuristically,
     semantic_scorer: SemanticScorer | None = None,
     renderer: RenderProvider | None = None,
-) -> NoReturn:
-    """Run the implemented synchronous stages for one validated configuration.
-
-    The pipeline deliberately stops after raw rendering until subtitles
-    and final artifact publication are available. Raising here prevents the
-    CLI from reporting a completed run for a partial pipeline.
-    """
+    subtitle_renderer: SubtitleRenderProvider | None = None,
+) -> tuple[Path, ...]:
+    """Run all synchronous stages and return paths to the validated final clips."""
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
     workspace = prepare_acquisition_workspace(config.output_dir)
@@ -804,15 +827,190 @@ def run_pipeline(
             ",".join(reason.value for reason in item.reasons),
             item.requires_rescore,
         )
-    load_or_render_selection(
+    render_backend = renderer if renderer is not None else FfmpegRenderer()
+    raw_clips = load_or_render_selection(
         config,
         source,
         media,
         transcript,
         refined,
-        renderer=renderer,
+        renderer=render_backend,
     )
-    raise PipelineNotReadyError(
-        "Pipeline stops after raw clip rendering until subtitles and final "
-        "artifact publication are implemented"
+    final_clips = load_or_publish_final_clips(
+        config,
+        source,
+        transcript,
+        raw_clips,
+        renderer=render_backend,
+        subtitle_renderer=subtitle_renderer,
     )
+    logger.info("stage=run complete clips=%d", len(final_clips))
+    return final_clips
+
+
+def load_or_publish_final_clips(
+    config: RunConfig,
+    source: AcquiredSource,
+    transcript: Transcript,
+    raw_clips: tuple[RenderedClip, ...],
+    *,
+    renderer: RenderProvider,
+    subtitle_renderer: SubtitleRenderProvider | None = None,
+) -> tuple[Path, ...]:
+    """Reuse or publish the final clip set after validating every artifact."""
+    if not raw_clips:
+        logger.info("stage=subtitle skipped clips=0")
+        return ()
+
+    subtitles_enabled = config.subtitles_enabled
+    subtitle_backend = (
+        (subtitle_renderer if subtitle_renderer is not None else SubtitleRenderer())
+        if subtitles_enabled
+        else None
+    )
+    provider_version = (
+        subtitle_backend.version() if subtitle_backend is not None else None
+    )
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    final_paths: list[Path] = []
+
+    for raw in raw_clips:
+        clip = (
+            derive_clip_transcript(transcript, raw.refined)
+            if subtitles_enabled
+            else None
+        )
+        key = subtitle_cache_key(
+            raw,
+            clip,
+            subtitles_enabled=subtitles_enabled,
+            template=config.subtitle_template,
+            template_dir=config.subtitle_template_dir,
+            provider_version=provider_version,
+        )
+        output = final_clip_paths(paths, raw, key)
+        cached = (
+            None
+            if config.force_recompute
+            else read_final_clip(
+                output,
+                raw,
+                clip,
+                cache_key=key,
+                subtitles_enabled=subtitles_enabled,
+                template=config.subtitle_template,
+                template_dir=config.subtitle_template_dir,
+                provider_version=provider_version,
+                inspect=(
+                    subtitle_backend.inspect
+                    if subtitle_backend is not None
+                    else renderer.inspect
+                ),
+            )
+        )
+        if cached is not None:
+            logger.info("stage=subtitle cache=hit rank=%d", raw.refined.rank)
+            final_paths.append(cached)
+            continue
+
+        if any(
+            os.path.lexists(path)
+            for path in (
+                output.video,
+                output.metadata,
+                output.cues_json,
+                output.srt,
+                output.ass,
+            )
+        ):
+            raise ArtifactError(
+                "Final clip artifacts already exist without a reusable record; "
+                "remove them to retry"
+            )
+
+        output.video.parent.mkdir(parents=True, exist_ok=True)
+        workspace = paths.work / f"subtitle-{secrets.token_hex(16)}"
+        published: list[Path] = []
+        template_resolved: str | None = None
+        duration = raw.duration
+        try:
+            if subtitles_enabled:
+                if clip is None or subtitle_backend is None:
+                    raise RenderingError("Subtitle rendering is not configured")
+                result = subtitle_backend.render(
+                    raw,
+                    clip,
+                    output_path=output.video,
+                    workspace=workspace,
+                    template=config.subtitle_template,
+                    template_dir=config.subtitle_template_dir,
+                )
+                if result.path == output.video:
+                    published.append(output.video)
+                artifacts = result.subtitles
+                duration = result.duration
+                template_resolved = artifacts.template_resolved
+                if not template_resolved.strip():
+                    raise RenderingError(
+                        "Subtitle renderer returned no resolved template"
+                    )
+                for source_path, target_path in (
+                    (artifacts.cues_json_path, output.cues_json),
+                    (artifacts.srt_path, output.srt),
+                    (artifacts.ass_path, output.ass),
+                ):
+                    publish_copy_without_overwrite(source_path, target_path)
+                    published.append(target_path)
+            else:
+                publish_without_overwrite(raw.path, output.video)
+                published.append(output.video)
+
+            write_final_clip_metadata(
+                paths,
+                output,
+                raw,
+                clip,
+                cache_key=key,
+                subtitles_enabled=subtitles_enabled,
+                template=config.subtitle_template,
+                template_dir=config.subtitle_template_dir,
+                provider_version=provider_version,
+                template_resolved=template_resolved,
+                duration=float(duration),
+            )
+        except BaseException as exc:
+            for published_path in reversed(published):
+                try:
+                    published_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("stage=subtitle cleanup=failed")
+            logger.error(
+                "stage=subtitle failed rank=%d error_type=%s",
+                raw.refined.rank,
+                type(exc).__name__,
+            )
+            raise
+        finally:
+            if not config.keep_intermediates:
+                try:
+                    shutil.rmtree(workspace)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.warning("stage=subtitle workspace_cleanup=failed")
+
+        logger.info(
+            "stage=subtitle complete rank=%d subtitles=%s",
+            raw.refined.rank,
+            subtitles_enabled,
+        )
+        final_paths.append(output.video)
+
+    return tuple(final_paths)

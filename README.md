@@ -240,10 +240,11 @@ multicuts ./interview.mp4 \
   --subtitle-template yellow-pop
 ```
 
-Vertical raw clips default to `1080x1920`. Use `--vertical-width` and
+Vertical clips default to `1080x1920`. Use `--vertical-width` and
 `--vertical-height` together to choose another even, positive `9:16` size,
-for example `720x1280`. Rendering produces validated raw clips in the run
-workspace; subtitle burn-in and final publication remain subsequent stages.
+for example `720x1280`. Selected clips are rendered first, then receive hard
+subtitles using the configured `multisubs` template. Use `--no-subtitles` to
+publish validated raw clips without subtitle burn-in.
 
 ### Custom subtitle template directory
 
@@ -257,21 +258,28 @@ multicuts ./interview.mp4 \
 
 ```text
 multicuts-output/
-└── podcast/
-    ├── manifest.json
-    ├── source/
-    │   └── metadata.json
-    ├── transcript/
-    │   └── transcript.json
-    └── clips/
-        ├── 001-score-91.mp4
-        ├── 001-score-91.json
-        ├── 002-score-86.mp4
-        ├── 002-score-86.json
-        └── ...
+└── source-<cache-id>/
+    ├── transcript/transcript.json
+    ├── candidates/candidates.json
+    ├── scoring/scores.json
+    ├── selection/selection.json
+    ├── refinement/refinement.json
+    ├── clips/
+    │   ├── raw/<render-id>.mp4
+    │   └── <rank>-<clip-id>.mp4
+    └── rendering/
+        └── subtitles/
+            ├── <clip-id>.json
+            ├── <clip-id>.srt
+            ├── <clip-id>.ass
+            └── <clip-id>.cues.json
 ```
 
-Example clip metadata:
+The full score and editorial metadata entry below is planned for package 016.
+The current subtitle sidecar records render inputs, transcript timing, template,
+provider version, final geometry, and subtitle artifact paths.
+
+Planned full clip metadata:
 
 ```json
 {

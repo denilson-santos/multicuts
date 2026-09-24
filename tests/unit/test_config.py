@@ -36,6 +36,7 @@ def test_run_config_uses_explicit_defaults_without_external_access(
     assert valid_config.semantic_reasoning_effort == "max"
     assert valid_config.semantic_fallback == "heuristic"
     assert valid_config.subtitle_template_dir is None
+    assert valid_config.subtitles_enabled
     assert not valid_config.keep_intermediates
     assert not valid_config.force_recompute
     assert not valid_config.verbose

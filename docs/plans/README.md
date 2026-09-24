@@ -6,12 +6,13 @@
 source/media preflight, CLI foundation, `multisubs` transcription adapter, the
 output-local transcript cache, semantic candidate generation, and deterministic
 candidate evaluation, explainable heuristic scoring, and YouTube acquisition.
-The integrated pipeline currently stops after raw clip rendering.
+The integrated pipeline now renders selected clips, burns configured hard
+subtitles by default, and publishes reusable final clip artifacts. The complete
+run manifest and outcome summary remain package 016 work.
 
 Packages 010–014 completed selection, semantic/hybrid scoring, boundary
-refinement, and raw clip rendering. Package 015 is now active on the M3 path
-through subtitles and complete run artifacts. M4 release hardening remains
-later work.
+refinement, and raw clip rendering. Package 015 is active on subtitle generation
+and final clip persistence. M4 release hardening remains later work.
 
 ## Status and priority
 

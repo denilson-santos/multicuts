@@ -43,7 +43,7 @@ DEFAULT_SEMANTIC_REASONING_EFFORT = "max"
 DEFAULT_SEMANTIC_FALLBACK = "heuristic"
 
 
-PipelineRunner = Callable[[RunConfig], None]
+PipelineRunner = Callable[[RunConfig], object]
 
 
 @dataclass
@@ -196,6 +196,7 @@ def _build_run_config(
     vertical_height: int,
     subtitle_template: str,
     subtitle_template_dir: Path | None,
+    subtitles_enabled: bool,
     scorer: str,
     model: str,
     semantic_provider: str,
@@ -216,6 +217,7 @@ def _build_run_config(
         vertical_width=vertical_width,
         vertical_height=vertical_height,
         subtitle_template=subtitle_template,
+        subtitles_enabled=subtitles_enabled,
         scorer=scorer,
         model=model,
         semantic_provider=semantic_provider,
@@ -380,6 +382,13 @@ def run_command(
             help="Directory containing custom subtitle templates.",
         ),
     ] = None,
+    no_subtitles: Annotated[
+        bool,
+        typer.Option(
+            "--no-subtitles",
+            help="Publish validated raw clips without burning subtitles.",
+        ),
+    ] = False,
     scorer: Annotated[
         str,
         typer.Option(
@@ -466,6 +475,7 @@ def run_command(
         vertical_height=vertical_height,
         subtitle_template=subtitle_template,
         subtitle_template_dir=subtitle_template_dir,
+        subtitles_enabled=not no_subtitles,
         scorer=scorer,
         model=model,
         semantic_provider=semantic_provider,

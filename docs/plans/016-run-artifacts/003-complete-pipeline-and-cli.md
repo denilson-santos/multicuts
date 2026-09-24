@@ -9,16 +9,14 @@
 
 ## Objective
 
-Remove the deliberate pipeline stopping point and expose honest CLI outcomes
-for completed, zero-selection, partially completed, failed, and interrupted
-runs.
+Publish a complete run result and expose honest CLI outcomes for completed,
+zero-selection, partially completed, failed, and interrupted runs.
 
 ## Context and inputs
 
-The current CLI/pipeline intentionally stops before unimplemented downstream
-stages. Once media and artifacts exist, orchestration should remain one readable
-synchronous flow and return a project-owned run result rather than infer success
-from log messages.
+The pipeline now publishes validated final clips and per-clip rendering
+provenance. This task adds the run manifest, explicit outcome policy, and CLI
+summary without replacing the readable synchronous flow.
 
 ## Expected changes
 
@@ -26,8 +24,6 @@ from log messages.
   publication with explicit stage result boundaries.
 - Define zero-selection and partial clip-failure policy in the manifest, return
   result, CLI summary, and exit mapping.
-- Remove `PipelineNotReadyError` only for the now-complete configured path;
-  retain clear compatibility/configuration errors for blocked capabilities.
 - Print/log concise final run ID, outcome, manifest path, completed clip count,
   and safe warning summary.
 - Preserve cleanup/`KeyboardInterrupt` propagation behavior and avoid claiming
