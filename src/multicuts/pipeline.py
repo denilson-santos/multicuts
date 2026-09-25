@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -55,7 +56,12 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.final_artifacts import ClipOutcome, ClipReference, StageTiming
+from multicuts.final_artifacts import (
+    ClipOutcome,
+    ClipReference,
+    RunOutcome,
+    StageTiming,
+)
 from multicuts.media import probe_media
 from multicuts.models import (
     AcquiredSource,
@@ -119,6 +125,17 @@ ProbeMedia = Callable[[AcquiredSource], MediaInfo]
 
 logger = logging.getLogger(__name__)
 TRANSCRIPTION_PROVIDER = "multisubs"
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    """Outcome available to the CLI only after final manifest publication."""
+
+    run_id: str
+    outcome: RunOutcome
+    manifest_path: Path
+    clip_paths: tuple[Path, ...]
+    warnings: tuple[str, ...]
 
 
 class TranscriptionProvider(Protocol):
@@ -642,6 +659,7 @@ def load_or_render_selection(
     refined: tuple[RefinedSelection, ...],
     *,
     renderer: RenderProvider | None = None,
+    renderer_version: str | None = None,
 ) -> tuple[RenderedClip, ...]:
     """Render safe refined intervals and reuse only validated raw clips."""
     safe = tuple(item for item in refined if not item.requires_rescore)
@@ -655,7 +673,7 @@ def load_or_render_selection(
         return ()
 
     backend = renderer if renderer is not None else FfmpegRenderer()
-    version = backend.version()
+    version = renderer_version if renderer_version is not None else backend.version()
     transcription_key = transcription_cache_key(
         source_fingerprint=source.fingerprint,
         provider=TRANSCRIPTION_PROVIDER,
@@ -701,7 +719,7 @@ def load_or_render_selection(
                 rendered.append(cached)
                 continue
         if output_path.exists() or output_path.is_symlink():
-            raise RenderingError(
+            raise ArtifactError(
                 "Raw clip already exists; refusing to overwrite completed media"
             )
         logger.info("stage=render cache=miss rank=%d", item.rank)
@@ -731,8 +749,8 @@ def run_pipeline(
     semantic_scorer: SemanticScorer | None = None,
     renderer: RenderProvider | None = None,
     subtitle_renderer: SubtitleRenderProvider | None = None,
-) -> tuple[Path, ...]:
-    """Run all synchronous stages and return paths to the validated final clips."""
+) -> RunResult:
+    """Run all synchronous stages and return the published outcome."""
     run_id = secrets.token_hex(16)
     created_at = datetime.now(timezone.utc).isoformat()
     timings: list[StageTiming] = []
@@ -852,27 +870,6 @@ def run_pipeline(
             ",".join(reason.value for reason in item.reasons),
             item.requires_rescore,
         )
-    render_backend = renderer if renderer is not None else FfmpegRenderer()
-    started = perf_counter()
-    raw_clips = load_or_render_selection(
-        config,
-        source,
-        media,
-        transcript,
-        refined,
-        renderer=render_backend,
-    )
-    timings.append(StageTiming("raw_rendering", perf_counter() - started))
-    started = perf_counter()
-    final_clips = load_or_publish_final_clips(
-        config,
-        source,
-        transcript,
-        raw_clips,
-        renderer=render_backend,
-        subtitle_renderer=subtitle_renderer,
-    )
-    timings.append(StageTiming("final_rendering", perf_counter() - started))
     transcription_key = transcription_cache_key(
         source_fingerprint=source.fingerprint,
         provider=TRANSCRIPTION_PROVIDER,
@@ -881,30 +878,28 @@ def run_pipeline(
         language=config.language,
     )
     paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
-    if len(raw_clips) != len(final_clips):
-        raise ArtifactError("Final clip count does not match validated renders")
+    render_backend = renderer if renderer is not None else FfmpegRenderer()
+    subtitle_backend = (
+        (subtitle_renderer if subtitle_renderer is not None else SubtitleRenderer())
+        if config.subtitles_enabled and refined
+        else None
+    )
     inspect = (
-        (
-            subtitle_renderer if subtitle_renderer is not None else SubtitleRenderer()
-        ).inspect
-        if config.subtitles_enabled and raw_clips
+        subtitle_backend.inspect
+        if subtitle_backend is not None
         else render_backend.inspect
     )
+    started = perf_counter()
+    renderer_version = (
+        render_backend.version()
+        if any(not item.requires_rescore for item in refined)
+        else None
+    )
+    raw_duration = perf_counter() - started
+    raw_clips: list[RenderedClip] = []
+    final_clips: list[Path] = []
     references: list[ClipReference] = []
-    for raw, final_path in zip(raw_clips, final_clips, strict=True):
-        clip_record = collect_clip_metadata(
-            paths, config, transcript, raw, final_path, inspect=inspect
-        )
-        metadata_path = publish_clip_metadata(paths, clip_record, inspect=inspect)
-        references.append(
-            ClipReference(
-                id=clip_record.id,
-                rank=clip_record.rank,
-                status=ClipOutcome.COMPLETED,
-                metadata_path=metadata_path.relative_to(paths.root).as_posix(),
-                output_path=clip_record.output_path,
-            )
-        )
+    final_duration = 0.0
     for item in refined:
         if item.requires_rescore:
             references.append(
@@ -917,7 +912,75 @@ def run_pipeline(
                     warning="refinement_requires_rescore",
                 )
             )
-    references.sort(key=lambda item: item.rank)
+            continue
+        started = perf_counter()
+        try:
+            raw = load_or_render_selection(
+                config,
+                source,
+                media,
+                transcript,
+                (item,),
+                renderer=render_backend,
+                renderer_version=renderer_version,
+            )[0]
+        except RenderingError:
+            logger.warning("stage=render failed rank=%d", item.rank)
+            references.append(
+                ClipReference(
+                    item.candidate_id,
+                    item.rank,
+                    ClipOutcome.FAILED,
+                    None,
+                    None,
+                    "raw_render_failed",
+                )
+            )
+            continue
+        finally:
+            raw_duration += perf_counter() - started
+        raw_clips.append(raw)
+        started = perf_counter()
+        try:
+            final_path = load_or_publish_final_clips(
+                config,
+                source,
+                transcript,
+                (raw,),
+                renderer=render_backend,
+                subtitle_renderer=subtitle_backend,
+            )[0]
+        except RenderingError:
+            logger.warning("stage=subtitle failed rank=%d", item.rank)
+            references.append(
+                ClipReference(
+                    item.candidate_id,
+                    item.rank,
+                    ClipOutcome.FAILED,
+                    None,
+                    None,
+                    "final_render_failed",
+                )
+            )
+            continue
+        finally:
+            final_duration += perf_counter() - started
+        clip_record = collect_clip_metadata(
+            paths, config, transcript, raw, final_path, inspect=inspect
+        )
+        metadata_path = publish_clip_metadata(paths, clip_record, inspect=inspect)
+        final_clips.append(final_path)
+        references.append(
+            ClipReference(
+                id=clip_record.id,
+                rank=clip_record.rank,
+                status=ClipOutcome.COMPLETED,
+                metadata_path=metadata_path.relative_to(paths.root).as_posix(),
+                output_path=clip_record.output_path,
+            )
+        )
+    timings.append(StageTiming("raw_rendering", raw_duration))
+    timings.append(StageTiming("final_rendering", final_duration))
     manifest = collect_run_manifest(
         config,
         source,
@@ -927,15 +990,21 @@ def run_pipeline(
         scoring,
         selection,
         refined,
-        raw_clips,
+        tuple(raw_clips),
         tuple(references),
         tuple(timings),
         run_id=run_id,
         created_at=created_at,
     )
-    publish_run_manifest(paths, manifest)
-    logger.info("stage=run complete clips=%d", len(final_clips))
-    return final_clips
+    manifest_path = publish_run_manifest(paths, manifest)
+    logger.info(
+        "stage=run complete outcome=%s clips=%d",
+        manifest.outcome.value,
+        len(final_clips),
+    )
+    return RunResult(
+        run_id, manifest.outcome, manifest_path, tuple(final_clips), manifest.warnings
+    )
 
 
 def load_or_publish_final_clips(

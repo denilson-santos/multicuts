@@ -16,6 +16,8 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
+from multicuts.final_artifacts import RunOutcome
+from multicuts.pipeline import RunResult
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -218,17 +220,30 @@ def test_removed_generate_subcommand_is_rejected() -> None:
     assert result.exit_code == 2
 
 
-def test_main_passes_one_validated_config_to_pipeline() -> None:
+def _published_result(
+    outcome: RunOutcome = RunOutcome.COMPLETED,
+    *,
+    clips: tuple[Path, ...] = (Path("clip.mp4"),),
+    warnings: tuple[str, ...] = (),
+) -> RunResult:
+    return RunResult("run-123", outcome, Path("output/manifest.json"), clips, warnings)
+
+
+def test_main_passes_one_validated_config_to_pipeline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     received: list[RunConfig] = []
 
-    def fake_pipeline(config: RunConfig) -> None:
+    def fake_pipeline(config: RunConfig) -> RunResult:
         received.append(config)
+        return _published_result()
 
     exit_code = main(["source.mp4", "--clips", "2"], pipeline=fake_pipeline)
 
     assert exit_code == 0
     assert len(received) == 1
     assert received[0].clips == 2
+    assert "Run run-123: completed; completed clips=1" in capsys.readouterr().out
 
 
 def test_main_uses_the_default_pipeline_boundary(
@@ -236,13 +251,40 @@ def test_main_uses_the_default_pipeline_boundary(
 ) -> None:
     called: list[RunConfig] = []
 
-    def fake_pipeline(config: RunConfig) -> None:
+    def fake_pipeline(config: RunConfig) -> RunResult:
         called.append(config)
+        return _published_result()
 
     monkeypatch.setattr("multicuts.cli.run_pipeline", fake_pipeline)
 
     assert main(["source.mp4"]) == 0
     assert called[0].source == "source.mp4"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "clips", "warnings", "exit_code"),
+    [
+        (RunOutcome.ZERO_SELECTION, (), (), 0),
+        (RunOutcome.PARTIAL, (Path("clip.mp4"),), ("raw_render_failed",), 6),
+        (RunOutcome.FAILED, (), ("final_render_failed",), 6),
+    ],
+)
+def test_main_reports_published_run_outcomes(
+    outcome: RunOutcome,
+    clips: tuple[Path, ...],
+    warnings: tuple[str, ...],
+    exit_code: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_pipeline(_config: RunConfig) -> RunResult:
+        return _published_result(outcome, clips=clips, warnings=warnings)
+
+    assert main(["source.mp4"], pipeline=fake_pipeline) == exit_code
+    output = capsys.readouterr().out
+    assert f"Run run-123: {outcome.value}" in output
+    assert f"completed clips={len(clips)}" in output
+    assert "manifest=output/manifest.json" in output
+    assert f"warnings={', '.join(warnings) if warnings else 'none'}" in output
 
 
 def test_main_maps_incomplete_pipeline_to_unexpected_failure(
@@ -283,11 +325,13 @@ def test_main_maps_project_errors_to_documented_exit_codes(
     label: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def failing_pipeline(_config: RunConfig) -> None:
+    def failing_pipeline(_config: RunConfig) -> RunResult:
         raise error
 
     assert main(["source.mp4"], pipeline=failing_pipeline) == expected_exit
-    output = capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    output = captured.err
     assert f"{label}: {error}" in output
     assert "Traceback" not in output
 
@@ -297,9 +341,10 @@ def test_main_reports_semantic_configuration_errors_without_running_pipeline(
 ) -> None:
     called = False
 
-    def failing_pipeline(_config: RunConfig) -> None:
+    def failing_pipeline(_config: RunConfig) -> RunResult:
         nonlocal called
         called = True
+        return _published_result()
 
     assert (
         main(
@@ -322,7 +367,7 @@ def test_main_maps_typer_parse_errors_to_configuration_exit(
 def test_main_verbose_diagnostics_include_safe_failure_metadata(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def failing_pipeline(_config: RunConfig) -> None:
+    def failing_pipeline(_config: RunConfig) -> RunResult:
         raise AcquisitionError("download failed token=super-secret") from RuntimeError(
             "provider token=super-secret"
         )
@@ -344,7 +389,7 @@ def test_main_verbose_diagnostics_include_safe_failure_metadata(
 def test_main_unexpected_failure_uses_only_generic_and_typed_diagnostics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def failing_pipeline(_config: RunConfig) -> None:
+    def failing_pipeline(_config: RunConfig) -> RunResult:
         raise RuntimeError("provider response token=super-secret") from ValueError(
             "raw provider payload"
         )
@@ -367,11 +412,13 @@ def test_main_unexpected_failure_uses_only_generic_and_typed_diagnostics(
 def test_main_returns_clean_interruption_exit_without_success_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def interrupt_pipeline(_config: RunConfig) -> None:
+    def interrupt_pipeline(_config: RunConfig) -> RunResult:
         raise KeyboardInterrupt
 
     assert main(["source.mp4"], pipeline=interrupt_pipeline) == 130
-    output = capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    output = captured.err
     assert "Run interrupted" in output
     assert "completion summary" in output
 

@@ -281,9 +281,7 @@ def test_pipeline_render_stage_reuses_clip_and_respects_safe_selection(
     )
     assert len(renderer.rendered) == 1
 
-    from multicuts.errors import RenderingError
-
-    with pytest.raises(RenderingError, match="refusing to overwrite"):
+    with pytest.raises(ArtifactError, match="refusing to overwrite"):
         load_or_render_selection(
             replace(config, force_recompute=True),
             request.source,

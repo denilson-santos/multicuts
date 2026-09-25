@@ -256,9 +256,25 @@ multicuts ./interview.mp4 \
 
 ## Expected output
 
+The command reports the run ID, outcome, completed clip count, manifest path,
+and warning codes only after the manifest is published. The manifest and each
+completed clip's adjacent JSON file contain the versioned result and provenance.
+
+```text
+Run <run-id>: completed; completed clips=2; manifest=multicuts-output/source-<cache-id>/manifest.json; warnings=none
+```
+
+A run with no selected clips publishes a `zero_selection` manifest and exits
+with code 0. If one or more selected clips fail but another completes, the
+manifest reports `partial`, keeps the successful clips, and exits with code 6.
+If all selected clips fail, it reports `failed` and exits with code 6. The
+manifest lists each selected clip's result and safe warning codes. Earlier
+stage failures or interruption do not produce a completion summary.
+
 ```text
 multicuts-output/
 └── source-<cache-id>/
+    ├── manifest.json
     ├── transcript/transcript.json
     ├── candidates/candidates.json
     ├── scoring/scores.json
@@ -266,49 +282,14 @@ multicuts-output/
     ├── refinement/refinement.json
     ├── clips/
     │   ├── raw/<render-id>.mp4
-    │   └── <rank>-<clip-id>.mp4
+    │   ├── <rank>-<clip-id>.mp4
+    │   └── <rank>-<clip-id>.json
     └── rendering/
         └── subtitles/
             ├── <clip-id>.json
             ├── <clip-id>.srt
             ├── <clip-id>.ass
             └── <clip-id>.cues.json
-```
-
-The full score and editorial metadata entry below is planned for package 016.
-The current subtitle sidecar records render inputs, transcript timing, template,
-provider version, final geometry, and subtitle artifact paths.
-
-Planned full clip metadata:
-
-```json
-{
-  "id": "clip-001",
-  "start": 812.42,
-  "end": 846.18,
-  "duration": 33.76,
-  "score": 91,
-  "confidence": 0.86,
-  "title": "The mistake that makes most people quit early",
-  "scores": {
-    "hook": 95,
-    "standalone_context": 88,
-    "payoff": 93,
-    "emotion_surprise": 80,
-    "clarity": 94,
-    "quotability": 91,
-    "information_density": 87
-  },
-  "checklist": {
-    "has_clear_hook": true,
-    "understandable_without_previous_context": true,
-    "has_payoff": true,
-    "starts_cleanly": true,
-    "ends_cleanly": true,
-    "within_duration_range": true
-  },
-  "reason": "The clip opens with a strong claim, explains it clearly, and ends with a memorable conclusion."
-}
 ```
 
 ## Viral-potential score

@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 010 Ranking and selection; 011 YouTube acquisition; 014 Clip rendering; 015 Clip subtitles |
 | Unlocks | Complete M3 runs and M4 release hardening |
-| PRs | [#42](https://github.com/denilson-santos/multicuts/pull/42) |
+| PRs | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43) |
 
 ## Objective and expected outcome
 
@@ -22,8 +22,7 @@ provider fallback states.
 FR-ART-001–003 make artifacts part of the product contract, not incidental
 debug output. AC-001–014 require final clips, score/checklist details, geometry,
 subtitle/template provenance, single-ASR reuse, and failed-render safety. The
-current artifact module reserves `manifest.json`; this package defines and
-publishes its complete final schema.
+artifact module now publishes the complete final schema at `manifest.json`.
 
 ## Included scope
 
@@ -67,8 +66,8 @@ publishes its complete final schema.
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | [001 Define manifest and per-clip metadata contracts](001-define-artifact-contracts.md) | completed | P1 | Packages 010, 014; Task 015.001 | [#42](https://github.com/denilson-santos/multicuts/pull/42) | Versioned complete artifact schemas with safe provenance |
-| [002 Collect and publish final artifacts safely](002-publish-final-artifacts.md) | in-progress | P1 | 001 | — | Atomic clip metadata and manifest publication from real stage results |
-| [003 Complete pipeline and CLI outcome semantics](003-complete-pipeline-and-cli.md) | planned | P1 | 002 | — | Honest end-to-end success, zero-selection, partial, and failure behavior |
+| [002 Collect and publish final artifacts safely](002-publish-final-artifacts.md) | completed | P1 | 001 | [#43](https://github.com/denilson-santos/multicuts/pull/43) | Atomic clip metadata and manifest publication from real stage results |
+| [003 Complete pipeline and CLI outcome semantics](003-complete-pipeline-and-cli.md) | in-progress | P1 | 002 | — | Honest end-to-end success, zero-selection, partial, and failure behavior |
 | [004 Verify local and YouTube end-to-end acceptance](004-verify-end-to-end-acceptance.md) | planned | P1 | 003; Package 011 | — | Evidence for M3/MVP acceptance without weakening hermetic defaults |
 
 ## Suggested task sequence
@@ -99,10 +98,10 @@ local and YouTube sources with hermetic boundaries plus marked live-tool tests.
 - Task 001 derives title and summary deterministically from candidate
   transcript excerpts. A future editorial title generator needs a separate
   product decision.
-- The PRD does not explicitly define whether a zero-selection run is a
-  successful completed run or a distinct non-error outcome. Task 003 must decide
-  and document CLI/manifest semantics while preserving the domain distinction.
-- The public multisubs contract required by package 015 has been integrated;
-  package 016 still needs artifact publication and end-to-end acceptance.
+- A zero-selection run publishes its manifest with a distinct outcome and exits
+  successfully. A partial or all-render-failed run publishes the corresponding
+  outcome and exits with the rendering failure code; CLI output names the state.
+- The public multisubs contract required by package 015 and package 016's
+  artifact publication are integrated; end-to-end acceptance remains.
 - M4 remains responsible for broader interruption cleanup, corrupted-cache
   hardening, packaging, and reproducible release checks.
