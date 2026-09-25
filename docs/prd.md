@@ -868,7 +868,6 @@ The run manifest should record, when available:
 ```text
 template_requested
 template_resolved
-template_source
 template_base
 ```
 
@@ -974,7 +973,7 @@ Record, when applicable:
 
 - `multicuts` version;
 - `multisubs` version;
-- requested/resolved subtitle template and template source;
+- requested/resolved subtitle template;
 - scorer version;
 - transcription model;
 - semantic model;

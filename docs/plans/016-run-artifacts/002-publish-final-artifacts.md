@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 016.001 Define manifest and per-clip metadata contracts |
 | PR | — |
@@ -64,3 +64,8 @@ pyright
   required; ordered atomic files plus explicit outcome state are sufficient.
 - Do not conflate final manifest publication with cache validity guarantees
   deferred to M4.
+- The public subtitle result exposes requested and resolved template names.
+  Final clip metadata records those names without a template source field.
+- A published manifest marks the workspace complete. Re-running into that same
+  destination is refused; an interrupted run without a manifest can reuse its
+  stage caches.

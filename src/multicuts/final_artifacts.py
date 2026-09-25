@@ -409,7 +409,6 @@ class ClipRenderSettings:
     subtitles_enabled: bool
     template_requested: str | None
     template_resolved: str | None
-    template_source: str | None
     multisubs_version: str | None
 
     def __post_init__(self) -> None:
@@ -428,7 +427,6 @@ class ClipRenderSettings:
         template_values = (
             self.template_requested,
             self.template_resolved,
-            self.template_source,
             self.multisubs_version,
         )
         if not self.subtitles_enabled and any(

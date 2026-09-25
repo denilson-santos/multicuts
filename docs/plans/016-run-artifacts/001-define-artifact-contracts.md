@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | Packages 010 Ranking and selection; 014 Clip rendering; Task 015.001 Derive clip-local transcripts |
-| PR | — |
+| PR | [#42](https://github.com/denilson-santos/multicuts/pull/42) |
 
 ## Objective
 

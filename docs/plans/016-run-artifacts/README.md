@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 010 Ranking and selection; 011 YouTube acquisition; 014 Clip rendering; 015 Clip subtitles |
 | Unlocks | Complete M3 runs and M4 release hardening |
-| PRs | — |
+| PRs | [#42](https://github.com/denilson-santos/multicuts/pull/42) |
 
 ## Objective and expected outcome
 
@@ -66,8 +66,8 @@ publishes its complete final schema.
 
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| [001 Define manifest and per-clip metadata contracts](001-define-artifact-contracts.md) | in-progress | P1 | Packages 010, 014; Task 015.001 | — | Versioned complete artifact schemas with safe provenance |
-| [002 Collect and publish final artifacts safely](002-publish-final-artifacts.md) | planned | P1 | 001 | — | Atomic clip metadata and manifest publication from real stage results |
+| [001 Define manifest and per-clip metadata contracts](001-define-artifact-contracts.md) | completed | P1 | Packages 010, 014; Task 015.001 | [#42](https://github.com/denilson-santos/multicuts/pull/42) | Versioned complete artifact schemas with safe provenance |
+| [002 Collect and publish final artifacts safely](002-publish-final-artifacts.md) | in-progress | P1 | 001 | — | Atomic clip metadata and manifest publication from real stage results |
 | [003 Complete pipeline and CLI outcome semantics](003-complete-pipeline-and-cli.md) | planned | P1 | 002 | — | Honest end-to-end success, zero-selection, partial, and failure behavior |
 | [004 Verify local and YouTube end-to-end acceptance](004-verify-end-to-end-acceptance.md) | planned | P1 | 003; Package 011 | — | Evidence for M3/MVP acceptance without weakening hermetic defaults |
 
