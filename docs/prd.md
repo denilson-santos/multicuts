@@ -983,6 +983,12 @@ Record, when applicable:
 
 Secrets must never be persisted.
 
+A concluded run with no selected clips records `zero_selection` and exits
+successfully. When some selected clips fail, the manifest records `partial` or
+`failed` according to whether any clip completed, identifies failed clips with
+safe warning codes, and the CLI exits with the rendering failure code. Earlier
+stage failures and interruptions do not claim completed output.
+
 ---
 
 ## 10. Conceptual data model

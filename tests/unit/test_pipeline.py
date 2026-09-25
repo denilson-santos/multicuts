@@ -11,6 +11,7 @@ from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
     MediaError,
+    RenderingError,
     TranscriptionError,
 )
 from multicuts.models import (
@@ -533,7 +534,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
 
     renderer = FakeRenderer()
     subtitle_renderer = FakeSubtitleRenderer()
-    first_outputs = run_pipeline(
+    first_result = run_pipeline(
         config,
         acquire=lambda _value, _workspace: source,
         probe=lambda _value: media,
@@ -544,7 +545,10 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
         subtitle_renderer=subtitle_renderer,
     )
 
+    first_outputs = first_result.clip_paths
     assert len(first_outputs) == 1
+    assert first_result.outcome.value == "completed"
+    assert first_result.manifest_path.is_file()
     assert first_outputs[0].is_file()
     assert subtitle_renderer.calls == 1
     manifest = next(config.output_dir.rglob("manifest.json"))
@@ -607,3 +611,174 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     )
     assert renderer.render_calls == 1
     assert subtitle_renderer.calls == 2
+
+
+@pytest.mark.parametrize(
+    ("failing_ranks", "failure_stage", "expected_outcome", "expected_completed"),
+    [
+        ({2}, "raw", "partial", 1),
+        ({1, 2}, "raw", "failed", 0),
+        ({2}, "final", "partial", 1),
+    ],
+)
+def test_pipeline_records_render_failures_and_keeps_successful_clips(
+    config: RunConfig,
+    transcript: Transcript,
+    failing_ranks: set[int],
+    failure_stage: str,
+    expected_outcome: str,
+    expected_completed: int,
+) -> None:
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:abc")
+    media = MediaInfo(60.0, 1920, 1080, 1920, 1080, 0, 1)
+    config = replace(
+        config,
+        clips=2,
+        subtitles_enabled=failure_stage == "final",
+        refinement_pre_roll=0.0,
+        refinement_post_roll=0.0,
+    )
+    transcript = replace(
+        transcript,
+        duration=60.0,
+        text="Alpha point. Beta point.",
+        segments=(
+            TranscriptSegment("Alpha point.", 0.0, 20.0),
+            TranscriptSegment("Beta point.", 30.0, 50.0),
+        ),
+        words=(
+            Word("Alpha", 0.0, 0.5),
+            Word("point.", 19.5, 20.0),
+            Word("Beta", 30.0, 30.5),
+            Word("point.", 49.5, 50.0),
+        ),
+    )
+    candidates = (
+        Candidate("candidate-v1:alpha", 0.0, 20.0, "Alpha point.", (0,), "1"),
+        Candidate("candidate-v1:beta", 30.0, 50.0, "Beta point.", (1,), "1"),
+    )
+    evaluations = tuple(
+        CandidateEvaluation(
+            candidate=candidate,
+            features=CandidateFeatures(
+                duration=20.0,
+                word_count=2,
+                timed_word_count=2,
+                words_per_second=0.1,
+                opening_quality=0.8,
+                standalone_context=0.75,
+                payoff=0.7,
+            ),
+            checklist=(ChecklistResult("valid_duration", ChecklistOutcome.PASS),),
+            shortlist_rank=index,
+        )
+        for index, candidate in enumerate(candidates, start=1)
+    )
+
+    class FailingRenderer:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+            self.version_calls = 0
+
+        def version(self) -> str:
+            self.version_calls += 1
+            return "ffmpeg test"
+
+        def inspect(self, path: Path) -> MediaInfo:
+            del path
+            return MediaInfo(20.0, 1920, 1080, 1920, 1080, 0, 1)
+
+        def render(self, request: RenderRequest) -> RenderedClip:
+            rank = request.refined.rank
+            self.calls.append(rank)
+            if failure_stage == "raw" and rank in failing_ranks:
+                raise RenderingError("synthetic render failure")
+            request.output_path.write_bytes(b"fake media")
+            return RenderedClip(
+                request.refined,
+                request.output_path,
+                1920,
+                1080,
+                20.0,
+                True,
+                request.renderer_version,
+                request.cache_key,
+            )
+
+    class FailingSubtitleRenderer:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def version(self) -> str:
+            return "4.3.0"
+
+        def inspect(self, path: Path) -> MediaInfo:
+            del path
+            return MediaInfo(20.0, 1920, 1080, 1920, 1080, 0, 1)
+
+        def render(
+            self,
+            raw: RenderedClip,
+            clip: ClipTranscript,
+            *,
+            output_path: Path,
+            workspace: Path,
+            template: str | None,
+            template_dir: Path | None,
+        ) -> SubtitledClip:
+            del clip, template_dir
+            rank = raw.refined.rank
+            self.calls.append(rank)
+            if rank in failing_ranks:
+                raise RenderingError("synthetic subtitle failure")
+            workspace.mkdir(parents=True)
+            cues = workspace / "clip.cues.json"
+            srt = workspace / "clip.srt"
+            ass = workspace / "clip.ass"
+            for path in (cues, srt, ass):
+                path.write_bytes(b"subtitle")
+            output_path.write_bytes(b"final")
+            artifacts = SubtitleArtifacts(
+                cues, srt, ass, output_path, "4.3.0", template, template or "default"
+            )
+            return SubtitledClip(raw, output_path, 1920, 1080, 20.0, True, artifacts)
+
+    subtitle_renderer = FailingSubtitleRenderer()
+    renderer = FailingRenderer()
+    transcriber = FakeTranscriber(transcript)
+    result = run_pipeline(
+        config,
+        acquire=lambda _value, _workspace: source,
+        probe=lambda _value: media,
+        transcriber=transcriber,
+        candidate_generator=lambda *_args, **_kwargs: candidates,
+        candidate_evaluator=lambda *_args, **_kwargs: CandidateEvaluationBatch(
+            evaluations, evaluations
+        ),
+        renderer=renderer,
+        subtitle_renderer=subtitle_renderer if failure_stage == "final" else None,
+    )
+
+    assert result.outcome.value == expected_outcome
+    assert result.manifest_path.is_file()
+    assert len(result.clip_paths) == expected_completed
+    assert all(
+        path.is_file() and path.with_suffix(".json").is_file()
+        for path in result.clip_paths
+    )
+    assert len(transcriber.calls) == 1
+    assert sorted(renderer.calls) == [1, 2]
+    assert renderer.version_calls == 1
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert [item["status"] for item in manifest["clips"]].count(
+        "completed"
+    ) == expected_completed
+    assert [item["status"] for item in manifest["clips"]].count(
+        "failed"
+    ) == 2 - expected_completed
+    assert (
+        "final_render_failed" if failure_stage == "final" else "raw_render_failed"
+    ) in manifest["warnings"]
+    if failure_stage == "final":
+        assert sorted(subtitle_renderer.calls) == [1, 2]
+    assert result.warnings == tuple(manifest["warnings"])

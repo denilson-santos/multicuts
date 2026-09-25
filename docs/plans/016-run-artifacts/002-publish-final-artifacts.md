@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016.001 Define manifest and per-clip metadata contracts |
-| PR | — |
+| PR | [#43](https://github.com/denilson-santos/multicuts/pull/43) |
 
 ## Objective
 

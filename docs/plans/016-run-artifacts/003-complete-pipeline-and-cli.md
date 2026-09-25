@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 016.002 Collect and publish final artifacts safely |
 | PR | — |
@@ -14,9 +14,10 @@ zero-selection, partially completed, failed, and interrupted runs.
 
 ## Context and inputs
 
-The pipeline now publishes validated final clips and per-clip rendering
-provenance. This task adds the run manifest, explicit outcome policy, and CLI
-summary without replacing the readable synchronous flow.
+The pipeline publishes validated final clips and a run manifest. This task
+returns that published outcome to the CLI, records clip-level render failures,
+and adds an explicit outcome policy and summary without replacing the readable
+synchronous flow.
 
 ## Expected changes
 

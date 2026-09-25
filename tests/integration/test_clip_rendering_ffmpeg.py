@@ -452,7 +452,7 @@ def test_pipeline_publishes_final_clips_and_recovers_unfinished_run(
             candidate_generator=lambda *_args, **_kwargs: (candidate,),
             candidate_evaluator=lambda *_args, **_kwargs: batch,
             subtitle_renderer=subtitle_renderer,
-        )
+        ).clip_paths
 
     outputs = run()
 

@@ -21,7 +21,8 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.pipeline import run_pipeline
+from multicuts.final_artifacts import RunOutcome
+from multicuts.pipeline import RunResult, run_pipeline
 
 DEFAULT_OUTPUT_DIR = Path("multicuts-output")
 DEFAULT_CLIPS = 5
@@ -43,7 +44,7 @@ DEFAULT_SEMANTIC_REASONING_EFFORT = "max"
 DEFAULT_SEMANTIC_FALLBACK = "heuristic"
 
 
-PipelineRunner = Callable[[RunConfig], object]
+PipelineRunner = Callable[[RunConfig], RunResult]
 
 
 @dataclass
@@ -547,7 +548,19 @@ def main(
     stage = "run"
     try:
         runner = run_pipeline if pipeline is None else pipeline
-        runner(state.parsed_config)
+        result = runner(state.parsed_config)
+        if result.outcome is RunOutcome.INTERRUPTED:
+            logger.warning("Run interrupted; no completion summary was produced")
+            return 130
+        warnings = ", ".join(sorted(set(result.warnings))) or "none"
+        typer.echo(
+            f"Run {result.run_id}: {result.outcome.value}; "
+            f"completed clips={len(result.clip_paths)}; "
+            f"manifest={result.manifest_path}; warnings={warnings}"
+        )
+        if result.outcome in (RunOutcome.PARTIAL, RunOutcome.FAILED):
+            return EXIT_RENDERING
+        return EXIT_SUCCESS
     except KeyboardInterrupt:
         logger.warning("Run interrupted; no completion summary was produced")
         return 130
@@ -555,4 +568,3 @@ def main(
         return _log_project_error(error, verbose=verbose)
     except Exception as error:
         return _log_unexpected_error(error, stage=stage, verbose=verbose)
-    return EXIT_SUCCESS

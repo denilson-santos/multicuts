@@ -188,8 +188,11 @@ def collect_run_manifest(
         else "semantic_failure:unknown"
         for failure in scoring.failures
     )
-    if any(item.requires_rescore for item in refined):
-        warnings += ("refinement_requires_rescore",)
+    warnings += tuple(
+        item.warning
+        for item in references
+        if item.status is ClipOutcome.FAILED and item.warning is not None
+    )
     ffmpeg_versions = {item.renderer_version for item in raw_clips}
     if len(ffmpeg_versions) > 1:
         raise ArtifactError("Rendered clips disagree on FFmpeg version")
