@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 015.003 Generate and burn final-geometry subtitles |
-| PR | — |
+| PR | [#41](https://github.com/denilson-santos/multicuts/pull/41) |
 
 ## Objective
 
@@ -60,3 +60,8 @@ pyright
   manifest or per-clip metadata schema.
 - Cleanup hardening after interruption remains M4 work; completed-output safety
   is required here.
+
+PR #41 merged this task and its CI checks passed. Unit and integration coverage
+verified cache hits and template invalidation, subtitle-disabled publication,
+single-source transcription, and preservation of completed clips when a later
+clip fails.

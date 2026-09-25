@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 015.002 Establish the public `multisubs` subtitle-artifact contract; Package 014 Clip rendering |
-| PR | — |
+| PR | [#41](https://github.com/denilson-santos/multicuts/pull/41) |
 
 ## Objective
 
@@ -43,6 +43,10 @@ font, animation, and ASS-generation behavior.
 - Original and `9:16` outputs retain package 014 timing and geometry within
   explicit tolerances.
 - Provider implementation details do not escape `MultisubsAdapter`.
+
+PR #41 merged this task and its CI checks passed. Contract and media
+integration coverage verified the public timed-cue operation, hard subtitles,
+and preservation of the raw clip's final geometry and duration.
 
 ## Tests and validation
 
