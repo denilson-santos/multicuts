@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M3 — Media output |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 005 Multisubs transcription; 006 Transcript cache; 013 Boundary refinement; 014 Clip rendering |
 | Unlocks | Hard-subtitled final clips and subtitle provenance for package 016 |
-| PRs | [#39](https://github.com/denilson-santos/multicuts/pull/39), [#40](https://github.com/denilson-santos/multicuts/pull/40) |
+| PRs | [#39](https://github.com/denilson-santos/multicuts/pull/39), [#40](https://github.com/denilson-santos/multicuts/pull/40), [#41](https://github.com/denilson-santos/multicuts/pull/41) |
 
 ## Objective and expected outcome
 
@@ -70,14 +70,14 @@ imports and per-clip ASR remain forbidden.
 | --- | --- | --- | --- | --- | --- |
 | [001 Derive clip-local transcripts](001-derive-clip-transcripts.md) | completed | P1 | Packages 006, 013 | [#39](https://github.com/denilson-santos/multicuts/pull/39) | Source-derived clip timelines with traceable real timestamps |
 | [002 Establish the public `multisubs` subtitle-artifact contract](002-establish-multisubs-contract.md) | completed | P1 | 001; supported `multisubs` release/API | [#40](https://github.com/denilson-santos/multicuts/pull/40) | Public creation of styled subtitle artifacts without ASR |
-| [003 Generate and burn final-geometry subtitles](003-generate-and-burn-subtitles.md) | in-progress | P1 | 002; Package 014 | — | Valid hard-subtitled clips using provider templates and real timing |
-| [004 Persist provenance and integrate subtitle rendering](004-persist-and-integrate-subtitles.md) | in-progress | P1 | 003 | — | Cache-safe subtitle execution and final clip handoff |
+| [003 Generate and burn final-geometry subtitles](003-generate-and-burn-subtitles.md) | completed | P1 | 002; Package 014 | [#41](https://github.com/denilson-santos/multicuts/pull/41) | Valid hard-subtitled clips using provider templates and real timing |
+| [004 Persist provenance and integrate subtitle rendering](004-persist-and-integrate-subtitles.md) | completed | P1 | 003 | [#41](https://github.com/denilson-santos/multicuts/pull/41) | Cache-safe subtitle execution and final clip handoff |
 
 ## Suggested task sequence
 
-Tasks 001 and 002 are integrated. Tasks 003 and 004 are being delivered
-together: task 003 validates final-geometry subtitle burn-in, and task 004
-connects it to the pipeline with reusable artifacts and provenance.
+All tasks are integrated. PR #41 delivered final-geometry subtitle burn-in,
+cache-safe artifact reuse, provenance persistence, subtitle-disabled handoff,
+and pipeline publication for selected clips.
 
 ## Completion criteria
 
@@ -94,6 +94,13 @@ connects it to the pipeline with reusable artifacts and provenance.
 - Word animations/highlighting are used only with safe aligned word timing.
 - Failed burn-in publishes no partial final clip and does not destroy a valid
   raw intermediate.
+
+## Completion evidence
+
+PR #41 is merged and its CI checks passed. The delivered validation covers the
+public `multisubs` timed-cue contract, final-geometry FFmpeg/`multisubs`
+rendering, subtitle cache invalidation, subtitle-disabled runs, repeated
+transcription prevention, and mixed multi-clip failure cleanup.
 
 ## Risks, assumptions, and open questions
 

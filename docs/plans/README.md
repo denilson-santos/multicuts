@@ -11,8 +11,10 @@ subtitles by default, and publishes reusable final clip artifacts. The complete
 run manifest and outcome summary remain package 016 work.
 
 Packages 010–014 completed selection, semantic/hybrid scoring, boundary
-refinement, and raw clip rendering. Package 015 is active on subtitle generation
-and final clip persistence. M4 release hardening remains later work.
+refinement, and raw clip rendering. Package 015 completed source-derived
+subtitles, final-geometry hard-subtitle rendering, and final clip persistence.
+Package 016 is the remaining M3 completion work. M4 release hardening remains
+later work.
 
 ## Status and priority
 
@@ -55,12 +57,12 @@ completed and its package-level completion criteria pass.
 | [012 Semantic and hybrid scoring](012-semantic-hybrid-scoring/) | M2 | completed | P2 | 008, 009 | [#36](https://github.com/denilson-santos/multicuts/pull/36) | Validated provider judgments, explainable hybrid composition, and honest fallback provenance |
 | [013 Boundary refinement](013-boundary-refinement/) | M3 | completed | P1 | 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Clean source-bounded render intervals that preserve scored-content provenance |
 | [014 Clip rendering](014-clip-rendering/) | M3 | completed | P1 | 004, 013 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Safe accurate `original` and center-cropped `9:16` raw clips |
-| [015 Clip subtitles](015-clip-subtitles/) | M3 | in-progress | P1 | 005, 006, 013, 014 | [#39](https://github.com/denilson-santos/multicuts/pull/39) | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
-| [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | planned | P1 | 010, 011, 014, 015 | — | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
+| [015 Clip subtitles](015-clip-subtitles/) | M3 | completed | P1 | 005, 006, 013, 014 | [#39](https://github.com/denilson-santos/multicuts/pull/39), [#40](https://github.com/denilson-santos/multicuts/pull/40), [#41](https://github.com/denilson-santos/multicuts/pull/41) | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
+| [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | in-progress | P1 | 010, 011, 014, 015 | — | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
 
-Package 015.001 is integrated. The multisubs 4.3.0 public timed-cue JSON
-contract cleared the external blocker for task 015.002; subtitle-enabled M3
-completion still requires tasks 015.002–004.
+Package 015 tasks 001–004 are integrated through PR #41. The package now
+publishes validated hard-subtitled clips and reusable subtitle provenance;
+package 016 owns the complete run manifest and final outcome summary.
 
 ## Recommended execution order
 
@@ -74,15 +76,9 @@ The main dependency path is:
 010 -> 013 -> 014 -> 015 -> 016
 ```
 
-Packages 013–016 are the remaining critical path for the first complete local
-output and should execute in order. Package 012 proceeds independently with the
-recorded OpenAI decision; ranking and rendering do not depend on it because they
-consume the project-owned score contract and the heuristic path remains valid.
-
-Within M3, task 015.002 can proceed against multisubs 4.3.0, followed by
-015.003–004. Parts of package 016 that define schemas and source-safe
-provenance may proceed independently, but package 016 cannot complete without
-package 015.
+Packages 012–015 are complete. Package 016 is the remaining M3 work for a
+traceable complete local run. Its schema task begins first, followed by safe
+artifact publication, CLI outcome mapping, and end-to-end acceptance.
 
 ## Global implementation constraints
 

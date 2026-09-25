@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | Packages 010 Ranking and selection; 014 Clip rendering; Task 015.001 Derive clip-local transcripts |
 | PR | — |
@@ -43,6 +43,38 @@ original candidate, refined render, and clip-local time domains.
 - Title/summary derivation or dependency is decided and testable before the
   schema is considered complete.
 - No raw SDK/yt-dlp/FFmpeg payload or secret-bearing value enters the schema.
+
+## Schema decisions
+
+Schema version 1 is represented by project-owned values in
+src/multicuts/final_artifacts.py. Both final JSON documents carry
+schema_version=1; readers reject unknown versions and incompatible fields.
+Serialization uses JSON values, finite numbers, string enum values, and
+workspace-relative POSIX artifact paths.
+
+| Artifact field | Typed source and time domain |
+| --- | --- |
+| Manifest run_id, created_at, outcome | Final run identity, timezone-aware creation time, and explicit outcome |
+| Manifest source, source_fingerprint | Normalized AcquiredSource, with local fingerprint reference or canonical YouTube video URL |
+| Manifest config, versions | Safe RunConfig snapshot and observed tool/package versions |
+| Manifest transcription, candidate_generation, scoring, selection | Actual normalized stage summaries; score counts distinguish heuristic, hybrid, and fallback outputs |
+| Manifest clips, timings, warnings | Published or failed clip references, observed stage durations, and safe warning codes |
+| Clip id, rank, source_start/end | SelectedCandidate candidate ID, rank, and original scored source interval |
+| Clip render_start/end, duration | RefinedSelection source interval and measured rendered media duration |
+| Clip candidate_text, title, summary | Scored candidate text; title is its first sentence, capped at 80 characters, and summary is a whitespace-normalized excerpt capped at 280 characters |
+| Clip transcript | Source-derived clip-local transcript for the refined render interval; it may be empty for a silent unsubtitled clip |
+| Clip score, confidence, dimension_scores, penalties, reason | ScoreResult; the numeric score and provider provenance remain in the nested score record, with the listed details repeated as consistent top-level fields |
+| Clip checklist | CandidateEvaluation.checklist |
+| Clip render_config, output_path | Final clip geometry and observed subtitle template provenance; relative output path |
+
+Title and summary are deterministic text excerpts, not generated editorial claims.
+The subtitle-disabled render state has null template provenance. Provider/model
+fields are present only for scores that actually used the semantic provider;
+heuristic fallback scores retain null provider/model fields. Local paths and
+user-provided URL query strings do not enter source references.
+
+Task 002 will construct and publish these values from stage results. Task 003
+will map outcome values to CLI behavior and exit codes.
 
 ## Tests and validation
 
