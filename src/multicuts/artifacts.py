@@ -3,13 +3,21 @@
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from hashlib import sha256
-from math import isfinite
+from math import isclose, isfinite
 from pathlib import Path
 from typing import NoReturn, cast
 
-from multicuts.errors import ArtifactError
+from multicuts.errors import ArtifactError, MediaError, RenderingError
+from multicuts.final_artifacts import (
+    ClipMetadata,
+    ClipOutcome,
+    RunManifest,
+    read_clip_metadata_payload,
+    read_manifest_payload,
+)
 from multicuts.models import (
     AcquiredSource,
     Candidate,
@@ -18,6 +26,7 @@ from multicuts.models import (
     CandidateFeatures,
     ChecklistOutcome,
     ChecklistResult,
+    MediaInfo,
     Transcript,
     TranscriptSegment,
     Word,
@@ -54,6 +63,142 @@ class WorkspacePaths:
     raw_clips: Path
     rendering: Path
     work: Path
+
+
+def _final_path(paths: WorkspacePaths, relative: str) -> Path:
+    """Resolve a declared final path inside this run, including symlink parents."""
+    target = paths.root / relative
+    try:
+        root = paths.root.resolve(strict=True)
+        if not target.resolve(strict=False).is_relative_to(root):
+            raise ArtifactError("Final artifact path escapes the run workspace")
+    except (OSError, RuntimeError) as exc:
+        raise ArtifactError("Could not validate final artifact path") from exc
+    return target
+
+
+def _completed_file(path: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _publish_final_json(paths: WorkspacePaths, target: Path, payload: object) -> None:
+    """Serialize privately, then link atomically without replacing an output."""
+    temporary: Path | None = None
+    try:
+        root = paths.root.resolve(strict=True)
+        if not paths.work.resolve(strict=True).is_relative_to(root):
+            raise ArtifactError("Private work area escapes the run workspace")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.parent.resolve(strict=True).is_relative_to(root):
+            raise ArtifactError("Final artifact path escapes the run workspace")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix="final-",
+            suffix=".tmp",
+            dir=paths.work,
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(
+                payload,
+                stream,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+                allow_nan=False,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, target)
+    except FileExistsError as exc:
+        raise ArtifactError(
+            "Final artifact already exists; refusing to overwrite"
+        ) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise ArtifactError("Could not publish final artifact") from exc
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def publish_clip_metadata(
+    paths: WorkspacePaths,
+    clip: ClipMetadata,
+    *,
+    inspect: Callable[[Path], MediaInfo],
+) -> Path:
+    """Publish a clip record only after its final media is present."""
+    if os.path.lexists(paths.manifest):
+        raise ArtifactError("Completed output already exists; refusing to overwrite")
+    video = _final_path(paths, clip.output_path)
+    if video.parent != paths.root / "clips" or video.suffix != ".mp4":
+        raise ArtifactError("Final clip must use the run clips directory")
+    if not _completed_file(video):
+        raise ArtifactError("Final clip media is missing or incomplete")
+    try:
+        media = inspect(video)
+    except (MediaError, RenderingError, OSError) as exc:
+        raise ArtifactError("Could not validate final clip media") from exc
+    if (media.presentation_width, media.presentation_height) != (
+        clip.render_config.width,
+        clip.render_config.height,
+    ) or not isclose(media.duration, clip.duration, rel_tol=0, abs_tol=0.001):
+        raise ArtifactError("Final clip media does not match metadata")
+    target = video.with_suffix(".json")
+    try:
+        payload = clip.to_payload()
+        read_clip_metadata_payload(payload)
+    except (TypeError, ValueError) as exc:
+        raise ArtifactError("Final clip metadata is invalid") from exc
+    _publish_final_json(paths, target, payload)
+    return target
+
+
+def publish_run_manifest(paths: WorkspacePaths, manifest: RunManifest) -> Path:
+    """Publish the final run record only after every completed clip is valid."""
+    for reference in manifest.clips:
+        if reference.status is not ClipOutcome.COMPLETED:
+            continue
+        if reference.metadata_path is None or reference.output_path is None:
+            raise ArtifactError("Completed clip reference has no artifact paths")
+        metadata_path = _final_path(paths, reference.metadata_path)
+        video_path = _final_path(paths, reference.output_path)
+        if (
+            video_path.parent != paths.root / "clips"
+            or video_path.suffix != ".mp4"
+            or metadata_path != video_path.with_suffix(".json")
+            or not _completed_file(metadata_path)
+            or not _completed_file(video_path)
+        ):
+            raise ArtifactError("Completed clip artifacts are missing or incomplete")
+        try:
+            clip = read_clip_metadata_payload(
+                json.loads(metadata_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ArtifactError("Completed clip metadata is invalid") from exc
+        if (
+            clip.id != reference.id
+            or clip.rank != reference.rank
+            or clip.output_path != reference.output_path
+        ):
+            raise ArtifactError("Completed clip reference does not match metadata")
+    try:
+        payload = manifest.to_payload()
+        read_manifest_payload(payload)
+    except (TypeError, ValueError) as exc:
+        raise ArtifactError("Final run manifest is invalid") from exc
+    _publish_final_json(paths, paths.manifest, payload)
+    return paths.manifest
 
 
 def transcription_cache_key(

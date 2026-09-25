@@ -61,6 +61,11 @@ def _template_directory_identity(template_dir: Path | None) -> dict[str, str | N
     return {"path": str(root), "sha256": digest.hexdigest()}
 
 
+def template_directory_sha256(template_dir: Path | None) -> str | None:
+    """Return the same content identity used by subtitle cache validation."""
+    return _template_directory_identity(template_dir)["sha256"]
+
+
 def subtitle_cache_key(
     raw: RenderedClip,
     clip: ClipTranscript | None,

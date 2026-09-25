@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from multicuts.artifacts import WorkspacePaths
 from multicuts.final_artifacts import (
     FINAL_ARTIFACT_SCHEMA_VERSION,
     ClipMetadata,
@@ -30,6 +31,7 @@ from multicuts.models import (
     AcquiredSource,
     ChecklistOutcome,
     ChecklistResult,
+    MediaInfo,
     ScoreDimension,
     ScorePenalty,
     ScoreResult,
@@ -73,7 +75,6 @@ def _clip() -> ClipMetadata:
             subtitles_enabled=True,
             template_requested="default",
             template_resolved="default",
-            template_source="builtin",
             multisubs_version="4.3.0",
         ),
         output_path="clips/001-candidate-1.mp4",
@@ -154,6 +155,12 @@ def test_clip_metadata_round_trip_preserves_score_and_time_domains() -> None:
     assert payload["score"]["scorer"] == "heuristic-fallback"
     assert payload["score"]["provider"] is None
     assert payload["confidence"] == 0.8
+    assert "template_source" not in payload["render_config"]
+
+    stale_source = copy.deepcopy(payload)
+    stale_source["render_config"]["template_source"] = "builtin"
+    with pytest.raises(ValueError, match="incompatible fields"):
+        read_clip_metadata_payload(stale_source)
 
     stale = copy.deepcopy(payload)
     stale["schema_version"] = 0
@@ -271,8 +278,171 @@ def test_clip_text_keeps_scored_and_rendered_domains_separate() -> None:
             subtitles_enabled=False,
             template_requested=None,
             template_resolved=None,
-            template_source=None,
             multisubs_version=None,
         ),
     )
     assert read_clip_metadata_payload(silent.to_payload()) == silent
+
+
+def _inspect_media(_path: Path) -> MediaInfo:
+    return MediaInfo(14.4, 1080, 1920, 1080, 1920, 0, 1)
+
+
+def _workspace(tmp_path: Path) -> tuple[WorkspacePaths, Path]:
+    from multicuts.artifacts import prepare_workspace
+
+    source = AcquiredSource(Path("source.mp4"), "fingerprint")
+    paths = prepare_workspace(tmp_path, source, cache_key="sha256-v1:cache")
+    video = paths.root / _clip().output_path
+    video.write_bytes(b"validated media")
+    return paths, video
+
+
+def test_publish_clip_metadata_requires_media_and_never_replaces_existing(
+    tmp_path: Path,
+) -> None:
+    from multicuts.artifacts import publish_clip_metadata
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+    video.unlink()
+    with pytest.raises(ArtifactError, match="missing or incomplete"):
+        publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    video.write_bytes(b"validated media")
+
+    metadata = publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    original = metadata.read_bytes()
+    assert read_clip_metadata_payload(json.loads(original)) == _clip()
+    assert list(paths.work.iterdir()) == []
+    with pytest.raises(ArtifactError, match="already exists"):
+        publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    assert metadata.read_bytes() == original
+
+
+@pytest.mark.parametrize("failure", ["serialization", "publication"])
+def test_clip_metadata_failure_preserves_media_and_cleans_private_temporary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from multicuts.artifacts import publish_clip_metadata
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+    if failure == "serialization":
+
+        def fail_dump(*_args: object, **_kwargs: object) -> None:
+            raise TypeError("injected serialization failure")
+
+        monkeypatch.setattr("multicuts.artifacts.json.dump", fail_dump)
+    else:
+
+        def fail_link(_source: Path, _target: Path) -> None:
+            raise OSError("injected publication failure")
+
+        monkeypatch.setattr("multicuts.artifacts.os.link", fail_link)
+
+    with pytest.raises(ArtifactError, match="Could not publish"):
+        publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    assert video.read_bytes() == b"validated media"
+    assert not video.with_suffix(".json").exists()
+    assert list(paths.work.iterdir()) == []
+
+
+def test_clip_publication_rejects_unvalidated_media(
+    tmp_path: Path,
+) -> None:
+    from multicuts.artifacts import publish_clip_metadata
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+
+    def wrong_geometry(_path: Path) -> MediaInfo:
+        return MediaInfo(14.4, 1920, 1080, 1920, 1080, 0, 1)
+
+    with pytest.raises(ArtifactError, match="does not match metadata"):
+        publish_clip_metadata(paths, _clip(), inspect=wrong_geometry)
+    assert not video.with_suffix(".json").exists()
+
+
+def test_manifest_publishes_last_and_rejects_missing_or_mismatched_clip(
+    tmp_path: Path,
+) -> None:
+    from multicuts.artifacts import publish_clip_metadata, publish_run_manifest
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+    with pytest.raises(ArtifactError, match="missing or incomplete"):
+        publish_run_manifest(paths, _manifest())
+    assert not paths.manifest.exists()
+
+    publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    wrong = replace(
+        _manifest(),
+        clips=(replace(_manifest().clips[0], id="another-candidate"),),
+    )
+    with pytest.raises(ArtifactError, match="does not match metadata"):
+        publish_run_manifest(paths, wrong)
+    assert not paths.manifest.exists()
+
+    manifest = publish_run_manifest(paths, _manifest())
+    original = manifest.read_bytes()
+    assert read_manifest_payload(json.loads(original)) == _manifest()
+    assert video.is_file()
+    assert list(paths.work.iterdir()) == []
+    with pytest.raises(ArtifactError, match="already exists"):
+        publish_run_manifest(paths, _manifest())
+    assert manifest.read_bytes() == original
+
+
+@pytest.mark.parametrize("failure", ["serialization", "publication"])
+def test_manifest_publication_failure_preserves_completed_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from multicuts.artifacts import publish_clip_metadata, publish_run_manifest
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+    metadata = publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    original = metadata.read_bytes()
+
+    if failure == "serialization":
+
+        def fail_dump(*_args: object, **_kwargs: object) -> None:
+            raise TypeError("injected manifest serialization failure")
+
+        monkeypatch.setattr("multicuts.artifacts.json.dump", fail_dump)
+    else:
+
+        def fail_link(_source: Path, _target: Path) -> None:
+            raise OSError("injected manifest publication failure")
+
+        monkeypatch.setattr("multicuts.artifacts.os.link", fail_link)
+    with pytest.raises(ArtifactError, match="Could not publish"):
+        publish_run_manifest(paths, _manifest())
+    assert not paths.manifest.exists()
+    assert metadata.read_bytes() == original
+    assert video.is_file()
+    assert list(paths.work.iterdir()) == []
+
+
+def test_clip_publication_rejects_symlinked_output_directory(tmp_path: Path) -> None:
+    from multicuts.artifacts import publish_clip_metadata
+    from multicuts.errors import ArtifactError
+
+    paths, video = _workspace(tmp_path)
+    video.unlink()
+    paths.raw_clips.rmdir()
+    clips_dir = paths.root / "clips"
+    clips_dir.rmdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_video = outside / video.name
+    outside_video.write_bytes(b"private media")
+    try:
+        clips_dir.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("filesystem does not permit directory symlinks")
+
+    with pytest.raises(ArtifactError, match="escapes"):
+        publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    assert outside_video.read_bytes() == b"private media"
+    assert not outside_video.with_suffix(".json").exists()

@@ -5,7 +5,9 @@ import os
 import secrets
 import shutil
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -16,6 +18,8 @@ from multicuts.artifacts import (
     InvalidTranscriptArtifactError,
     candidate_evaluation_cache_key,
     prepare_workspace,
+    publish_clip_metadata,
+    publish_run_manifest,
     read_candidate_evaluation,
     read_transcript,
     transcription_cache_key,
@@ -51,6 +55,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
+from multicuts.final_artifacts import ClipOutcome, ClipReference, StageTiming
 from multicuts.media import probe_media
 from multicuts.models import (
     AcquiredSource,
@@ -88,6 +93,7 @@ from multicuts.rendering.subtitle_artifacts import (
     write_final_clip_metadata,
 )
 from multicuts.rendering.subtitles import SubtitledClip, SubtitleRenderer
+from multicuts.run_artifacts import collect_clip_metadata, collect_run_manifest
 from multicuts.scoring.artifacts import (
     InvalidScoringArtifactError,
     read_scores,
@@ -727,13 +733,20 @@ def run_pipeline(
     subtitle_renderer: SubtitleRenderProvider | None = None,
 ) -> tuple[Path, ...]:
     """Run all synchronous stages and return paths to the validated final clips."""
+    run_id = secrets.token_hex(16)
+    created_at = datetime.now(timezone.utc).isoformat()
+    timings: list[StageTiming] = []
     source_origin = _source_origin(config.source)
     logger.info("stage=acquire origin=%s", source_origin)
+    started = perf_counter()
     workspace = prepare_acquisition_workspace(config.output_dir)
     source = acquire(config.source, workspace)
+    timings.append(StageTiming("acquisition", perf_counter() - started))
     logger.info("stage=acquire complete origin=%s", source_origin)
     logger.info("stage=probe origin=%s", source_origin)
+    started = perf_counter()
     media = probe(source)
+    timings.append(StageTiming("media_probe", perf_counter() - started))
     logger.info(
         "stage=probe complete origin=%s duration=%.3f geometry=%dx%d",
         source_origin,
@@ -741,20 +754,25 @@ def run_pipeline(
         media.presentation_width,
         media.presentation_height,
     )
+    started = perf_counter()
     transcript = load_or_transcribe(
         config,
         source,
         provider=transcriber if transcriber is not None else MultisubsAdapter(),
     )
+    timings.append(StageTiming("transcription", perf_counter() - started))
     logger.info("stage=candidates")
+    started = perf_counter()
     candidates = candidate_generator(
         transcript,
         source_fingerprint=source.fingerprint,
         min_duration=config.min_duration,
         max_duration=config.max_duration,
     )
+    timings.append(StageTiming("candidate_generation", perf_counter() - started))
     logger.info("stage=candidates complete count=%d", len(candidates))
     logger.info("stage=evaluate")
+    started = perf_counter()
     evaluation = load_or_evaluate_candidates(
         config,
         source,
@@ -762,6 +780,7 @@ def run_pipeline(
         candidates,
         evaluator=candidate_evaluator,
     )
+    timings.append(StageTiming("candidate_evaluation", perf_counter() - started))
     hard_failed = sum(item.hard_failed for item in evaluation.evaluations)
     logger.info(
         "stage=evaluate complete generated=%d hard_failed=%d shortlisted=%d",
@@ -769,6 +788,7 @@ def run_pipeline(
         hard_failed,
         len(evaluation.shortlist_ids),
     )
+    started = perf_counter()
     scoring = load_or_score_candidates(
         config,
         source,
@@ -777,12 +797,14 @@ def run_pipeline(
         scorer=heuristic_scorer,
         semantic_scorer=semantic_scorer,
     )
+    timings.append(StageTiming("scoring", perf_counter() - started))
     scores = scoring.scores
     logger.info(
         "stage=score complete count=%d failures=%d",
         len(scores),
         len(scoring.failures),
     )
+    started = perf_counter()
     selection = load_or_select_candidates(
         config,
         source,
@@ -790,6 +812,7 @@ def run_pipeline(
         evaluation,
         scores,
     )
+    timings.append(StageTiming("selection", perf_counter() - started))
     suppressed = sum(
         decision.status
         in (SelectionStatus.TEMPORAL_OVERLAP, SelectionStatus.TEXT_REDUNDANCY)
@@ -812,7 +835,9 @@ def run_pipeline(
             selected.candidate_id,
             selected.result.score,
         )
+    started = perf_counter()
     refined = load_or_refine_selection(config, source, media, transcript, selection)
+    timings.append(StageTiming("refinement", perf_counter() - started))
     requires_rescore = sum(item.requires_rescore for item in refined)
     logger.info(
         "stage=refine complete selected=%d requires_rescore=%d",
@@ -828,6 +853,7 @@ def run_pipeline(
             item.requires_rescore,
         )
     render_backend = renderer if renderer is not None else FfmpegRenderer()
+    started = perf_counter()
     raw_clips = load_or_render_selection(
         config,
         source,
@@ -836,6 +862,8 @@ def run_pipeline(
         refined,
         renderer=render_backend,
     )
+    timings.append(StageTiming("raw_rendering", perf_counter() - started))
+    started = perf_counter()
     final_clips = load_or_publish_final_clips(
         config,
         source,
@@ -844,6 +872,68 @@ def run_pipeline(
         renderer=render_backend,
         subtitle_renderer=subtitle_renderer,
     )
+    timings.append(StageTiming("final_rendering", perf_counter() - started))
+    transcription_key = transcription_cache_key(
+        source_fingerprint=source.fingerprint,
+        provider=TRANSCRIPTION_PROVIDER,
+        provider_version=transcript.provider_version,
+        model=config.model,
+        language=config.language,
+    )
+    paths = prepare_workspace(config.output_dir, source, cache_key=transcription_key)
+    if len(raw_clips) != len(final_clips):
+        raise ArtifactError("Final clip count does not match validated renders")
+    inspect = (
+        (
+            subtitle_renderer if subtitle_renderer is not None else SubtitleRenderer()
+        ).inspect
+        if config.subtitles_enabled and raw_clips
+        else render_backend.inspect
+    )
+    references: list[ClipReference] = []
+    for raw, final_path in zip(raw_clips, final_clips, strict=True):
+        clip_record = collect_clip_metadata(
+            paths, config, transcript, raw, final_path, inspect=inspect
+        )
+        metadata_path = publish_clip_metadata(paths, clip_record, inspect=inspect)
+        references.append(
+            ClipReference(
+                id=clip_record.id,
+                rank=clip_record.rank,
+                status=ClipOutcome.COMPLETED,
+                metadata_path=metadata_path.relative_to(paths.root).as_posix(),
+                output_path=clip_record.output_path,
+            )
+        )
+    for item in refined:
+        if item.requires_rescore:
+            references.append(
+                ClipReference(
+                    id=item.candidate_id,
+                    rank=item.rank,
+                    status=ClipOutcome.FAILED,
+                    metadata_path=None,
+                    output_path=None,
+                    warning="refinement_requires_rescore",
+                )
+            )
+    references.sort(key=lambda item: item.rank)
+    manifest = collect_run_manifest(
+        config,
+        source,
+        transcript,
+        evaluation,
+        len(candidates),
+        scoring,
+        selection,
+        refined,
+        raw_clips,
+        tuple(references),
+        tuple(timings),
+        run_id=run_id,
+        created_at=created_at,
+    )
+    publish_run_manifest(paths, manifest)
     logger.info("stage=run complete clips=%d", len(final_clips))
     return final_clips
 

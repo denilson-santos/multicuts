@@ -632,6 +632,7 @@ multicuts-output/
     ├── clips/
     │   ├── raw/<render-id>.mp4
     │   ├── <rank>-<clip-id>.mp4
+    │   ├── <rank>-<clip-id>.json
     │   └── ...
     ├── rendering/
     │   └── subtitles/<clip-id>.{json,srt,ass,cues.json}

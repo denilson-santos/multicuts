@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -172,6 +173,12 @@ def test_pipeline_runs_acquisition_before_media_probe(
     assert len(transcriber.calls) == 1
     assert transcriber.calls[0][:3] == (source.local_path, None, "default")
     assert (config.output_dir).is_dir()
+    manifest = json.loads(
+        next(config.output_dir.rglob("manifest.json")).read_text(encoding="utf-8")
+    )
+    assert manifest["outcome"] == "zero_selection"
+    assert manifest["clips"] == []
+    assert manifest["candidate_generation"]["count"] == 0
     assert list(config.output_dir.rglob("refinement.json")) == []
 
 
@@ -282,7 +289,7 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
         generated.append(transcript)
         return ()
 
-    for _ in range(2):
+    for attempt in range(2):
         run_pipeline(
             config,
             acquire=lambda _value, _workspace: source,
@@ -290,6 +297,9 @@ def test_pipeline_reuses_persisted_transcript_without_new_asr(
             transcriber=transcriber,
             candidate_generator=generate,
         )
+        if attempt == 0:
+            # Simulate an unfinished run whose stage cache remains reusable.
+            next(config.output_dir.rglob("manifest.json")).unlink()
 
     assert len(transcriber.calls) == 1
     assert generated == [transcript, transcript]
@@ -344,6 +354,8 @@ def test_pipeline_reuses_same_content_after_source_rename(
             probe=lambda _value: media,
             transcriber=transcriber,
         )
+        if source is first:
+            next(config.output_dir.rglob("manifest.json")).unlink()
 
     assert len(transcriber.calls) == 1
 
@@ -366,6 +378,7 @@ def test_pipeline_invalid_cache_is_recomputed(
     run()
     artifact = next(config.output_dir.rglob("transcript.json"))
     artifact.write_text("{incomplete", encoding="utf-8")
+    next(config.output_dir.rglob("manifest.json")).unlink()
     run()
 
     assert len(transcriber.calls) == 2
@@ -405,12 +418,12 @@ def test_pipeline_force_recompute_bypasses_cache_but_not_completed_output(
             probe=lambda _value: media,
             transcriber=transcriber,
         )
+        if run_config is config:
+            next(config.output_dir.rglob("manifest.json")).unlink()
     assert len(transcriber.calls) == 2
 
-    manifest = (
-        next(config.output_dir.rglob("transcript.json")).parent.parent / "manifest.json"
-    )
-    manifest.write_text("{}", encoding="utf-8")
+    manifest = next(config.output_dir.rglob("manifest.json"))
+    assert manifest.is_file()
     with pytest.raises(ArtifactError, match="Completed output already exists"):
         run_pipeline(
             forced,
@@ -442,6 +455,8 @@ def test_pipeline_ignores_non_transcription_config_for_cache(
             probe=lambda _value: media,
             transcriber=transcriber,
         )
+        if run_config is config:
+            next(config.output_dir.rglob("manifest.json")).unlink()
 
     assert len(transcriber.calls) == 1
 
@@ -457,6 +472,13 @@ def test_pipeline_allows_hybrid_mode_without_credentials_when_shortlist_is_empty
         probe=lambda _value: media,
         transcriber=FakeTranscriber(transcript),
     )
+    manifest = json.loads(
+        next(config.output_dir.rglob("manifest.json")).read_text(encoding="utf-8")
+    )
+    assert manifest["scoring"]["configured_mode"] == "hybrid"
+    assert manifest["scoring"]["count"] == 0
+    assert manifest["scoring"]["provider"] is None
+    assert manifest["scoring"]["model"] is None
 
 
 def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
@@ -525,6 +547,18 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     assert len(first_outputs) == 1
     assert first_outputs[0].is_file()
     assert subtitle_renderer.calls == 1
+    manifest = next(config.output_dir.rglob("manifest.json"))
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    clip_payload = json.loads(
+        first_outputs[0].with_suffix(".json").read_text(encoding="utf-8")
+    )
+    assert manifest_payload["outcome"] == "completed"
+    assert manifest_payload["clips"][0]["output_path"] == clip_payload["output_path"]
+    assert manifest_payload["source"]["reference"] == "local:sha256-v1:abc"
+    assert clip_payload["source_end"] == 30.0
+    assert clip_payload["render_end"] == 30.25
+    assert clip_payload["render_config"]["template_resolved"] == "yellow-pop"
+    assert all(item["duration_seconds"] >= 0 for item in manifest_payload["timings"])
     score_path = next(config.output_dir.rglob("scores.json"))
     assert '"candidate_id": "candidate-v1:one"' in score_path.read_text(
         encoding="utf-8"
@@ -544,6 +578,8 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
         raise AssertionError("matching refinement artifact should be reused")
 
     monkeypatch.setattr("multicuts.pipeline.refine_selection", unexpected_refinement)
+    next(config.output_dir.rglob("manifest.json")).unlink()
+    first_outputs[0].with_suffix(".json").unlink()
     run_pipeline(
         config,
         acquire=lambda _value, _workspace: source,
@@ -557,6 +593,7 @@ def test_pipeline_selects_scored_shortlist_before_boundary_refinement(
     assert subtitle_renderer.calls == 1
     assert renderer.render_calls == 1
 
+    next(config.output_dir.rglob("manifest.json")).unlink()
     changed_template = replace(config, subtitle_template="different-template")
     run_pipeline(
         changed_template,

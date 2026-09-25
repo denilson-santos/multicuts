@@ -8,6 +8,7 @@ import pytest
 
 from multicuts.candidates.refinement import REFINE_VERSION
 from multicuts.config import RunConfig
+from multicuts.errors import ArtifactError
 from multicuts.media import inspect_media_path
 from multicuts.models import (
     AcquiredSource,
@@ -331,7 +332,7 @@ def test_subtitle_rendering_preserves_final_geometry_and_burns_visible_text(
 
 
 @pytest.mark.parametrize("subtitles_enabled", [True, False])
-def test_pipeline_publishes_final_clips_and_reuses_them_without_asr(
+def test_pipeline_publishes_final_clips_and_recovers_unfinished_run(
     tmp_path: Path, subtitles_enabled: bool
 ) -> None:
     if not _tools_available():
@@ -471,6 +472,15 @@ def test_pipeline_publishes_final_clips_and_reuses_them_without_asr(
     else:
         assert subtitles == []
 
+    manifest = next((tmp_path / "output").rglob("manifest.json"))
+    assert manifest.is_file()
+    assert outputs[0].with_suffix(".json").is_file()
+    with pytest.raises(ArtifactError, match="Completed output already exists"):
+        run()
+
+    # A retry before final publication can reuse the stage media and transcript.
+    manifest.unlink()
+    outputs[0].with_suffix(".json").unlink()
     assert run() == outputs
     assert transcriber.calls == 1
     assert subtitle_renderer.calls == (1 if subtitles_enabled else 0)
