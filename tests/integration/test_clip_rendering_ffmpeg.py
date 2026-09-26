@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,11 @@ import pytest
 from multicuts.candidates.refinement import REFINE_VERSION
 from multicuts.config import RunConfig
 from multicuts.errors import ArtifactError
+from multicuts.final_artifacts import (
+    RunOutcome,
+    read_clip_metadata_payload,
+    read_manifest_payload,
+)
 from multicuts.media import inspect_media_path
 from multicuts.models import (
     AcquiredSource,
@@ -472,15 +478,30 @@ def test_pipeline_publishes_final_clips_and_recovers_unfinished_run(
     else:
         assert subtitles == []
 
-    manifest = next((tmp_path / "output").rglob("manifest.json"))
-    assert manifest.is_file()
-    assert outputs[0].with_suffix(".json").is_file()
+    manifest_path = next((tmp_path / "output").rglob("manifest.json"))
+    assert manifest_path.is_file()
+    manifest = read_manifest_payload(
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+    )
+    clip_path = outputs[0].with_suffix(".json")
+    assert clip_path.is_file()
+    clip = read_clip_metadata_payload(json.loads(clip_path.read_text(encoding="utf-8")))
+    assert manifest.outcome is RunOutcome.COMPLETED
+    assert manifest.clips[0].output_path == clip.output_path
+    assert clip.score.score >= 0
+    assert clip.checklist
+    assert clip.duration == pytest.approx(final_media.duration, abs=0.25)
+    assert (clip.render_config.width, clip.render_config.height) == (480, 270)
+    assert clip.render_config.subtitles_enabled is subtitles_enabled
+    assert clip.render_config.template_resolved == (
+        "amber-word" if subtitles_enabled else None
+    )
     with pytest.raises(ArtifactError, match="Completed output already exists"):
         run()
 
     # A retry before final publication can reuse the stage media and transcript.
-    manifest.unlink()
-    outputs[0].with_suffix(".json").unlink()
+    manifest_path.unlink()
+    clip_path.unlink()
     assert run() == outputs
     assert transcriber.calls == 1
     assert subtitle_renderer.calls == (1 if subtitles_enabled else 0)
