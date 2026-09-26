@@ -723,14 +723,24 @@ def load_or_render_selection(
                 "Raw clip already exists; refusing to overwrite completed media"
             )
         logger.info("stage=render cache=miss rank=%d", item.rank)
-        result = backend.render(request)
         try:
+            result = backend.render(request)
             write_render(paths, request, result, metadata_path)
-        except Exception:
-            # The raw clip was just published, but without valid metadata it is
-            # incomplete as a reusable stage artifact.
-            if result.path == output_path:
-                output_path.unlink(missing_ok=True)
+        except BaseException:
+            # Rendering and metadata publication are separate steps; an
+            # interrupt between either pair must not leave a cache half intact.
+            for artifact, artifact_path in (
+                ("media", output_path),
+                ("metadata", metadata_path),
+            ):
+                try:
+                    artifact_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning(
+                        "stage=render cleanup=failed artifact=%s rank=%d",
+                        artifact,
+                        item.rank,
+                    )
             raise
         rendered.append(result)
     logger.info("stage=render complete count=%d", len(rendered))
