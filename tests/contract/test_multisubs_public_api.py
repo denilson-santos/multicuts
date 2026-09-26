@@ -2,6 +2,7 @@
 
 import importlib
 import inspect
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,15 +20,23 @@ def _installed_provider() -> ModuleType:
         raise
 
 
+def _assert_supported_provider_version(provider: ModuleType) -> None:
+    version = getattr(provider, "__version__", "")
+    parts = version.split(".") if isinstance(version, str) else []
+    assert len(parts) >= 2 and all(part.isdigit() for part in parts[:2]), (
+        "multisubs does not expose a numeric major/minor version"
+    )
+    assert parts[0] == "4" and int(parts[1]) >= 3, (
+        "multisubs 4.3 or newer is required by the consumed public contract"
+    )
+
+
 @pytest.mark.parametrize("language", [None, "pt"])
 def test_public_transcription_signature_and_version(language: str | None) -> None:
     provider = _installed_provider()
     generate = getattr(provider, "generate_transcriptions", None)
     assert callable(generate), "multisubs.generate_transcriptions is unavailable"
-    assert isinstance(getattr(provider, "__version__", None), str)
-    assert provider.__version__, "multisubs does not expose its version"
-    major, minor, *_ = provider.__version__.split(".")
-    assert major == "4" and int(minor) >= 1, "unsupported multisubs version"
+    _assert_supported_provider_version(provider)
 
     try:
         inspect.signature(generate).bind(
@@ -44,9 +53,7 @@ def test_public_transcription_signature_and_version(language: str | None) -> Non
 def test_multisubs_subtitle_timed_cue_json_signature_and_artifact_shape() -> None:
     """Pin the 4.3 contract consumed through the supported CLI boundary."""
     provider = _installed_provider()
-    version = getattr(provider, "__version__", "")
-    major, minor, *_ = version.split(".")
-    assert major == "4" and int(minor) >= 3, "multisubs 4.3 or newer is required"
+    _assert_supported_provider_version(provider)
 
     generate = getattr(provider, "generate_subtitles_from_json", None)
     assert callable(generate), "multisubs.generate_subtitles_from_json is unavailable"
@@ -78,5 +85,6 @@ def test_multisubs_subtitle_cli_options() -> None:
         check=False,
     )
     assert completed.returncode == 0, "multisubs CLI help failed"
+    help_text = re.sub(r"\x1b\[[0-9;]*m", "", completed.stdout)
     for option in ("--cues-json", "--template", "--template-dir"):
-        assert option in completed.stdout, f"multisubs CLI lacks {option}"
+        assert option in help_text, f"multisubs CLI lacks {option}"
