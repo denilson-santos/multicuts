@@ -290,3 +290,22 @@ def test_pipeline_render_stage_reuses_clip_and_respects_safe_selection(
             (request.refined,),
             renderer=renderer,
         )
+
+    # Forced work must preserve a surviving metadata checkpoint even if its
+    # video was lost before the retry.
+    output = first[0].path
+    metadata = output.parents[2] / "rendering" / f"{output.stem}.json"
+    original_metadata = metadata.read_bytes()
+    output.unlink()
+    with pytest.raises(ArtifactError, match="refusing to overwrite"):
+        load_or_render_selection(
+            replace(config, force_recompute=True),
+            request.source,
+            media,
+            transcript,
+            (request.refined,),
+            renderer=renderer,
+        )
+    assert metadata.read_bytes() == original_metadata
+    assert not output.exists()
+    assert len(renderer.rendered) == 1

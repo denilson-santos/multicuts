@@ -527,7 +527,32 @@ Persist transcript and scoring results as JSON so the pipeline can:
 
 ### 3. Restartable pipeline
 
-Expensive stages should be reusable when their relevant inputs and configuration have not changed.
+Rerun an unfinished invocation with the same source and output directory to reuse
+validated checkpoints. Transcript, candidate evaluation, scoring, selection,
+and refinement JSON are recomputed when absent, stale, or malformed. Permission
+and I/O failures stop the run with an artifact error; they do not trigger another
+ASR or scoring request.
+
+Evaluation records include a fingerprint of normalized transcript content,
+including word timing and confidence. Regenerating a damaged transcript with
+different content invalidates evaluation and dependent scores. Older evaluation
+records are recomputed without discarding a compatible source transcript.
+Scoring-only changes reuse transcription and deterministic features; geometry,
+subtitle templates (including custom file contents), and media-provider versions
+invalidate only their dependent rendering stages.
+
+When a run stopped after publishing clips but before `manifest.json`, compatible
+media, subtitle sidecars, and identical per-clip metadata can be reused without
+rewriting completed files. Media must pass validation against its checkpoint.
+Missing media, orphaned metadata, missing subtitle sidecars, or conflicting
+completed clip metadata require explicit recovery: preserve the affected files
+and choose another output directory, or inspect and move the affected artifact
+set aside before retrying. The CLI does not repair or delete these files.
+
+Any existing final `manifest.json` prevents reuse of that run directory, including
+a partial or failed outcome. `--force-recompute` bypasses stage cache reuse but
+does not authorize overwriting a manifest, existing media, or surviving media
+metadata. Use another output directory to recompute a concluded run.
 
 ### 4. Versioned scoring
 

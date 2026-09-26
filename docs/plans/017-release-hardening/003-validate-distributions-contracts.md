@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016 Run artifacts and end-to-end completion |
-| PR | — |
+| PR | [#48](https://github.com/denilson-santos/multicuts/pull/48) |
 
 ## Objective
 
@@ -68,3 +68,10 @@ skips and dependency-resolution blockers with the affected environment.
 Can run alongside tasks 001 and 002. Keep runtime recovery edits in those tasks
 and coordinate changes to shared README/CI files before delivery. Publishing,
 release tags, registry migration, and ASR-backend selection are out of scope.
+
+## Integration evidence
+
+PR #48 is integrated. Its Python 3.10 quality, Python 3.13 compatibility, and
+provisioned Python 3.10 contract jobs passed, including isolated distribution
+installation and provider/media checks. Optional live ASR and YouTube checks
+remain outside the default suite.

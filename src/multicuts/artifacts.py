@@ -35,7 +35,7 @@ from multicuts.models import (
 TRANSCRIPT_SCHEMA_VERSION = 1
 TRANSCRIPTION_STAGE_VERSION = 1
 TRANSCRIPTION_TASK = "transcribe"
-CANDIDATE_ARTIFACT_SCHEMA_VERSION = 1
+CANDIDATE_ARTIFACT_SCHEMA_VERSION = 2
 CANDIDATE_EVALUATION_STAGE_VERSION = 1
 CANDIDATE_EVALUATION_TASK = "candidate_evaluation"
 
@@ -80,8 +80,8 @@ def _final_path(paths: WorkspacePaths, relative: str) -> Path:
 def _completed_file(path: Path) -> bool:
     try:
         return not path.is_symlink() and path.is_file() and path.stat().st_size > 0
-    except OSError:
-        return False
+    except OSError as exc:
+        raise ArtifactError("Could not inspect completed artifact") from exc
 
 
 def _publish_final_json(paths: WorkspacePaths, target: Path, payload: object) -> None:
@@ -136,7 +136,7 @@ def publish_clip_metadata(
     *,
     inspect: Callable[[Path], MediaInfo],
 ) -> Path:
-    """Publish a clip record only after its final media is present."""
+    """Publish or reuse an identical clip record after validating final media."""
     if os.path.lexists(paths.manifest):
         raise ArtifactError("Completed output already exists; refusing to overwrite")
     video = _final_path(paths, clip.output_path)
@@ -159,6 +159,27 @@ def publish_clip_metadata(
         read_clip_metadata_payload(payload)
     except (TypeError, ValueError) as exc:
         raise ArtifactError("Final clip metadata is invalid") from exc
+    if target.is_symlink():
+        raise ArtifactError("Completed clip metadata must be a regular file")
+    try:
+        existing = read_clip_metadata_payload(
+            json.loads(target.read_text(encoding="utf-8"))
+        )
+    except FileNotFoundError:
+        pass
+    except (UnicodeError, ValueError) as exc:
+        raise ArtifactError(
+            "Completed clip metadata is invalid; choose another output directory"
+        ) from exc
+    except OSError as exc:
+        raise ArtifactError("Could not read completed clip metadata") from exc
+    else:
+        if existing != clip:
+            raise ArtifactError(
+                "Completed clip metadata conflicts with this run; "
+                "choose another output directory"
+            )
+        return target
     _publish_final_json(paths, target, payload)
     return target
 
@@ -233,9 +254,24 @@ def transcription_cache_key(
     return f"sha256-v1:{sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def transcript_content_fingerprint(transcript: Transcript) -> str:
+    """Identify normalized ASR content, including timings and confidence."""
+    # The reader normalizes integer-valued provider timestamps to floats.
+    normalized = _decode_transcript(asdict(transcript))
+    canonical = json.dumps(
+        asdict(normalized),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return f"sha256-v1:{sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
 def candidate_evaluation_cache_key(
     *,
     source_fingerprint: str,
+    transcript_fingerprint: str,
     candidate_generator_version: str,
     evaluation_version: str,
     min_duration: float,
@@ -247,6 +283,7 @@ def candidate_evaluation_cache_key(
         not isinstance(value, str) or not value.strip()
         for value in (
             source_fingerprint,
+            transcript_fingerprint,
             candidate_generator_version,
             evaluation_version,
         )
@@ -263,6 +300,7 @@ def candidate_evaluation_cache_key(
         raise ArtifactError("Candidate evaluation configuration is invalid")
     identity = {
         "source_fingerprint": source_fingerprint,
+        "transcript_fingerprint": transcript_fingerprint,
         "candidate_generator_version": candidate_generator_version,
         "evaluation_version": evaluation_version,
         "min_duration": min_duration,
@@ -778,6 +816,7 @@ def read_candidate_evaluation(
             "task",
             "cache_key",
             "source_fingerprint",
+            "transcript_fingerprint",
             "candidate_generator_version",
             "evaluation_version",
             "config",
@@ -816,6 +855,9 @@ def read_candidate_evaluation(
             source_fingerprint=_candidate_string(
                 root["source_fingerprint"], "source fingerprint"
             ),
+            transcript_fingerprint=_candidate_string(
+                root["transcript_fingerprint"], "transcript fingerprint"
+            ),
             candidate_generator_version=_candidate_string(
                 root["candidate_generator_version"],
                 "candidate generator version",
@@ -841,6 +883,7 @@ def read_candidate_evaluation(
     try:
         expected_key = candidate_evaluation_cache_key(
             source_fingerprint=artifact.source_fingerprint,
+            transcript_fingerprint=artifact.transcript_fingerprint,
             candidate_generator_version=artifact.candidate_generator_version,
             evaluation_version=artifact.evaluation_version,
             min_duration=artifact.min_duration,
@@ -918,6 +961,7 @@ def write_candidate_evaluation(
         raise ArtifactError("Candidate artifact already exists; refusing to overwrite")
     expected_key = candidate_evaluation_cache_key(
         source_fingerprint=artifact.source_fingerprint,
+        transcript_fingerprint=artifact.transcript_fingerprint,
         candidate_generator_version=artifact.candidate_generator_version,
         evaluation_version=artifact.evaluation_version,
         min_duration=artifact.min_duration,
@@ -934,6 +978,7 @@ def write_candidate_evaluation(
         "task": CANDIDATE_EVALUATION_TASK,
         "cache_key": cache_key,
         "source_fingerprint": artifact.source_fingerprint,
+        "transcript_fingerprint": artifact.transcript_fingerprint,
         "candidate_generator_version": artifact.candidate_generator_version,
         "evaluation_version": artifact.evaluation_version,
         "config": {

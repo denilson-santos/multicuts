@@ -666,6 +666,15 @@ task
 transcription schema/stage version
 ```
 
+### Candidate evaluation dependency
+
+Evaluation artifact schema 2 records a fingerprint of the complete normalized
+transcript, including text, segments, word timings, and confidence. Its cache key
+also includes the source, generator/evaluation versions, and evaluation options.
+Cached candidates must match the current generated candidates. Older evaluation
+schemas are recomputed; the transcription cache schema and scoring meaning are
+unchanged.
+
 ### Scoring cache key
 
 Must include at least:
@@ -693,6 +702,14 @@ renderer/provider versions
 Changing subtitle style must not invalidate transcription.
 
 Changing target geometry must not invalidate scoring.
+
+An unfinished run may reuse validated raw/final clip checkpoints and identical
+per-clip metadata before publishing its manifest. Existing clip metadata is read,
+validated against the newly collected record, and reused without replacement.
+Conflicting or incomplete media artifact sets require user-directed recovery;
+forced recomputation preserves them. An existing manifest always blocks reuse of
+that run directory. I/O failures remain artifact errors, distinct from absent or
+invalid derived JSON that can be recomputed.
 
 No generalized cache framework is needed; stage-specific metadata is easier to reason about.
 

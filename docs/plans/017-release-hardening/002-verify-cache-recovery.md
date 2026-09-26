@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 017.001 Harden interruption and cleanup |
 | PR | — |
@@ -69,3 +69,23 @@ stage versions only if the implementation changes their meaning.
 No generalized cache registry, global cache location, concurrent-writer
 support, or destructive cache repair command. Download retention and automatic
 resume of already concluded runs require separate product decisions.
+
+## Implementation evidence
+
+Active branch: `fix/017-002-cache-recovery`.
+
+- Evaluation schema 2 binds cached evidence to normalized transcript content and
+  checks current candidate membership before reuse.
+- Interrupted runs reuse identical completed clip records without rewriting them.
+- Forced work preserves surviving raw metadata; unreadable checkpoints raise
+  artifact errors and incomplete media sets require explicit recovery.
+- Hermetic acceptance covers interruption before the manifest and after one clip,
+  absent/malformed/stale stage JSON, I/O failures, incomplete media/sidecars,
+  source/configuration/provider invalidation, and completed-output protection.
+
+Local validation on Python 3.10.12 passed: Ruff format/check, Pyright,
+476 hermetic tests, and 9 real-media tests covering FFmpeg clips and public
+`multisubs` timed-cue rendering. Live ASR/YouTube checks were not run.
+
+Status remains `in-progress` until delivery review; completion requires integration
+and passing validation.

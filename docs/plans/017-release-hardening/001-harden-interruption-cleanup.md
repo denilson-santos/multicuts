@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016 Run artifacts and end-to-end completion |
-| PR | — |
+| PR | [#47](https://github.com/denilson-santos/multicuts/pull/47) |
 
 ## Objective
 
@@ -75,3 +75,10 @@ tests.
 No cleanup guarantee for uncatchable termination; no new background process
 supervisor, recursive cache purge, completed-download retention policy, or
 new resume command. Task 002 covers validation of surviving checkpoints.
+
+## Integration evidence
+
+PR #47 is integrated. Its Python 3.10 quality and Python 3.13 compatibility
+checks passed. The integrated raw-publication interruption tests cover rollback
+before/after metadata publication and preservation of the original interrupt
+when cleanup fails.
