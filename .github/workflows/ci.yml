@@ -78,9 +78,6 @@ jobs:
     name: Provisioned contracts (Python 3.10)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      DIST_CHECK_DIR: ${{ runner.temp }}/multicuts-distributions
-      PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -105,6 +102,8 @@ jobs:
           .venv/bin/python -m pip install "build>=1.2,<2" "pytest>=8,<9"
 
       - name: Build and smoke-test distributions outside the checkout
+        env:
+          DIST_CHECK_DIR: ${{ runner.temp }}/multicuts-distributions
         run: |
           .venv/bin/python scripts/verify_distributions.py \
             --project-root "$GITHUB_WORKSPACE" \
@@ -112,6 +111,9 @@ jobs:
             --python "$GITHUB_WORKSPACE/.venv/bin/python"
 
       - name: Install the built wheel with resolved dependencies
+        env:
+          DIST_CHECK_DIR: ${{ runner.temp }}/multicuts-distributions
+          PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
         run: |
           python -m venv "$PROVISIONED_VENV"
           wheel=$(find "$DIST_CHECK_DIR/source-dist" -maxdepth 1 -type f -name '*.whl' -print -quit)
@@ -120,6 +122,8 @@ jobs:
           "$PROVISIONED_VENV/bin/python" -m pip check
 
       - name: Require the provisioned multisubs contract
+        env:
+          PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
         run: |
           "$PROVISIONED_VENV/bin/python" - <<'PY'
           import importlib.metadata
@@ -144,6 +148,8 @@ jobs:
           PY
 
       - name: Run provisioned provider and media checks
+        env:
+          PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
         working-directory: ${{ github.workspace }}
         run: |
           unset PYTHONPATH
