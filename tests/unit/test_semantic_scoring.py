@@ -7,7 +7,7 @@ import pytest
 
 from multicuts.adapters.scoring import OpenAISemanticAdapter
 from multicuts.config import RunConfig
-from multicuts.errors import ScoringError
+from multicuts.errors import ArtifactError, ScoringError
 from multicuts.models import (
     SCORE_DIMENSIONS,
     AcquiredSource,
@@ -177,6 +177,7 @@ def _config(tmp_path: Path, *, fallback: str = "heuristic") -> RunConfig:
 def _artifact(source: AcquiredSource) -> CandidateEvaluationArtifact:
     return CandidateEvaluationArtifact(
         source_fingerprint=source.fingerprint,
+        transcript_fingerprint="sha256-v1:transcript",
         candidate_generator_version="1",
         evaluation_version="1",
         min_duration=15,
@@ -673,3 +674,38 @@ def test_hybrid_batch_requires_configured_fallback_for_each_failure() -> None:
 
     with pytest.raises(ValueError, match="each provider failure"):
         ScoringBatch(scores=(), failures=(failure,), provenance=provenance)
+
+
+@pytest.mark.parametrize("error_type", [PermissionError, OSError])
+def test_unreadable_score_cache_does_not_contact_semantic_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[OSError]
+) -> None:
+    source = AcquiredSource(Path("source.mp4"), "sha256-v1:semantic")
+    config = _config(tmp_path)
+    scorer = _FakeSemanticScorer(_judgment())
+    load_or_score_candidates(
+        config, source, _transcript(), _artifact(source), semantic_scorer=scorer
+    )
+    target = next(tmp_path.rglob("scores.json"))
+    original = target.read_bytes()
+    original_open = Path.open
+
+    def deny_read(path: Path, *args, **kwargs):
+        if path == target:
+            raise error_type("injected score cache I/O failure")
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", deny_read)
+        with pytest.raises(ArtifactError, match="Could not read the scoring") as error:
+            load_or_score_candidates(
+                config,
+                source,
+                _transcript(),
+                _artifact(source),
+                semantic_scorer=scorer,
+            )
+        assert isinstance(error.value.__cause__, error_type)
+
+    assert scorer.calls == 1
+    assert target.read_bytes() == original

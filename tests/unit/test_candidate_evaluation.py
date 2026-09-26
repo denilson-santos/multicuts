@@ -68,6 +68,7 @@ def _candidate(
 def _cache_key(**changes: object) -> str:
     values: dict[str, object] = {
         "source_fingerprint": "sha256-v1:source",
+        "transcript_fingerprint": "sha256-v1:transcript",
         "candidate_generator_version": "1",
         "evaluation_version": CANDIDATE_EVALUATION_VERSION,
         "min_duration": 15.0,
@@ -226,6 +227,7 @@ def test_candidate_artifact_round_trip_and_config_key_invalidation(
     )
     artifact = CandidateEvaluationArtifact(
         source_fingerprint="sha256-v1:source",
+        transcript_fingerprint="sha256-v1:transcript",
         candidate_generator_version="1",
         evaluation_version=CANDIDATE_EVALUATION_VERSION,
         min_duration=15.0,
@@ -263,6 +265,7 @@ def test_invalid_candidate_artifact_is_rejected(tmp_path: Path) -> None:
                 "task": "candidate_evaluation",
                 "cache_key": key,
                 "source_fingerprint": "sha256-v1:source",
+                "transcript_fingerprint": "sha256-v1:transcript",
                 "candidate_generator_version": "1",
                 "evaluation_version": "1",
                 "config": {

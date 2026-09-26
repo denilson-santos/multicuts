@@ -23,6 +23,7 @@ from multicuts.artifacts import (
     publish_run_manifest,
     read_candidate_evaluation,
     read_transcript,
+    transcript_content_fingerprint,
     transcription_cache_key,
     write_candidate_evaluation,
     write_transcript,
@@ -317,8 +318,10 @@ def load_or_evaluate_candidates(
     evaluator: CandidateEvaluator = evaluate_candidates,
 ) -> CandidateEvaluationArtifact:
     """Reuse or safely publish deterministic candidate evaluation results."""
+    transcript_fingerprint = transcript_content_fingerprint(transcript)
     key = candidate_evaluation_cache_key(
         source_fingerprint=source.fingerprint,
+        transcript_fingerprint=transcript_fingerprint,
         candidate_generator_version=CANDIDATE_GENERATOR_VERSION,
         evaluation_version=CANDIDATE_EVALUATION_VERSION,
         min_duration=config.min_duration,
@@ -339,7 +342,9 @@ def load_or_evaluate_candidates(
         except InvalidCandidateEvaluationArtifactError:
             logger.warning("stage=evaluate cache=invalid; recomputing")
         else:
-            if cached is not None:
+            if cached is not None and tuple(
+                item.candidate for item in cached.evaluations
+            ) == tuple(sorted(candidates, key=lambda item: item.candidate_id)):
                 logger.info("stage=evaluate cache=hit")
                 return cached
 
@@ -353,6 +358,7 @@ def load_or_evaluate_candidates(
     )
     artifact = CandidateEvaluationArtifact(
         source_fingerprint=source.fingerprint,
+        transcript_fingerprint=transcript_fingerprint,
         candidate_generator_version=CANDIDATE_GENERATOR_VERSION,
         evaluation_version=CANDIDATE_EVALUATION_VERSION,
         min_duration=config.min_duration,
@@ -381,6 +387,7 @@ def load_or_score_candidates(
     """Reuse or publish scores for the bounded, eligible candidate shortlist."""
     evaluation_key = candidate_evaluation_cache_key(
         source_fingerprint=evaluation.source_fingerprint,
+        transcript_fingerprint=evaluation.transcript_fingerprint,
         candidate_generator_version=evaluation.candidate_generator_version,
         evaluation_version=evaluation.evaluation_version,
         min_duration=evaluation.min_duration,
@@ -506,6 +513,7 @@ def load_or_select_candidates(
     """Reuse or publish deterministic top-K selection and suppression evidence."""
     evaluation_key = candidate_evaluation_cache_key(
         source_fingerprint=evaluation.source_fingerprint,
+        transcript_fingerprint=evaluation.transcript_fingerprint,
         candidate_generator_version=evaluation.candidate_generator_version,
         evaluation_version=evaluation.evaluation_version,
         min_duration=evaluation.min_duration,
@@ -712,15 +720,18 @@ def load_or_render_selection(
                 cached = read_render(request, metadata_path, inspect=backend.inspect)
             except InvalidRenderArtifactError as exc:
                 raise ArtifactError(
-                    "Existing raw render is invalid; remove its artifact to retry"
+                    "Existing raw render is invalid; choose another output directory "
+                    "or move the affected media and metadata aside to retry"
                 ) from exc
             if cached is not None:
                 logger.info("stage=render cache=hit rank=%d", item.rank)
                 rendered.append(cached)
                 continue
-        if output_path.exists() or output_path.is_symlink():
+        if any(os.path.lexists(path) for path in (output_path, metadata_path)):
             raise ArtifactError(
-                "Raw clip already exists; refusing to overwrite completed media"
+                "Raw clip artifacts already exist; refusing to overwrite; "
+                "choose another output directory or move the affected media "
+                "and metadata aside to retry"
             )
         logger.info("stage=render cache=miss rank=%d", item.rank)
         try:

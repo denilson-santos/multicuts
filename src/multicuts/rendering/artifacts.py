@@ -175,11 +175,13 @@ def read_render(
     except OSError as exc:
         raise ArtifactError("Could not read render metadata") from exc
     width, height, duration, has_audio = _decode(payload, request)
-    if not request.output_path.is_file():
-        raise InvalidRenderArtifactError("Render media is missing")
     try:
+        if not request.output_path.is_file():
+            raise InvalidRenderArtifactError("Render media is missing")
         actual = inspect(request.output_path)
         validate_rendered_media(request, actual)
+    except OSError as exc:
+        raise ArtifactError("Could not read cached raw render media") from exc
     except (MediaError, RenderingError) as exc:
         raise InvalidRenderArtifactError("Render media failed validation") from exc
     if (

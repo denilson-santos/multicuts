@@ -12,7 +12,7 @@ from math import isclose
 from pathlib import Path
 
 from multicuts.artifacts import WorkspacePaths
-from multicuts.errors import ArtifactError, RenderingError
+from multicuts.errors import ArtifactError, MediaError, RenderingError
 from multicuts.models import ClipTranscript, MediaInfo, RenderedClip
 
 SUBTITLE_ARTIFACT_SCHEMA_VERSION = 1
@@ -142,8 +142,21 @@ def final_clip_paths(
     )
 
 
+def _artifact_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ArtifactError("Could not inspect cached final clip artifact") from exc
+    return True
+
+
 def _regular_nonempty(path: Path) -> bool:
-    return not path.is_symlink() and path.is_file() and path.stat().st_size > 0
+    try:
+        return not path.is_symlink() and path.is_file() and path.stat().st_size > 0
+    except OSError as exc:
+        raise ArtifactError("Could not inspect cached subtitle sidecar") from exc
 
 
 def read_final_clip(
@@ -159,13 +172,14 @@ def read_final_clip(
     inspect: Callable[[Path], MediaInfo],
 ) -> Path | None:
     """Reuse a final clip only when metadata and probed media both match."""
-    metadata_exists = os.path.lexists(output.metadata)
-    video_exists = os.path.lexists(output.video)
+    metadata_exists = _artifact_exists(output.metadata)
+    video_exists = _artifact_exists(output.video)
     if not metadata_exists and not video_exists:
         return None
     if not metadata_exists or not video_exists:
         raise ArtifactError(
-            "Final clip artifact is incomplete; remove its metadata and video to retry"
+            "Final clip artifact is incomplete; choose another output directory "
+            "or move the affected clip and subtitle artifacts aside to retry"
         )
     if output.metadata.is_symlink() or output.video.is_symlink():
         raise ArtifactError("Final clip artifact paths must be regular files")
@@ -218,7 +232,11 @@ def read_final_clip(
             _regular_nonempty(path)
             for path in (output.cues_json, output.srt, output.ass)
         ):
-            raise ArtifactError("Cached subtitle artifact set is incomplete")
+            raise ArtifactError(
+                "Cached subtitle artifact set is incomplete; "
+                "choose another output directory or move the affected clip "
+                "and subtitle artifacts aside to retry"
+            )
         if payload.get("subtitle_artifacts") != {
             "cues_json": output.cues_json.name,
             "srt": output.srt.name,
@@ -236,7 +254,7 @@ def read_final_clip(
         raise ArtifactError("Final clip has no resolved subtitle template")
     try:
         media = inspect(output.video)
-    except RenderingError as exc:
+    except (MediaError, RenderingError, OSError) as exc:
         raise ArtifactError("Could not validate cached final clip") from exc
     if (
         (media.presentation_width, media.presentation_height) != (raw.width, raw.height)

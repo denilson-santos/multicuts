@@ -194,6 +194,7 @@ def test_pipeline_score_cache_reuses_compatible_result_across_geometry(
     evaluation = _evaluation()
     artifact = CandidateEvaluationArtifact(
         source_fingerprint=source.fingerprint,
+        transcript_fingerprint="sha256-v1:transcript",
         candidate_generator_version="1",
         evaluation_version="1",
         min_duration=15,

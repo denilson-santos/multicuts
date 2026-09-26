@@ -10,6 +10,7 @@ from multicuts.artifacts import (
     InvalidTranscriptArtifactError,
     prepare_workspace,
     read_transcript,
+    transcript_content_fingerprint,
     transcription_cache_key,
     write_transcript,
 )
@@ -286,3 +287,29 @@ def test_cache_key_changes_only_for_transcription_inputs(
     monkeypatch.setattr("multicuts.artifacts.TRANSCRIPT_SCHEMA_VERSION", 1)
     monkeypatch.setattr("multicuts.artifacts.TRANSCRIPTION_TASK", "translate")
     assert key() != baseline
+
+
+def test_transcript_fingerprint_is_stable_across_numeric_normalization(
+    tmp_path: Path, cache_key: str, transcript: Transcript
+) -> None:
+    original = replace(
+        transcript,
+        duration=3,
+        segments=(TranscriptSegment(transcript.text, 0, 3),),
+        words=(Word("Olá,", 0, 1, 1), Word("世界!", 1, 2, 1)),
+    )
+    paths = prepare_workspace(
+        tmp_path,
+        AcquiredSource(Path("source.mp4"), "sha256-v1:source"),
+        cache_key=cache_key,
+    )
+    write_transcript(paths, original, cache_key=cache_key, replace=False)
+    cached = read_transcript(paths, cache_key=cache_key)
+    assert cached is not None
+    assert transcript_content_fingerprint(cached) == transcript_content_fingerprint(
+        original
+    )
+    changed = replace(original, words=(Word("Olá,", 0, 0.5, 1), original.words[1]))
+    assert transcript_content_fingerprint(changed) != transcript_content_fingerprint(
+        cached
+    )

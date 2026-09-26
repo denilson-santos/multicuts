@@ -635,6 +635,7 @@ class CandidateEvaluationArtifact:
     """Versioned project-owned payload persisted for candidate evaluation."""
 
     source_fingerprint: str
+    transcript_fingerprint: str
     candidate_generator_version: str
     evaluation_version: str
     min_duration: float
@@ -645,6 +646,7 @@ class CandidateEvaluationArtifact:
     def __post_init__(self) -> None:
         for field_name in (
             "source_fingerprint",
+            "transcript_fingerprint",
             "candidate_generator_version",
             "evaluation_version",
         ):

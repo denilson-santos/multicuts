@@ -314,8 +314,13 @@ def test_publish_clip_metadata_requires_media_and_never_replaces_existing(
     original = metadata.read_bytes()
     assert read_clip_metadata_payload(json.loads(original)) == _clip()
     assert list(paths.work.iterdir()) == []
-    with pytest.raises(ArtifactError, match="already exists"):
-        publish_clip_metadata(paths, _clip(), inspect=_inspect_media)
+    assert publish_clip_metadata(paths, _clip(), inspect=_inspect_media) == metadata
+    with pytest.raises(ArtifactError, match="conflicts with this run"):
+        publish_clip_metadata(
+            paths,
+            replace(_clip(), transcript="Different transcript"),
+            inspect=_inspect_media,
+        )
     assert metadata.read_bytes() == original
 
 
