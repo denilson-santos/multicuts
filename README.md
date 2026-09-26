@@ -69,6 +69,26 @@ The `.venv/` directory, tool caches, and generated build artifacts are ignored
 by Git. GitHub Actions creates a separate isolated environment and never uses a
 developer's local `.venv`.
 
+To verify the wheel and source distribution outside the checkout, run the
+following from the repository root after installing the development tools:
+
+```bash
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/multicuts-distribution-check.XXXXXX")"
+python scripts/verify_distributions.py \
+  --work-dir "$work_dir"
+```
+
+This builds both formats, inspects their contents, builds a wheel from the
+extracted source archive, and runs `import multicuts`, installed metadata, and
+`multicuts --help` in separate environments. These smoke environments install
+with `--no-deps`; that check proves package isolation and entry-point behavior,
+but it does not prove dependency resolution. For a provisioned installation,
+install the wheel without `--no-deps` and run `python -m pip check`. The CI
+provisioned-contract job performs that check, requires `multisubs >=4.3`, and
+runs the public provider, timed-cue, FFmpeg, and media contracts. It does not
+download transcription models. Live YouTube acquisition and real transcription
+remain opt-in through their existing environment variables.
+
 ## MVP goals
 
 The first MVP should be able to:
