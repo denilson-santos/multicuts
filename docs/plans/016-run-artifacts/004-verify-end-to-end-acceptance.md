@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016.003 Complete pipeline and CLI outcome semantics; Package 011 YouTube acquisition |
-| PR | — |
+| PR | [#45](https://github.com/denilson-santos/multicuts/pull/45) |
 
 ## Objective
 
@@ -62,6 +62,15 @@ When external dependencies and controlled fixtures are explicitly available:
 ```bash
 pytest -m integration -k "render or subtitle or youtube"
 ```
+
+## Integration evidence
+
+PR #45 is merged into `main` at `e0834f7`. Its Python 3.10 quality and Python
+3.13 compatibility checks passed. Before delivery, validation passed with
+407 hermetic tests and 9 media integration tests, plus Ruff and Pyright.
+The two live YouTube checks and real transcription check were skipped because
+no opt-in source fixtures were configured; they remain optional acceptance
+checks rather than default-suite gates.
 
 ## Risks and exclusions
 

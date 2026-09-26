@@ -8,14 +8,14 @@ output-local transcript cache, semantic candidate generation, and deterministic
 candidate evaluation, explainable heuristic scoring, and YouTube acquisition.
 The integrated pipeline now renders selected clips, burns configured hard
 subtitles by default, and publishes reusable final clip artifacts. The
-complete run manifest and CLI outcome semantics are integrated; end-to-end
-acceptance is the remaining package 016 work.
+complete run manifest, CLI outcome semantics, and end-to-end acceptance are
+integrated through PR #45.
 
 Packages 010–014 completed selection, semantic/hybrid scoring, boundary
 refinement, and raw clip rendering. Package 015 completed source-derived
 subtitles, final-geometry hard-subtitle rendering, and final clip persistence.
-Package 016 is the remaining M3 completion work. M4 release hardening remains
-later work.
+Package 016 completed M3 with final run artifacts and acceptance coverage.
+Package 017 plans the remaining M4 release hardening.
 
 ## Status and priority
 
@@ -32,7 +32,7 @@ Package and task status use this vocabulary:
 Priority indicates sequencing impact:
 
 - `P0`: a foundation that blocks multiple downstream packages;
-- `P1`: part of the first functional local intelligence/output path;
+- `P1`: required for the core pipeline or release readiness;
 - `P2`: documented input or scoring breadth that can proceed independently of
   that path.
 
@@ -59,11 +59,13 @@ completed and its package-level completion criteria pass.
 | [013 Boundary refinement](013-boundary-refinement/) | M3 | completed | P1 | 010 | [#37](https://github.com/denilson-santos/multicuts/pull/37) | Clean source-bounded render intervals that preserve scored-content provenance |
 | [014 Clip rendering](014-clip-rendering/) | M3 | completed | P1 | 004, 013 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Safe accurate `original` and center-cropped `9:16` raw clips |
 | [015 Clip subtitles](015-clip-subtitles/) | M3 | completed | P1 | 005, 006, 013, 014 | [#39](https://github.com/denilson-santos/multicuts/pull/39), [#40](https://github.com/denilson-santos/multicuts/pull/40), [#41](https://github.com/denilson-santos/multicuts/pull/41) | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
-| [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | in-progress | P1 | 010, 011, 014, 015 | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43), [#44](https://github.com/denilson-santos/multicuts/pull/44) | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
+| [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | completed | P1 | 010, 011, 014, 015 | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43), [#44](https://github.com/denilson-santos/multicuts/pull/44), [#45](https://github.com/denilson-santos/multicuts/pull/45) | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
+| [017 Release hardening](017-release-hardening/) | M4 | planned | P1 | 016 | — | Verified interruption recovery, cache safety, installed distributions, and repeatable release checks |
 
-Package 015 tasks 001–004 are integrated through PR #41. The package now
-publishes validated hard-subtitled clips and reusable subtitle provenance;
-package 016 owns the complete run manifest and final outcome summary.
+Packages 015 and 016 are completed through PRs #41 and #45 respectively.
+The integrated pipeline publishes subtitled clips, per-clip metadata, and a
+complete manifest with explicit completed, zero-selection, partial, or failed
+outcomes. External live checks remain opt-in.
 
 ## Recommended execution order
 
@@ -74,12 +76,20 @@ The main dependency path is:
 002 -> 003
 003 + 004 + 006 -> 011 -> 016
 008 + 009 -> 012
-010 -> 013 -> 014 -> 015 -> 016
+010 -> 013 -> 014 -> 015 -> 016 -> 017
 ```
 
-Packages 012–015 are complete. Package 016 is the remaining M3 work for a
-traceable complete local run. Its schema and safe artifact publication tasks are
-integrated. CLI outcomes are integrated, and end-to-end acceptance is in progress.
+Packages 001–016 are complete. Start package 017 with task 001 (interruption
+cleanup). Task 003 (distribution installation and public contracts) can proceed
+in parallel from the same integrated base because it focuses on packaging,
+CI, and contract checks. Task 002 (cache recovery) follows task 001 to avoid
+competing changes to orchestration and artifact ownership. Task 004 combines
+the integrated runtime and distribution work into repeatable release checks.
+
+Parallel work uses separate branches from `origin/main`; neither branch is
+based on an unmerged sibling. Reconcile shared README/CI edits and refresh the
+remaining branch after the first merge before delivering the next PR. This
+planning change leaves all package 017 tasks `planned`.
 
 ## Global implementation constraints
 
@@ -119,7 +129,8 @@ The following work is intentionally excluded from these packages:
   design that duplicates `multisubs`;
 - implementation/release work in the external `multisubs` repository; package
   015 consumes and contract-tests the required public capability once available;
-- packaging/release hardening beyond the initial build and CI baseline.
+- release publication, registry selection, and release-version selection;
+  package 017 verifies distributions and release checks before those decisions.
 
 ## Shared open decisions
 
