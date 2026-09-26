@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 016 Run artifacts and end-to-end completion |
 | Unlocks | A verified release candidate and a later publication decision |
-| PRs | [#47](https://github.com/denilson-santos/multicuts/pull/47), [#48](https://github.com/denilson-santos/multicuts/pull/48) |
+| PRs | [#47](https://github.com/denilson-santos/multicuts/pull/47), [#48](https://github.com/denilson-santos/multicuts/pull/48), [#49](https://github.com/denilson-santos/multicuts/pull/49) |
 
 ## Objective and expected outcome
 
@@ -24,11 +24,10 @@ media and manifests have overwrite guards. FFmpeg and subtitle paths already
 perform some local cleanup. This package closes gaps at stage/publication
 boundaries and verifies those existing policies together.
 
-Tasks 001 and 003 are integrated through PRs #47 and #48 with passing CI.
-CI now checks isolated wheel/sdist installations and provisioned public contracts
-and media, alongside Python 3.10 quality and Python 3.13 compatibility checks.
-Task 002 is active. Controlled repeat builds and the full supported interpreter
-matrix remain task 004.
+Tasks 001–003 are integrated through PRs #47–#49 with passing CI.
+Task 004 is in progress: controlled repeat builds, evidence artifacts, and the
+full Python 3.10–3.13 matrix extend the existing installed-distribution and
+provisioned public-contract/media checks.
 
 ## Included scope
 
@@ -76,16 +75,15 @@ data, and an operating-system I/O failure must not become one silent fallback.
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | [001 Harden interruption and cleanup](001-harden-interruption-cleanup.md) | completed | P1 | 016 | [#47](https://github.com/denilson-santos/multicuts/pull/47) | Owned temporary outputs are cleaned safely and interruption remains visible |
-| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | in-review | P1 | 001 | [#49](https://github.com/denilson-santos/multicuts/pull/49) | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
+| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | completed | P1 | 001 | [#49](https://github.com/denilson-santos/multicuts/pull/49) | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
 | [003 Validate distributions and public contracts](003-validate-distributions-contracts.md) | completed | P1 | 016 | [#48](https://github.com/denilson-santos/multicuts/pull/48) | Built artifacts install outside the checkout and provider compatibility has explicit evidence |
-| [004 Verify repeatable release checks](004-verify-release-checks.md) | planned | P1 | 002, 003 | — | Integrated release checks are repeatable and limitations are recorded |
+| [004 Verify repeatable release checks](004-verify-release-checks.md) | in-progress | P1 | 002, 003 | — | Integrated release checks are repeatable and limitations are recorded |
 
 ## Suggested task sequence
 
-Tasks 001 and 003 are completed and task 002 is in review. After task 002 is
-integrated, run task 004 against integrated 001–003 to establish repeatable
-release evidence. Task 004 remains planned until its cache-recovery dependency
-is integrated.
+Tasks 001–003 are completed. Execute task 004 against their integrated source
+and require the full interpreter matrix and provisioned checks before marking
+release hardening completed. Publication remains a separate decision.
 
 ## Completion criteria
 

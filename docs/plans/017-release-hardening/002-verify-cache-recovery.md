@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 017.001 Harden interruption and cleanup |
-| PR | — |
+| PR | [#49](https://github.com/denilson-santos/multicuts/pull/49) |
 
 ## Objective
 
@@ -72,7 +72,7 @@ resume of already concluded runs require separate product decisions.
 
 ## Implementation evidence
 
-Active branch: `fix/017-002-cache-recovery`.
+Delivered branch: `fix/017-002-cache-recovery`.
 
 - Evaluation schema 2 binds cached evidence to normalized transcript content and
   checks current candidate membership before reuse.
@@ -87,5 +87,8 @@ Local validation on Python 3.10.12 passed: Ruff format/check, Pyright,
 476 hermetic tests, and 9 real-media tests covering FFmpeg clips and public
 `multisubs` timed-cue rendering. Live ASR/YouTube checks were not run.
 
-PR [#49](https://github.com/denilson-santos/multicuts/pull/49) is open and all local validation checks passed. The task remains in-review
-until integration and package-level acceptance.
+PR [#49](https://github.com/denilson-santos/multicuts/pull/49) is integrated in
+`ac7c87ca0251ab2deb68c9209630d0b3a4d02df4`.
+[Integrated CI](https://github.com/denilson-santos/multicuts/actions/runs/36268383453)
+passed quality, Python 3.13 compatibility, and provisioned contracts. Task 004
+reruns the recovery/acceptance suite on this integrated source.

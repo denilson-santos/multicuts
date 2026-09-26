@@ -15,8 +15,8 @@ Packages 010–014 completed selection, semantic/hybrid scoring, boundary
 refinement, and raw clip rendering. Package 015 completed source-derived
 subtitles, final-geometry hard-subtitle rendering, and final clip persistence.
 Package 016 completed M3 with final run artifacts and acceptance coverage.
-Package 017 is in progress: interruption cleanup and distribution verification
-are integrated; cache recovery is in review before release checks.
+Package 017 is in progress: interruption cleanup, distribution verification,
+and cache recovery are integrated; repeatable release checks are in progress.
 
 ## Status and priority
 
@@ -61,7 +61,7 @@ completed and its package-level completion criteria pass.
 | [014 Clip rendering](014-clip-rendering/) | M3 | completed | P1 | 004, 013 | [#38](https://github.com/denilson-santos/multicuts/pull/38) | Safe accurate `original` and center-cropped `9:16` raw clips |
 | [015 Clip subtitles](015-clip-subtitles/) | M3 | completed | P1 | 005, 006, 013, 014 | [#39](https://github.com/denilson-santos/multicuts/pull/39), [#40](https://github.com/denilson-santos/multicuts/pull/40), [#41](https://github.com/denilson-santos/multicuts/pull/41) | Clip-local transcript reuse and public-API `multisubs` hard subtitles |
 | [016 Run artifacts and end-to-end completion](016-run-artifacts/) | M3 | completed | P1 | 010, 011, 014, 015 | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43), [#44](https://github.com/denilson-santos/multicuts/pull/44), [#45](https://github.com/denilson-santos/multicuts/pull/45) | Complete per-clip metadata, run manifest, and honest final CLI outcomes |
-| [017 Release hardening](017-release-hardening/) | M4 | in-progress | P1 | 016 | [#47](https://github.com/denilson-santos/multicuts/pull/47), [#48](https://github.com/denilson-santos/multicuts/pull/48) | Verified interruption recovery, cache safety, installed distributions, and repeatable release checks |
+| [017 Release hardening](017-release-hardening/) | M4 | in-progress | P1 | 016 | [#47](https://github.com/denilson-santos/multicuts/pull/47), [#48](https://github.com/denilson-santos/multicuts/pull/48), [#49](https://github.com/denilson-santos/multicuts/pull/49) | Verified interruption recovery, cache safety, installed distributions, and repeatable release checks |
 
 Packages 015 and 016 are completed through PRs #41 and #45 respectively.
 The integrated pipeline publishes subtitled clips, per-clip metadata, and a
@@ -80,13 +80,11 @@ The main dependency path is:
 010 -> 013 -> 014 -> 015 -> 016 -> 017
 ```
 
-Packages 001–016 and tasks 017.001/017.003 are complete. Task 017.002 (cache
-recovery and invalidation) is in review in [#49](https://github.com/denilson-santos/multicuts/pull/49), from
-`fix/017-002-cache-recovery`, based on the integrated interruption and
-distribution work. After its integration, task
-017.004 combines runtime recovery, installed-distribution checks, supported
-interpreter evidence, and controlled repeat builds. Release publication remains
-outside this package.
+Packages 001–016 and tasks 017.001–017.003 are complete. Task 017.004 is
+in progress on `ci/017-004-release-checks`, combining integrated recovery,
+installed-distribution checks, Python 3.10–3.13 evidence, and controlled repeat
+builds. Required matrix results remain pending until the new CI runs; release
+publication remains a separate decision.
 
 ## Global implementation constraints
 

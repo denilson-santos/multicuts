@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 017.002 Verify cache recovery and invalidation; 017.003 Validate distributions and public contracts |
 | PR | — |
@@ -69,3 +69,41 @@ that distinction. Live source/model tests remain optional.
   report the concrete blocker instead of lowering the support contract.
 - Release version, publication channel, credentials, and publishing approval
   remain separate decisions after this verification work.
+
+## Implementation and validation evidence
+
+Branch: `ci/017-004-release-checks`, based on integrated prerequisites at
+`ac7c87ca0251ab2deb68c9209630d0b3a4d02df4`.
+
+- The CI matrix runs quality, hermetic recovery/acceptance tests, controlled
+  builds, and isolated wheel/sdist smoke checks on Python 3.10–3.13.
+- `scripts/verify_release_builds.py` builds HEAD in two clean directories with a
+  pinned build environment, the commit timestamp, UTC, and a fixed hash seed.
+  Raw archives remain available; sdist tar/gzip metadata is normalized before
+  comparison, preserving names, modes, and payloads. Wheels are unmodified.
+- JSON, JUnit, distribution, and environment artifacts identify the tested
+  commit and distinguish required checks from optional live-test skips.
+- The separate provisioned job installs the compared wheel with all declared
+  dependencies, records provider/media versions, and exercises public APIs,
+  geometry, FFmpeg rendering, and subtitle publication.
+- The existing README provides exact local commands and evidence locations.
+
+Local validation uses Python 3.10.12. Ruff format/check, Pyright, and all
+482 hermetic tests passed (including six release-verifier regressions).
+The local provisioned checks passed 15 tests with `multisubs 4.3.0` and
+FFmpeg/ffprobe `4.4.2-0ubuntu0.22.04.1`; three optional live checks skipped
+because no ASR video or YouTube URL was supplied. Local `pip check` passed.
+`python -m build` passed.
+Controlled builds of the integrated commit and all three isolated installations
+passed. SHA-256 values match across both builds:
+
+```text
+wheel d4ea90b4c471aef24becf64e1b3e53c4e496d182a7f7d9872444eee63b1c3e1c
+sdist d3548920935b485d854c1f68fbf22ada4fa1b265557be4657d8a04241c87949a
+```
+
+These hashes describe the integrated prerequisite commit, not the pending
+working-tree changes. Python 3.11–3.13 are unavailable locally; the new matrix
+must run after publication. This task/package cannot be marked completed until all
+required checks pass and the implementation is integrated. Live ASR/YouTube
+fixtures were not supplied and are explicitly optional.
