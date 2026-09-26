@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from multicuts.adapters.multisubs_subtitles import SubtitleArtifacts
+from multicuts.artifacts import WorkspacePaths
 from multicuts.config import RunConfig
 from multicuts.errors import (
     AcquisitionError,
@@ -24,13 +25,14 @@ from multicuts.models import (
     ChecklistResult,
     ClipTranscript,
     MediaInfo,
+    RefinedSelection,
     RenderedClip,
     RenderRequest,
     Transcript,
     TranscriptSegment,
     Word,
 )
-from multicuts.pipeline import run_pipeline
+from multicuts.pipeline import RunResult, run_pipeline
 from multicuts.rendering.subtitles import SubtitledClip
 
 
@@ -782,3 +784,189 @@ def test_pipeline_records_render_failures_and_keeps_successful_clips(
     if failure_stage == "final":
         assert sorted(subtitle_renderer.calls) == [1, 2]
     assert result.warnings == tuple(manifest["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("interrupt_stage", "cleanup_fails"),
+    [
+        ("before_metadata", False),
+        ("after_metadata", False),
+        ("inside_renderer", False),
+        ("before_metadata", True),
+    ],
+)
+def test_keyboard_interrupt_during_raw_render_publication_is_preserved(
+    tmp_path: Path,
+    transcript: Transcript,
+    config: RunConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    interrupt_stage: str,
+    cleanup_fails: bool,
+) -> None:
+    from multicuts import pipeline
+
+    source = AcquiredSource(Path("/tmp/source.mp4"), "sha256-v1:interrupt")
+    media = MediaInfo(60.0, 1920, 1080, 1920, 1080, 0, 1)
+    transcript = replace(
+        transcript,
+        duration=60.0,
+        text="A complete point.",
+        segments=(TranscriptSegment("A complete point.", 0.0, 30.0),),
+        words=(Word("A", 0.0, 0.5), Word("point.", 29.5, 30.0)),
+    )
+    candidate = Candidate(
+        "candidate-v1:interrupt", 0.0, 30.0, "A complete point.", (0,), "1"
+    )
+    evaluation = CandidateEvaluation(
+        candidate,
+        CandidateFeatures(
+            duration=30.0,
+            word_count=3,
+            timed_word_count=2,
+            words_per_second=0.1,
+        ),
+        (ChecklistResult("valid_duration", ChecklistOutcome.PASS),),
+        1,
+    )
+    config = replace(
+        config,
+        clips=1,
+        subtitles_enabled=False,
+        min_duration=15.0,
+        max_duration=30.0,
+        refinement_pre_roll=0.0,
+        refinement_post_roll=0.0,
+    )
+
+    class Renderer:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.output_path: Path | None = None
+            self.interrupt_after_publish = False
+
+        def version(self) -> str:
+            return "ffmpeg test"
+
+        def inspect(self, path: Path) -> MediaInfo:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return MediaInfo(
+                payload["duration"],
+                payload["width"],
+                payload["height"],
+                payload["width"],
+                payload["height"],
+                0,
+                1,
+            )
+
+        def render(self, request: RenderRequest) -> RenderedClip:
+            self.calls += 1
+            self.output_path = request.output_path
+            duration = request.refined.render_end - request.refined.render_start
+            request.output_path.write_text(
+                json.dumps(
+                    {
+                        "duration": duration,
+                        "width": request.media.presentation_width,
+                        "height": request.media.presentation_height,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            if self.interrupt_after_publish:
+                raise KeyboardInterrupt
+            return RenderedClip(
+                request.refined,
+                request.output_path,
+                request.media.presentation_width,
+                request.media.presentation_height,
+                duration,
+                True,
+                request.renderer_version,
+                request.cache_key,
+            )
+
+    renderer = Renderer()
+    transcriber = FakeTranscriber(transcript)
+
+    def run() -> RunResult:
+        return run_pipeline(
+            config,
+            acquire=lambda _value, _workspace: source,
+            probe=lambda _value: media,
+            transcriber=transcriber,
+            candidate_generator=lambda *_args, **_kwargs: (candidate,),
+            candidate_evaluator=lambda *_args, **_kwargs: CandidateEvaluationBatch(
+                (evaluation,), (evaluation,)
+            ),
+            renderer=renderer,
+        )
+
+    original_write_render = pipeline.write_render
+    original_render_paths = pipeline.render_paths
+    render_metadata_paths: list[Path] = []
+
+    def capture_render_paths(
+        paths: WorkspacePaths, refined: RefinedSelection, cache_key: str
+    ) -> tuple[Path, Path]:
+        output_path, metadata_path = original_render_paths(paths, refined, cache_key)
+        render_metadata_paths.append(metadata_path)
+        return output_path, metadata_path
+
+    monkeypatch.setattr(pipeline, "render_paths", capture_render_paths)
+    if interrupt_stage == "before_metadata":
+
+        def interrupt_before_metadata(*_args: object, **_kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(pipeline, "write_render", interrupt_before_metadata)
+    elif interrupt_stage == "after_metadata":
+
+        def interrupt_after_metadata(
+            paths: WorkspacePaths,
+            request: RenderRequest,
+            result: RenderedClip,
+            metadata_path: Path,
+        ) -> None:
+            original_write_render(paths, request, result, metadata_path)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(pipeline, "write_render", interrupt_after_metadata)
+    else:
+        renderer.interrupt_after_publish = True
+
+    caplog.set_level(logging.WARNING, logger="multicuts.pipeline")
+    original_unlink = Path.unlink
+    if cleanup_fails:
+
+        def fail_raw_unlink(path: Path, missing_ok: bool = False) -> None:
+            if path == renderer.output_path:
+                raise PermissionError("synthetic cleanup failure")
+            original_unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", fail_raw_unlink)
+
+    with pytest.raises(KeyboardInterrupt):
+        run()
+
+    raw_path = renderer.output_path
+    assert raw_path is not None
+    assert len(render_metadata_paths) == 1
+    metadata_path = render_metadata_paths[0]
+    assert not tuple(config.output_dir.rglob("manifest.json"))
+    if cleanup_fails:
+        assert raw_path.is_file()
+        assert not metadata_path.exists()
+        assert "stage=render cleanup=failed artifact=media rank=1" in caplog.text
+        original_unlink(raw_path)
+        return
+
+    assert not raw_path.exists()
+    assert not metadata_path.exists()
+    renderer.interrupt_after_publish = False
+    monkeypatch.setattr(pipeline, "write_render", original_write_render)
+    result = run()
+    assert result.outcome.value == "completed"
+    assert renderer.calls == 2
+    assert len(transcriber.calls) == 1
