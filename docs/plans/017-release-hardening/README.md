@@ -76,15 +76,16 @@ data, and an operating-system I/O failure must not become one silent fallback.
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | [001 Harden interruption and cleanup](001-harden-interruption-cleanup.md) | completed | P1 | 016 | [#47](https://github.com/denilson-santos/multicuts/pull/47) | Owned temporary outputs are cleaned safely and interruption remains visible |
-| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | in-progress | P1 | 001 | — | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
+| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | in-review | P1 | 001 | [#49](https://github.com/denilson-santos/multicuts/pull/49) | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
 | [003 Validate distributions and public contracts](003-validate-distributions-contracts.md) | completed | P1 | 016 | [#48](https://github.com/denilson-santos/multicuts/pull/48) | Built artifacts install outside the checkout and provider compatibility has explicit evidence |
 | [004 Verify repeatable release checks](004-verify-release-checks.md) | planned | P1 | 002, 003 | — | Integrated release checks are repeatable and limitations are recorded |
 
 ## Suggested task sequence
 
-Tasks 001 and 003 are completed. Finish task 002 on the integrated base, then
-run task 004 against integrated 001–003 to establish repeatable release evidence.
-Task 004 remains planned until its cache-recovery dependency is integrated.
+Tasks 001 and 003 are completed and task 002 is in review. After task 002 is
+integrated, run task 004 against integrated 001–003 to establish repeatable
+release evidence. Task 004 remains planned until its cache-recovery dependency
+is integrated.
 
 ## Completion criteria
 

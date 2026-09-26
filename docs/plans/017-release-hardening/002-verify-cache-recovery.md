@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 017.001 Harden interruption and cleanup |
 | PR | — |
@@ -87,5 +87,5 @@ Local validation on Python 3.10.12 passed: Ruff format/check, Pyright,
 476 hermetic tests, and 9 real-media tests covering FFmpeg clips and public
 `multisubs` timed-cue rendering. Live ASR/YouTube checks were not run.
 
-Status remains `in-progress` until delivery review; completion requires integration
-and passing validation.
+PR [#49](https://github.com/denilson-santos/multicuts/pull/49) is open and all local validation checks passed. The task remains in-review
+until integration and package-level acceptance.

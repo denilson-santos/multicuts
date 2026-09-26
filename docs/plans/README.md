@@ -16,7 +16,7 @@ refinement, and raw clip rendering. Package 015 completed source-derived
 subtitles, final-geometry hard-subtitle rendering, and final clip persistence.
 Package 016 completed M3 with final run artifacts and acceptance coverage.
 Package 017 is in progress: interruption cleanup and distribution verification
-are integrated; cache recovery is the active task before release checks.
+are integrated; cache recovery is in review before release checks.
 
 ## Status and priority
 
@@ -81,8 +81,9 @@ The main dependency path is:
 ```
 
 Packages 001–016 and tasks 017.001/017.003 are complete. Task 017.002 (cache
-recovery and invalidation) is active on `fix/017-002-cache-recovery`, based on the
-integrated interruption and distribution work. After its integration, task
+recovery and invalidation) is in review in [#49](https://github.com/denilson-santos/multicuts/pull/49), from
+`fix/017-002-cache-recovery`, based on the integrated interruption and
+distribution work. After its integration, task
 017.004 combines runtime recovery, installed-distribution checks, supported
 interpreter evidence, and controlled repeat builds. Release publication remains
 outside this package.
