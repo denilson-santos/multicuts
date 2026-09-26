@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | planned |
+| Status | in-progress |
 | Priority | P1 |
 | Depends on | 016.003 Complete pipeline and CLI outcome semantics; Package 011 YouTube acquisition |
 | PR | — |

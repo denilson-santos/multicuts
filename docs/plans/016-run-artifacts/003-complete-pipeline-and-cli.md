@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016.002 Collect and publish final artifacts safely |
-| PR | — |
+| PR | [#44](https://github.com/denilson-santos/multicuts/pull/44) |
 
 ## Objective
 

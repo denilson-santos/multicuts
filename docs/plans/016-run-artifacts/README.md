@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Depends on | 010 Ranking and selection; 011 YouTube acquisition; 014 Clip rendering; 015 Clip subtitles |
 | Unlocks | Complete M3 runs and M4 release hardening |
-| PRs | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43) |
+| PRs | [#42](https://github.com/denilson-santos/multicuts/pull/42), [#43](https://github.com/denilson-santos/multicuts/pull/43), [#44](https://github.com/denilson-santos/multicuts/pull/44) |
 
 ## Objective and expected outcome
 
@@ -67,8 +67,8 @@ artifact module now publishes the complete final schema at `manifest.json`.
 | --- | --- | --- | --- | --- | --- |
 | [001 Define manifest and per-clip metadata contracts](001-define-artifact-contracts.md) | completed | P1 | Packages 010, 014; Task 015.001 | [#42](https://github.com/denilson-santos/multicuts/pull/42) | Versioned complete artifact schemas with safe provenance |
 | [002 Collect and publish final artifacts safely](002-publish-final-artifacts.md) | completed | P1 | 001 | [#43](https://github.com/denilson-santos/multicuts/pull/43) | Atomic clip metadata and manifest publication from real stage results |
-| [003 Complete pipeline and CLI outcome semantics](003-complete-pipeline-and-cli.md) | in-progress | P1 | 002 | — | Honest end-to-end success, zero-selection, partial, and failure behavior |
-| [004 Verify local and YouTube end-to-end acceptance](004-verify-end-to-end-acceptance.md) | planned | P1 | 003; Package 011 | — | Evidence for M3/MVP acceptance without weakening hermetic defaults |
+| [003 Complete pipeline and CLI outcome semantics](003-complete-pipeline-and-cli.md) | completed | P1 | 002 | [#44](https://github.com/denilson-santos/multicuts/pull/44) | Honest end-to-end success, zero-selection, partial, and failure behavior |
+| [004 Verify local and YouTube end-to-end acceptance](004-verify-end-to-end-acceptance.md) | in-progress | P1 | 003; Package 011 | — | Evidence for M3/MVP acceptance without weakening hermetic defaults |
 
 ## Suggested task sequence
 
@@ -102,6 +102,7 @@ local and YouTube sources with hermetic boundaries plus marked live-tool tests.
   successfully. A partial or all-render-failed run publishes the corresponding
   outcome and exits with the rendering failure code; CLI output names the state.
 - The public multisubs contract required by package 015 and package 016's
-  artifact publication are integrated; end-to-end acceptance remains.
+  artifact publication, and CLI outcomes are integrated; end-to-end acceptance
+  is in progress.
 - M4 remains responsible for broader interruption cleanup, corrupted-cache
   hardening, packaging, and reproducible release checks.
