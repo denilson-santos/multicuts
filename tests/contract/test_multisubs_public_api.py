@@ -2,6 +2,7 @@
 
 import importlib
 import inspect
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -84,5 +85,6 @@ def test_multisubs_subtitle_cli_options() -> None:
         check=False,
     )
     assert completed.returncode == 0, "multisubs CLI help failed"
+    help_text = re.sub(r"\x1b\[[0-9;]*m", "", completed.stdout)
     for option in ("--cues-json", "--template", "--template-dir"):
-        assert option in completed.stdout, f"multisubs CLI lacks {option}"
+        assert option in help_text, f"multisubs CLI lacks {option}"
