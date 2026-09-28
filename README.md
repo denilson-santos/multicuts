@@ -89,6 +89,96 @@ runs the public provider, timed-cue, FFmpeg, and media contracts. It does not
 download transcription models. Live YouTube acquisition and real transcription
 remain opt-in through their existing environment variables.
 
+### Repeatable release verification
+
+Start from a clean checkout of the candidate commit, with Git and a supported
+Python interpreter (3.10–3.13). Run the quality commands above, then:
+
+```bash
+release_work="$(mktemp -d "${TMPDIR:-/tmp}/multicuts-release-check.XXXXXX")"
+python scripts/verify_release_builds.py --work-dir "$release_work"
+cat "$release_work/release-builds.json"
+```
+
+The verifier exports **committed HEAD**, excluding all working-tree edits and
+ignored files. It builds twice in separate source directories with the exact
+build-tool versions in `scripts/verify_release_builds.py`, no build isolation,
+`SOURCE_DATE_EPOCH` set to the commit timestamp, UTC, and a fixed Python hash seed.
+It creates its own build environment; network/package-index access is needed
+to provision tools and smoke-test environments. The default pytest suite still
+requires no network, model downloads, or credentials.
+
+Setuptools 80.9.0 produces varying sdist directory/generated-file timestamps
+and a wall-clock gzip header. The controlled recipe therefore normalizes tar
+member order, timestamps, owner metadata, and the gzip header before comparing
+SHA-256 hashes. It preserves member names, permissions, and payload bytes.
+Wheels are compared unmodified. Both raw and normalized archives are retained
+under `build-{1,2}/{raw,dist}/`; inspect these if comparison fails. This promises
+repeatability for identical source and the recorded interpreter/toolchain and
+platform, not across arbitrary toolchains or ASR/media outputs.
+
+`release-builds.json` records the source commit, dirty-worktree indicator,
+interpreter, platform/zlib, build versions, verifier hashes, both sets of
+artifact hashes, and installed smoke results/package versions. The smoke
+checks consume the compared wheel and normalized sdist, plus a wheel rebuilt
+from that sdist, in three isolated environments. A failed comparison or smoke
+check exits nonzero. Retain this report with the archives and test results.
+
+CI runs quality, hermetic recovery/acceptance tests, controlled builds, and
+installed smoke checks on **all four supported Python versions**. It uploads
+`release-python-<version>-<commit>` artifacts containing the JSON report,
+constraints, distributions, interpreter/packages, and JUnit results. Results
+refer to the actual checked-out commit (the merge candidate on PR events).
+Task 017.004 remains incomplete until this matrix and the provisioned job pass
+for the integrated release candidate.
+
+For the separate provisioned checks, install FFmpeg/ffprobe with libass and
+make the following environment from the compared wheel. Installation resolves
+the complete runtime dependency set, including the official `multisubs`
+WhisperX extra, and can require substantial downloads/disk space:
+
+```bash
+unset PYTHONPATH
+python -m venv "$release_work/provisioned"
+provisioned_python="$release_work/provisioned/bin/python"
+"$provisioned_python" -m pip install "$release_work"/build-1/dist/*.whl "pytest>=8,<9"
+"$provisioned_python" -m pip check
+"$provisioned_python" -VV
+"$provisioned_python" -m pip freeze --all > "$release_work/provider-packages.txt"
+"$provisioned_python" -c 'import multisubs; print(multisubs.__version__)'
+"$provisioned_python" -c 'import multicuts; from pathlib import Path; assert not Path(multicuts.__file__).resolve().is_relative_to(Path.cwd().resolve())'
+ffmpeg -version > "$release_work/ffmpeg.txt"
+ffprobe -version > "$release_work/ffprobe.txt"
+ffmpeg -filters > "$release_work/ffmpeg-filters.txt"
+grep -q ' subtitles ' "$release_work/ffmpeg-filters.txt"
+fixture=src/multicuts/data/test-horizontal.mp4
+if [ ! -f "$fixture" ]; then
+  mkdir -p src/multicuts/data
+  ffmpeg -hide_banner -loglevel error -nostdin \
+    -f lavfi -i color=c=black:s=1920x1080:r=25:d=3 \
+    -f lavfi -i sine=frequency=440:sample_rate=48000 \
+    -t 3 -c:v mpeg4 -q:v 5 -c:a aac -shortest "$fixture"
+fi
+"$provisioned_python" -m pytest -ra \
+  tests/contract/test_multisubs_public_api.py \
+  tests/integration/test_media_probe.py \
+  tests/integration/test_multisubs_timed_cue_integration.py \
+  tests/integration/test_clip_rendering_ffmpeg.py \
+  tests/integration/test_multisubs_contract.py \
+  tests/integration/test_youtube_live.py \
+  --junitxml="$release_work/provisioned.xml"
+```
+
+The CI provisioned job performs these checks independently and uploads
+`release-provisioned-<commit>` evidence. Required provider/media checks must
+pass; missing tools/providers are blockers. Optional real transcription is
+skipped unless `MULTICUTS_MULTISUBS_CONTRACT_VIDEO` names a short local video
+(and optionally `MULTICUTS_MULTISUBS_CONTRACT_MODEL` chooses the model).
+Both live YouTube checks require `MULTICUTS_YOUTUBE_TEST_URL`. Without these
+inputs, JUnit and `-ra` explicitly record three skips; no live ASR or YouTube
+validation is claimed. Publication, version choice, and registry credentials
+remain separate decisions.
+
 ## MVP goals
 
 The first MVP should be able to:

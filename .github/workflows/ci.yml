@@ -11,19 +11,23 @@ permissions:
 
 jobs:
   quality:
-    name: Quality (Python 3.10)
+    name: Quality (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.10
+      - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v7
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python }}
 
       - name: Create virtual environment
         run: python -m venv .venv
@@ -42,37 +46,32 @@ jobs:
       - name: Type check
         run: .venv/bin/pyright
 
-      - name: Run hermetic tests
-        run: .venv/bin/python -m pytest -m "not integration"
-
-      - name: Build distributions
-        run: .venv/bin/python -m build
-
-  compatibility:
-    name: Compatibility (Python 3.13)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.13"
-
-      - name: Create virtual environment
-        run: python -m venv .venv
-
-      - name: Install project and test tool
+      - name: Record verification inputs
         run: |
-          .venv/bin/python -m pip install --editable ".[dev]" --no-deps
-          .venv/bin/python -m pip install "pytest>=8,<9" "typer>=0.27.2,<0.28"
+          mkdir -p release-evidence
+          git rev-parse HEAD > release-evidence/commit.txt
+          .venv/bin/python -VV > release-evidence/python.txt
+          .venv/bin/python -m pip freeze --all > release-evidence/packages.txt
 
-      - name: Run hermetic tests
-        run: .venv/bin/python -m pytest -m "not integration"
+      - name: Run hermetic tests including recovery and acceptance
+        run: .venv/bin/python -m pytest -m "not integration" -ra --junitxml=release-evidence/hermetic.xml
+
+      - name: Compare controlled builds and smoke-test installed distributions
+        run: |
+          .venv/bin/python scripts/verify_release_builds.py \
+            --work-dir "${{ runner.temp }}/release-builds"
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-python-${{ matrix.python }}-${{ github.sha }}
+          path: |
+            release-evidence/
+            ${{ runner.temp }}/release-builds/release-builds.json
+            ${{ runner.temp }}/release-builds/build-constraints.txt
+            ${{ runner.temp }}/release-builds/build-*/dist/*
+            ${{ runner.temp }}/release-builds/build-*/raw/*
 
   provisioned:
     name: Provisioned contracts (Python 3.10)
@@ -94,6 +93,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
 
+      - name: Generate the small real-media fixture
+        run: |
+          mkdir -p src/multicuts/data
+          ffmpeg -hide_banner -loglevel error -nostdin \
+            -f lavfi -i color=c=black:s=1920x1080:r=25:d=3 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v mpeg4 -q:v 5 -c:a aac -shortest \
+            src/multicuts/data/test-horizontal.mp4
+
       - name: Create verification environment
         run: python -m venv .venv
 
@@ -101,14 +109,13 @@ jobs:
         run: |
           .venv/bin/python -m pip install "build>=1.2,<2" "pytest>=8,<9"
 
-      - name: Build and smoke-test distributions outside the checkout
+      - name: Build controlled distributions and smoke-test outside the checkout
         env:
           DIST_CHECK_DIR: ${{ runner.temp }}/multicuts-distributions
         run: |
-          .venv/bin/python scripts/verify_distributions.py \
+          .venv/bin/python scripts/verify_release_builds.py \
             --project-root "$GITHUB_WORKSPACE" \
-            --work-dir "$DIST_CHECK_DIR" \
-            --python "$GITHUB_WORKSPACE/.venv/bin/python"
+            --work-dir "$DIST_CHECK_DIR"
 
       - name: Install the built wheel with resolved dependencies
         env:
@@ -116,7 +123,7 @@ jobs:
           PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
         run: |
           python -m venv "$PROVISIONED_VENV"
-          wheel=$(find "$DIST_CHECK_DIR/source-dist" -maxdepth 1 -type f -name '*.whl' -print -quit)
+          wheel=$(find "$DIST_CHECK_DIR/build-1/dist" -maxdepth 1 -type f -name '*.whl' -print -quit)
           test -n "$wheel"
           "$PROVISIONED_VENV/bin/python" -m pip install "$wheel" "pytest>=8,<9"
           "$PROVISIONED_VENV/bin/python" -m pip check
@@ -147,6 +154,19 @@ jobs:
           print(f"multisubs {version} is provisioned")
           PY
 
+      - name: Record provider and media versions
+        env:
+          PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
+        run: |
+          mkdir -p release-evidence
+          git rev-parse HEAD > release-evidence/commit.txt
+          "$PROVISIONED_VENV/bin/python" -VV > release-evidence/python.txt
+          "$PROVISIONED_VENV/bin/python" -m pip freeze --all > release-evidence/packages.txt
+          ffmpeg -version > release-evidence/ffmpeg.txt
+          ffprobe -version > release-evidence/ffprobe.txt
+          ffmpeg -filters > release-evidence/ffmpeg-filters.txt
+          grep -q ' subtitles ' release-evidence/ffmpeg-filters.txt
+
       - name: Run provisioned provider and media checks
         env:
           PROVISIONED_VENV: ${{ runner.temp }}/multicuts-provisioned
@@ -158,7 +178,20 @@ jobs:
             tests/integration/test_media_probe.py \
             tests/integration/test_multisubs_timed_cue_integration.py \
             tests/integration/test_multisubs_contract.py \
-            tests/integration/test_youtube_live.py
+            tests/integration/test_youtube_live.py \
+            -ra --junitxml=release-evidence/contracts.xml
           "$PROVISIONED_VENV/bin/python" -m pytest \
             tests/integration/test_clip_rendering_ffmpeg.py \
-            -k "subtitle_rendering or pipeline_publishes"
+            -ra --junitxml=release-evidence/rendering.xml
+
+      - name: Upload provisioned evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-provisioned-${{ github.sha }}
+          path: |
+            release-evidence/
+            ${{ runner.temp }}/multicuts-distributions/release-builds.json
+            ${{ runner.temp }}/multicuts-distributions/build-constraints.txt
+            ${{ runner.temp }}/multicuts-distributions/build-*/dist/*
+            ${{ runner.temp }}/multicuts-distributions/build-*/raw/*

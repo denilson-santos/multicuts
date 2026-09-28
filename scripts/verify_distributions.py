@@ -317,7 +317,11 @@ assert all(
 
 
 def verify_distributions(
-    *, project_root: Path, work_dir: Path, host_python: Path
+    *,
+    project_root: Path,
+    work_dir: Path,
+    host_python: Path,
+    artifacts_dir: Path | None = None,
 ) -> tuple[Path, Path, Path]:
     """Build, inspect, and install wheel/sdist artifacts in isolated environments."""
     project_root = project_root.resolve()
@@ -329,20 +333,21 @@ def verify_distributions(
         raise VerificationError(f"work directory must be empty: {work_dir}")
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    source_dist = work_dir / "source-dist"
-    _run(
-        [
-            str(host_python),
-            "-m",
-            "build",
-            "--wheel",
-            "--sdist",
-            "--outdir",
-            str(source_dist),
-            str(project_root),
-        ],
-        cwd=project_root,
-    )
+    source_dist = artifacts_dir or work_dir / "source-dist"
+    if artifacts_dir is None:
+        _run(
+            [
+                str(host_python),
+                "-m",
+                "build",
+                "--wheel",
+                "--sdist",
+                "--outdir",
+                str(source_dist),
+                str(project_root),
+            ],
+            cwd=project_root,
+        )
     wheel = _single_artifact(source_dist, "*.whl")
     sdist = _single_artifact(source_dist, "*.tar.gz")
     _inspect_wheel(wheel, expected)
