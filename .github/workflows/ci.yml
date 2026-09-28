@@ -93,6 +93,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
 
+      - name: Generate the small real-media fixture
+        run: |
+          mkdir -p src/multicuts/data
+          ffmpeg -hide_banner -loglevel error -nostdin \
+            -f lavfi -i color=c=black:s=1920x1080:r=25:d=3 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v mpeg4 -q:v 5 -c:a aac -shortest \
+            src/multicuts/data/test-horizontal.mp4
+
       - name: Create verification environment
         run: python -m venv .venv
 

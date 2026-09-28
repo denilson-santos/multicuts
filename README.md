@@ -151,6 +151,14 @@ ffmpeg -version > "$release_work/ffmpeg.txt"
 ffprobe -version > "$release_work/ffprobe.txt"
 ffmpeg -filters > "$release_work/ffmpeg-filters.txt"
 grep -q ' subtitles ' "$release_work/ffmpeg-filters.txt"
+fixture=src/multicuts/data/test-horizontal.mp4
+if [ ! -f "$fixture" ]; then
+  mkdir -p src/multicuts/data
+  ffmpeg -hide_banner -loglevel error -nostdin \
+    -f lavfi -i color=c=black:s=1920x1080:r=25:d=3 \
+    -f lavfi -i sine=frequency=440:sample_rate=48000 \
+    -t 3 -c:v mpeg4 -q:v 5 -c:a aac -shortest "$fixture"
+fi
 "$provisioned_python" -m pytest -ra \
   tests/contract/test_multisubs_public_api.py \
   tests/integration/test_media_probe.py \
