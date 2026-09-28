@@ -89,6 +89,31 @@ runs the public provider, timed-cue, FFmpeg, and media contracts. It does not
 download transcription models. Live YouTube acquisition and real transcription
 remain opt-in through their existing environment variables.
 
+### Package versioning
+
+The package version has one source of truth: `[project].version` in
+`pyproject.toml`. Releases use stable [SemVer 2.0.0](https://semver.org/)
+versions in `MAJOR.MINOR.PATCH` form. The documented CLI, exit codes, and
+published output formats are the compatibility contract. At `1.0.0` and later,
+increase MAJOR for incompatible changes, MINOR for compatible additions, and
+PATCH for compatible fixes. During initial `0.y.z` development, increase MINOR
+for features or incompatible changes and PATCH for compatible fixes.
+
+`0.0.0` is the current development placeholder and cannot be tagged as a
+release. Choose each release version manually in a dedicated release PR after
+reviewing changes since the previous `vMAJOR.MINOR.PATCH` tag. Update
+`pyproject.toml` in that PR; ordinary feature PRs do not bump the package
+version. Released versions and tags are immutable. The initial workflow uses
+stable SemVer versions without prerelease or build suffixes, which also keeps
+the package metadata compatible with [Python's version rules](https://packaging.python.org/en/latest/specifications/version-specifiers/).
+
+Run `python scripts/verify_version.py` to check the declared version and
+`python scripts/verify_version.py --tag vMAJOR.MINOR.PATCH` in a release PR to
+check the proposed tag. After the release PR merges and verification on `main`
+passes, tag the merged commit as `vMAJOR.MINOR.PATCH`. A tag push runs release
+verification again; CI checks that the tag matches the package version and that
+its commit belongs to `main`. Tagging does not publish the package to a registry.
+
 ### Repeatable release verification
 
 Start from a clean checkout of the candidate commit, with Git and a supported
@@ -178,8 +203,8 @@ skipped unless `MULTICUTS_MULTISUBS_CONTRACT_VIDEO` names a short local video
 (and optionally `MULTICUTS_MULTISUBS_CONTRACT_MODEL` chooses the model).
 Both live YouTube checks require `MULTICUTS_YOUTUBE_TEST_URL`. Without these
 inputs, JUnit and `-ra` explicitly record three skips; no live ASR or YouTube
-validation is claimed. Publication, version choice, and registry credentials
-remain separate decisions.
+validation is claimed. Publication and registry credentials remain separate
+decisions.
 
 ## MVP goals
 
