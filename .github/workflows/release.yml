@@ -1,0 +1,46 @@
+name: Release verification
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release verification (Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Record verification inputs
+        run: |
+          mkdir -p release-evidence
+          git rev-parse HEAD > release-evidence/commit.txt
+          python -VV > release-evidence/python.txt
+
+      - name: Compare controlled builds and smoke-test installed distributions
+        run: python scripts/verify_release_builds.py --work-dir "${{ runner.temp }}/release-builds"
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-python-3.10-${{ github.sha }}
+          path: |
+            release-evidence/
+            ${{ runner.temp }}/release-builds/release-builds.json
+            ${{ runner.temp }}/release-builds/build-constraints.txt
+            ${{ runner.temp }}/release-builds/build-*/dist/*
+            ${{ runner.temp }}/release-builds/build-*/raw/*

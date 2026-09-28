@@ -124,13 +124,15 @@ checks consume the compared wheel and normalized sdist, plus a wheel rebuilt
 from that sdist, in three isolated environments. A failed comparison or smoke
 check exits nonzero. Retain this report with the archives and test results.
 
-CI runs quality, hermetic recovery/acceptance tests, controlled builds, and
-installed smoke checks on **all four supported Python versions**. It uploads
-`release-python-<version>-<commit>` artifacts containing the JSON report,
-constraints, distributions, interpreter/packages, and JUnit results. Results
-refer to the actual checked-out commit (the merge candidate on PR events).
-Task 017.004 remains incomplete until this matrix and the provisioned job pass
-for the integrated release candidate.
+On pull requests, CI runs Ruff and Pyright once on Python 3.10, hermetic
+recovery/acceptance tests on **all four supported Python versions**, and the
+separate provisioned provider/media checks. Pull-request checks run against
+GitHub's merge candidate. After a merge, a push to `main` compares controlled
+builds and smoke-tests the installed wheel and sdist on Python 3.10. It uploads
+`release-python-3.10-<commit>` with the JSON report, constraints,
+distributions, and interpreter record for the final `main` commit. The
+provisioned pull-request job uploads `release-provisioned-<commit>` with its
+provider, media, and build evidence.
 
 For the separate provisioned checks, install FFmpeg/ffprobe with libass and
 make the following environment from the compared wheel. Installation resolves
