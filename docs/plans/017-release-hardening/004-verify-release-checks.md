@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-progress |
+| Status | in-review |
 | Priority | P1 |
 | Depends on | 017.002 Verify cache recovery and invalidation; 017.003 Validate distributions and public contracts |
-| PR | — |
+| PR | [#50](https://github.com/denilson-santos/multicuts/pull/50) |
 
 ## Objective
 
@@ -102,8 +102,38 @@ wheel d4ea90b4c471aef24becf64e1b3e53c4e496d182a7f7d9872444eee63b1c3e1c
 sdist d3548920935b485d854c1f68fbf22ada4fa1b265557be4657d8a04241c87949a
 ```
 
-These hashes describe the integrated prerequisite commit, not the pending
-working-tree changes. Python 3.11–3.13 are unavailable locally; the new matrix
-must run after publication. This task/package cannot be marked completed until all
-required checks pass and the implementation is integrated. Live ASR/YouTube
-fixtures were not supplied and are explicitly optional.
+## Pull request validation
+
+[PR #50](https://github.com/denilson-santos/multicuts/pull/50) is open for
+review. All five CI jobs passed in
+[run 36365884429](https://github.com/denilson-santos/multicuts/actions/runs/36365884429)
+on 2026-09-27. For `pull_request`, GitHub tested merge
+candidate `cff2b13fc2026f1572b0ec6c6fa9d5c8d3db5159`, whose parents are base
+`ac7c87ca0251ab2deb68c9209630d0b3a4d02df4` and PR head
+`4117306de341d01b44cb4f83af591820fdf2d428`.
+
+- Quality and all 482 collected hermetic tests passed on Python 3.10.21,
+  3.11.16, 3.12.14, and 3.13.15. Each environment reported 478 passed and four
+  provider-contract skips because `multisubs` is deliberately absent from the
+  hermetic environment; the provisioned job tests that contract separately.
+- The provisioned contracts job used Python 3.10.21, `multisubs 4.3.0`, and
+  FFmpeg/ffprobe 6.1.1-3ubuntu5. It passed 7 provider/media tests, skipped the
+  three optional live ASR/YouTube checks for lack of fixtures, and passed all 8
+  FFmpeg rendering tests, including display rotation and final geometry.
+- All four controlled builds report matching wheel and normalized sdist hashes
+  internally and across the interpreter matrix. The wheel SHA-256 is
+  `c2e4070831ddcbce87a8d1c2bcc4ebd7603ca94855d750a78eb8440bd833f35f`; the
+  normalized sdist SHA-256 is
+  `f9d5e8fde7e2302b6ae396cb42c7bd9bad7e998ae00d1849851603c1a76ad0cd`. Each
+  report records all three isolated distribution smoke checks as passed.
+- Build reports, tool constraints, raw/normalized archives, Python/package
+  versions, and JUnit files are retained in the five run artifacts named
+  `release-python-*` and `release-provisioned-*`.
+- Local validation on Python 3.10.12 also passed Ruff format/check, Pyright,
+  482 hermetic tests, 15 provider/media checks (3 optional live skips), 8 FFmpeg
+  rendering checks, `pip check`, `python -m build`, and controlled repeat builds.
+
+The task remains in review rather than completed: after PR integration, verify
+the full acceptance suite against `main` and update package 017's completion
+status only when its integrated criteria are satisfied. Live ASR/YouTube checks
+remain optional and were explicitly skipped; no live result is claimed.
