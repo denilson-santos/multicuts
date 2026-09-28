@@ -27,6 +27,20 @@ Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavail
 - Run the narrowest relevant checks first, followed by the repository's required validation commands when applicable.
 - Do not create commits during implementation. Do not claim that a check passed unless it was run successfully.
 
+## Release versions
+
+For a release PR, follow the repository's package-versioning policy in the
+README. Choose the next SemVer version explicitly from the public compatibility
+changes since the last release tag, update `pyproject.toml`, and run
+`python scripts/verify_version.py` with the relevant tag. Ordinary feature
+PRs leave the package version alone.
+
+Include the proposed version, `vMAJOR.MINOR.PATCH` tag, and intended commit in
+the delivery package for a release. Create the tag only after the release PR is
+merged and the `main` release check passes. Obtain explicit authorization for
+tag creation or publication unless it was already given in the session. Never
+move or reuse a released tag.
+
 ## Prepare the delivery package
 
 After implementation and validation, inspect the complete diff and present:
