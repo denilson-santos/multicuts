@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | in-review |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 017.002 Verify cache recovery and invalidation; 017.003 Validate distributions and public contracts |
 | PR | [#50](https://github.com/denilson-santos/multicuts/pull/50) |
@@ -104,11 +104,10 @@ sdist d3548920935b485d854c1f68fbf22ada4fa1b265557be4657d8a04241c87949a
 
 ## Pull request validation
 
-[PR #50](https://github.com/denilson-santos/multicuts/pull/50) is open for
-review. All five CI jobs passed in
+Before integration, [PR #50](https://github.com/denilson-santos/multicuts/pull/50)
+passed all five CI jobs in
 [run 36365884429](https://github.com/denilson-santos/multicuts/actions/runs/36365884429)
-on 2026-09-27. For `pull_request`, GitHub tested merge
-candidate `cff2b13fc2026f1572b0ec6c6fa9d5c8d3db5159`, whose parents are base
+on 2026-09-27. For `pull_request`, GitHub tested merge candidate `cff2b13fc2026f1572b0ec6c6fa9d5c8d3db5159`, whose parents are base
 `ac7c87ca0251ab2deb68c9209630d0b3a4d02df4` and PR head
 `4117306de341d01b44cb4f83af591820fdf2d428`.
 
@@ -133,7 +132,31 @@ candidate `cff2b13fc2026f1572b0ec6c6fa9d5c8d3db5159`, whose parents are base
   482 hermetic tests, 15 provider/media checks (3 optional live skips), 8 FFmpeg
   rendering checks, `pip check`, `python -m build`, and controlled repeat builds.
 
-The task remains in review rather than completed: after PR integration, verify
-the full acceptance suite against `main` and update package 017's completion
-status only when its integrated criteria are satisfied. Live ASR/YouTube checks
-remain optional and were explicitly skipped; no live result is claimed.
+## Integrated acceptance
+
+[PR #50](https://github.com/denilson-santos/multicuts/pull/50) merged into
+`main` as `96bfed9309cb52721db2d24fa378de287138c051`.
+[CI run 36367513024](https://github.com/denilson-santos/multicuts/actions/runs/36367513024)
+completed successfully on this exact commit. Four
+Python quality jobs (3.10–3.13) each reported 478 passed and four expected
+public-provider skips in the hermetic suite. Their JUnit cases include package
+016 end-to-end acceptance, interruption exit/cleanup, cache reuse and recovery,
+single-ASR reuse, and completed-file preservation. The provisioned job passed
+7 provider/media contracts and all 8 FFmpeg rendering checks, including
+rotated presentation geometry; its three live ASR/YouTube checks were skipped
+because no external fixtures were configured.
+
+Five integrated release-build reports identify the merge commit and record all
+three isolated installation smoke checks as passed. Two controlled builds in
+each report have identical hashes, also matching across the four Python
+versions and the provisioned job:
+
+```text
+wheel 1389abbd1889beb16e830036bf73dc12cd3b86258908ee9b1cccc040161186b6
+sdist 695e661164c428ff8848c13fc40d65b1a6d54954038d9e2c20892ab9498e2534
+```
+
+Task 017.004 and package 017 are completed on this integrated evidence. The
+hashes apply to the recorded interpreter, build tools, platform, source, and
+controlled timestamp. Publication, release version, and registry remain
+separate decisions; no live ASR or YouTube run is claimed.

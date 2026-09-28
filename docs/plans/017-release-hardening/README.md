@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Milestone | M4 — Release hardening |
-| Status | in-progress |
+| Status | completed |
 | Priority | P1 |
 | Depends on | 016 Run artifacts and end-to-end completion |
 | Unlocks | A verified release candidate and a later publication decision |
@@ -24,11 +24,11 @@ media and manifests have overwrite guards. FFmpeg and subtitle paths already
 perform some local cleanup. This package closes gaps at stage/publication
 boundaries and verifies those existing policies together.
 
-Tasks 001–003 are integrated through PRs #47–#49 with passing CI. Task 004 is
-in review in [PR #50](https://github.com/denilson-santos/multicuts/pull/50) after the full Python 3.10–3.13 matrix, controlled
-builds, installed-distribution smoke checks, and provisioned public-contract
-and media checks passed. Package 017 remains in progress until task 004 is
-integrated and package-level acceptance is verified.
+Tasks 001–004 are integrated through PRs #47–#50. The full Python 3.10–3.13
+matrix, controlled builds, isolated installations, provisioned public
+contracts, and FFmpeg rendering checks passed on the integrated `main` commit.
+Package 017 meets its completion criteria; release publication is a separate
+decision.
 
 ## Included scope
 
@@ -76,16 +76,15 @@ data, and an operating-system I/O failure must not become one silent fallback.
 | Task | Status | Priority | Depends on | PRs | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | [001 Harden interruption and cleanup](001-harden-interruption-cleanup.md) | completed | P1 | 016 | [#47](https://github.com/denilson-santos/multicuts/pull/47) | Owned temporary outputs are cleaned safely and interruption remains visible |
-| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | completed | P1 | 001 | [#49](https://github.com/denilson-santos/multicuts/pull/49), [#50](https://github.com/denilson-santos/multicuts/pull/50) | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
+| [002 Verify cache recovery and invalidation](002-verify-cache-recovery.md) | completed | P1 | 001 | [#49](https://github.com/denilson-santos/multicuts/pull/49) | Valid checkpoints are reused and invalid or conflicting artifacts have explicit outcomes |
 | [003 Validate distributions and public contracts](003-validate-distributions-contracts.md) | completed | P1 | 016 | [#48](https://github.com/denilson-santos/multicuts/pull/48) | Built artifacts install outside the checkout and provider compatibility has explicit evidence |
-| [004 Verify repeatable release checks](004-verify-release-checks.md) | in-review | P1 | 002, 003 | [#50](https://github.com/denilson-santos/multicuts/pull/50) | Integrated release checks are repeatable and limitations are recorded |
+| [004 Verify repeatable release checks](004-verify-release-checks.md) | completed | P1 | 002, 003 | [#50](https://github.com/denilson-santos/multicuts/pull/50) | Integrated release checks are repeatable and limitations are recorded |
 
 ## Suggested task sequence
 
-Tasks 001–003 are completed. Task 004 passed its matrix and provisioned checks
-on the PR merge candidate and is in review. After integration, verify package
-acceptance before marking release hardening completed. Publication remains a
-separate decision.
+Tasks 001–004 and the package are completed. The integrated `main` CI provides
+the release-check evidence. Version and registry choices and publication remain
+separate decisions.
 
 ## Completion criteria
 
@@ -100,6 +99,22 @@ separate decision.
 - Supported Python versions and controlled repeat builds have recorded results.
 - A documented verification recipe identifies optional live checks separately
   and does not require network, models, or credentials in the default suite.
+
+## Integrated completion evidence
+
+[PR #50](https://github.com/denilson-santos/multicuts/pull/50) merged into
+`main` as `96bfed9309cb52721db2d24fa378de287138c051`.
+[CI run 36367513024](https://github.com/denilson-santos/multicuts/actions/runs/36367513024)
+passed all five jobs on that exact commit: Python 3.10–3.13 quality and hermetic acceptance, controlled
+wheel/sdist builds and three isolated installation smoke checks per build, plus
+provisioned public-provider and FFmpeg/media checks. The JUnit results include
+interruption, cache recovery, completed-file preservation, and package 016
+end-to-end acceptance cases. Each Python quality job reported 478 passed and
+four expected provider-contract skips; the provisioned job reported 7 contract
+passes, 8 rendering passes, and three optional live ASR/YouTube skips. All five
+release-build reports recorded matching artifact hashes and passed smoke tests.
+This satisfies the completion criteria above without claiming live ASR or
+YouTube validation.
 
 ## Risks, assumptions, and open questions
 
