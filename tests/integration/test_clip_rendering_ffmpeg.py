@@ -49,6 +49,26 @@ def _tools_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
+def _create_rotated_fixture(source_path: Path, destination: Path) -> None:
+    options = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-h", "full"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    supports_display_rotation = options.returncode == 0 and "-display_rotation" in (
+        options.stdout + options.stderr
+    )
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+    if supports_display_rotation:
+        command.extend(["-display_rotation:v:0", "90"])
+    command.extend(["-i", str(source_path), "-c", "copy"])
+    if not supports_display_rotation:
+        command.extend(["-metadata:s:v:0", "rotate=90"])
+    command.append(str(destination))
+    subprocess.run(command, check=True)
+
+
 def _refined(
     duration: float, *, start: float = 0.5, end: float = 1.8
 ) -> RefinedSelection:
@@ -189,24 +209,7 @@ def test_render_original_uses_rotated_presentation_geometry(tmp_path: Path) -> N
     if not _tools_available():
         pytest.skip("FFmpeg and ffprobe are required")
     source_path = tmp_path / "rotated.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-y",
-            "-i",
-            "src/multicuts/data/test-horizontal.mp4",
-            "-c",
-            "copy",
-            "-metadata:s:v:0",
-            "rotate=90",
-            str(source_path),
-        ],
-        check=True,
-    )
+    _create_rotated_fixture(Path("src/multicuts/data/test-horizontal.mp4"), source_path)
     request = _request(source_path, tmp_path / "render", aspect_ratio="original")
     assert (request.media.presentation_width, request.media.presentation_height) == (
         1080,
