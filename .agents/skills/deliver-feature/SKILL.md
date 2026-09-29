@@ -38,29 +38,54 @@ policy calls for it.
 
 Include the proposed version, tag, and intended target commit in the delivery
 package. When publishing a GitHub Release, draft its description in a temporary
-Markdown file at release time using the format below. Use the project's
-changelog, merged changes, and verified behavior as evidence. Summarize user
-impact rather than pasting a commit list. Replace every placeholder and remove
-optional sections that do not apply. Set the release title separately. Do not
-commit per-version notes unless the project requests them.
+Markdown file at release time using the format below. Compare changes with the
+previous released tag when one exists; for the first release, summarize the
+shipped baseline. Use the project's changelog, merged changes, and verified
+behavior as evidence.
+
+Write for people choosing whether and how to upgrade. Lead with the main
+user-visible outcome, group changes by purpose, and explain their effects
+instead of listing commits or pull requests. Include exact migration steps,
+new prerequisites or defaults, material security actions, and known issues or
+workarounds when relevant. Omit internal maintenance and claims that are not
+verified. Replace every placeholder, remove empty optional sections, and set
+the release title separately. Do not commit per-version notes unless the project
+requests them.
 
 ```markdown
-TODO: Explain what users gain from this release in one or two sentences.
+<In one to three sentences, say what this release is, who benefits, and its main
+outcome. Mention preview or development status when relevant.>
 
-## Changes
+## Highlights
 
-- TODO: List notable user-visible features, fixes, or improvements. Group them
-  when useful.
+- **<Feature or area>:** <What users can do now and how it helps them. Add a
+  documentation link when useful.>
 
-## Action required
+## Fixes and improvements
 
-- TODO: Describe breaking changes, migration steps, or new prerequisites. Remove
-  this section if no action is required.
+- **<Area>:** <The user-visible problem addressed and the result.>
 
-## Known limitations
+## Upgrade notes
 
-- TODO: State material caveats for this version. Remove this section if none.
+- **Breaking changes:** <Who is affected and the exact migration steps.>
+- **Requirements or configuration:** <New prerequisites, required settings, or
+  changed defaults.>
+- If no action or compatibility change is required, replace these bullets with:
+  `No migration steps are required.`
+
+## Security
+
+- **<Advisory or affected component>:** <Affected versions and the action users
+  should take. Link the advisory or fix; omit exploit details.>
+
+## Known issues
+
+- **<Issue>:** <User impact and a known workaround or status.>
 ```
+
+Keep `Upgrade notes` and state explicitly when no migration is required. Remove
+`Highlights`, `Fixes and improvements`, `Security`, or `Known issues` when they
+have no entries.
 
 Create the tag only after the repository's required merge and verification
 gates pass. After any tag checks pass, publish the GitHub Release for the
