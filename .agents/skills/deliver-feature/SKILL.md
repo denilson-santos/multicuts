@@ -27,19 +27,47 @@ Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavail
 - Run the narrowest relevant checks first, followed by the repository's required validation commands when applicable.
 - Do not create commits during implementation. Do not claim that a check passed unless it was run successfully.
 
-## Release versions
+## Releases
 
-For a release PR, follow the repository's package-versioning policy in the
-README. Choose the next SemVer version explicitly from the public compatibility
-changes since the last release tag, update `pyproject.toml`, and run
-`python scripts/verify_version.py` with the relevant tag. Ordinary feature
-PRs leave the package version alone.
+For release work, read the target repository's version source, release policy,
+tag convention, and verification gates. Choose the next version from changes
+since the previous release, applying SemVer when the repository uses it. Update
+the version in a release PR when required and run the repository's version and
+build checks. Ordinary feature PRs do not bump the version unless the project
+policy calls for it.
 
-Include the proposed version, `vMAJOR.MINOR.PATCH` tag, and intended commit in
-the delivery package for a release. Create the tag only after the release PR is
-merged and the `main` release check passes. Obtain explicit authorization for
-tag creation or publication unless it was already given in the session. Never
-move or reuse a released tag.
+Include the proposed version, tag, and intended target commit in the delivery
+package. When publishing a GitHub Release, draft its description in a temporary
+Markdown file at release time using the format below. Use the project's
+changelog, merged changes, and verified behavior as evidence. Summarize user
+impact rather than pasting a commit list. Replace every placeholder and remove
+optional sections that do not apply. Set the release title separately. Do not
+commit per-version notes unless the project requests them.
+
+```markdown
+TODO: Explain what users gain from this release in one or two sentences.
+
+## Changes
+
+- TODO: List notable user-visible features, fixes, or improvements. Group them
+  when useful.
+
+## Action required
+
+- TODO: Describe breaking changes, migration steps, or new prerequisites. Remove
+  this section if no action is required.
+
+## Known limitations
+
+- TODO: State material caveats for this version. Remove this section if none.
+```
+
+Create the tag only after the repository's required merge and verification
+gates pass. After any tag checks pass, publish the GitHub Release for the
+existing remote tag using the completed temporary notes file. Confirm that the
+remote tag targets the intended commit before publication. Obtain explicit
+authorization for tag creation and release publication unless already given in
+the session. Never move or reuse a released tag.
 
 ## Prepare the delivery package
 

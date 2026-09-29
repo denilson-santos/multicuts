@@ -99,7 +99,7 @@ increase MAJOR for incompatible changes, MINOR for compatible additions, and
 PATCH for compatible fixes. During initial `0.y.z` development, increase MINOR
 for features or incompatible changes and PATCH for compatible fixes.
 
-`0.0.0` is the current development placeholder and cannot be tagged as a
+`0.0.0` is a development placeholder and cannot be tagged as a
 release. Choose each release version manually in a dedicated release PR after
 reviewing changes since the previous `vMAJOR.MINOR.PATCH` tag. Update
 `pyproject.toml` in that PR; ordinary feature PRs do not bump the package
