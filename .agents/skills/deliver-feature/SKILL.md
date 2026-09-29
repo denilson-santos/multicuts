@@ -113,24 +113,31 @@ Use this exact Markdown structure for every pull request body:
 ```markdown
 ## Summary
 
-<State the concrete problem and the behavior after this change in one or two short paragraphs.>
+<Explain why this change is needed, who or what it affects, and the result. Link an issue when relevant.>
 
 ## Changes
 
-- <Describe a reviewable change.>
-- <Describe another reviewable change when applicable.>
+- <Describe a behavior or capability change and its user or project impact.>
+- <Describe supporting documentation, configuration, or tests when relevant.>
 
 ## Validation
 
-- `<command>` — passed (<concise result when useful>)
-- Not run: `<command>` — <reason>
+- `<command>` — passed: <relevant result>.
+- `<manual check>` — <result>.
+- Not run: `<relevant check>` — <reason>.
+
+## Compatibility and rollout
+
+- <Breaking changes, migration steps, changed defaults or configuration, data impact, or deployment steps.>
+- None.
 
 ## Risks and follow-ups
 
+- <Known limitation or unresolved work; link an issue or name an owner when useful.>
 - None.
 ```
 
-Keep all four headings in this order. Replace the instructional placeholders and remove unused example bullets, but do not remove a section. Under `Validation`, list every materially relevant command that ran and its result; list required or relevant checks that could not run with the reason. Under `Risks and follow-ups`, write `- None.` when there are no known items. Include issue links, migration notes, breaking-change details, screenshots, or operational notes inside the most relevant section rather than creating ad hoc headings. Keep the summary focused on the final implementation, without conversational history or abandoned approaches.
+Keep all five headings in this order. Replace the instructional placeholders and remove unused example bullets, but do not remove a section. Keep the summary to one or two short paragraphs. Describe reviewable behavior and impact under `Changes` instead of listing files or commits. Under `Validation`, list materially relevant automated and manual checks with their results, and give a reason for each relevant check that was not run. Under `Compatibility and rollout`, state `- None.` when the change has no compatibility, migration, configuration, data, or deployment impact. Under `Risks and follow-ups`, state `- None.` when no known issues remain. Put issue links, screenshots, breaking-change details, rollout notes, and other context inside the closest matching section rather than adding ad hoc headings. Focus on the final implementation, without conversational history or abandoned approaches.
 
 Create the pull request using the exact title and body shown in the approved delivery package. Preserve Markdown with a body file or an equivalent structured tool argument rather than assembling multiline prose through fragile shell quoting.
 
