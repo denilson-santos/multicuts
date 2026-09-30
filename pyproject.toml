@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "multicuts"
 version = "0.1.0"
-description = "Turn long-form videos into ranked, subtitled short clips."
+description = "Turn long videos into ranked, subtitled short and long clips."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
@@ -26,9 +26,6 @@ classifiers = [
 multicuts = "multicuts.cli:main"
 
 [project.optional-dependencies]
-openai = [
-    "openai>=2,<3",
-]
 dev = [
     "build>=1.2,<2",
     "pyright>=1.1,<2",

@@ -1,437 +1,263 @@
-import logging
-import re
+"""Public CLI configuration and process-boundary behavior."""
+
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from multicuts.cli import app, main, parse_run_config
-from multicuts.config import RunConfig
-from multicuts.errors import (
-    AcquisitionError,
-    ArtifactError,
-    ConfigurationError,
-    MediaError,
-    RenderingError,
-    ScoringError,
-    TranscriptionError,
-)
-from multicuts.final_artifacts import RunOutcome
-from multicuts.pipeline import RunResult
-
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+from multicuts.app_config import AppConfig
+from multicuts.cli import main, parse_run_config
+from multicuts.errors import ScoringError
+from multicuts.pipeline import RunOutcome, RunResult
 
 
-def _without_ansi(text: str) -> str:
-    return _ANSI_ESCAPE.sub("", text)
+def _args() -> list[str]:
+    return [
+        "source.mp4",
+        "--output-dir",
+        "out",
+        "--llm-backend",
+        "codex",
+        "--llm-model",
+        "test-model",
+    ]
 
 
-def test_generate_defaults_are_converted_to_run_config() -> None:
-    config = parse_run_config(["missing-video.mp4"])
-
-    assert config.source == "missing-video.mp4"
-    assert config.output_dir == Path("multicuts-output")
-    assert config.language is None
-    assert config.clips == 5
-    assert config.min_score == 0
-    assert config.min_duration == 15.0
-    assert config.max_duration == 60.0
-    assert config.overlap_threshold == 0.60
-    assert config.text_similarity_threshold == 0.90
-    assert config.refinement_pre_roll == 0.15
-    assert config.refinement_post_roll == 0.25
-    assert config.aspect_ratio == "original"
-    assert (config.vertical_width, config.vertical_height) == (1080, 1920)
-    assert config.subtitle_template == "yellow-pop"
-    assert config.subtitles_enabled
-    assert config.scorer == "heuristic"
-    assert config.model == "default"
-    assert config.semantic_provider == "openai"
-    assert config.semantic_model == "gpt-6-luna"
-    assert config.semantic_reasoning_effort == "max"
-    assert config.semantic_fallback == "heuristic"
-
-
-def test_generate_maps_explicit_options_without_accessing_source(
-    tmp_path: Path,
+def test_cli_defaults_seek_both_classes_without_a_clip_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    template_dir = tmp_path / "templates"
-    template_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LLM_EFFORT", raising=False)
+    config = parse_run_config(_args())
+    assert config.llm_backend == "codex"
+    assert config.llm_model == "test-model"
+    assert config.llm_effort is None
+    assert config.short_aspect_ratio == "9:16"
+    assert config.long_aspect_ratio == "16:9"
+    assert config.language is None
+    assert not hasattr(config, "clips")
 
+
+def test_cli_options_override_process_environment_and_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\nOVERLAP_THRESHOLD=0.7\nSUBTITLES_ENABLED=false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLM_MODEL", "process-model")
+    monkeypatch.setenv("LLM_EFFORT", "medium")
     config = parse_run_config(
         [
-            "https://example.test/video",
+            "source.mp4",
             "--output-dir",
-            "~/runs",
-            "--lang",
-            "pt-BR",
-            "--clips",
-            "8",
-            "--min-score",
-            "65",
-            "--min-duration",
-            "20",
-            "--max-duration",
-            "45",
+            str(tmp_path / "out"),
+            "--llm-backend",
+            "anthropic",
+            "--llm-effort",
+            "high",
             "--overlap-threshold",
-            "0.5",
-            "--text-threshold",
-            "0.95",
-            "--pre-roll",
-            "0.2",
-            "--post-roll",
-            "0.3",
-            "--aspect-ratio",
-            "9:16",
-            "--vertical-width",
-            "720",
-            "--vertical-height",
-            "1280",
-            "--subtitle-template",
-            "yellow-pop",
-            "--subtitle-template-dir",
-            str(template_dir),
-            "--scorer",
-            "hybrid",
-            "--model",
-            "large-v3",
-            "--semantic-provider",
-            "openai",
-            "--semantic-model",
-            "gpt-6-luna",
-            "--semantic-effort",
-            "max",
-            "--semantic-fallback",
-            "none",
-            "--keep-intermediates",
-            "--force-recompute",
-            "--verbose",
+            "0.8",
+            "--subtitles",
         ]
     )
-
-    assert config.source == "https://example.test/video"
-    assert config.output_dir == Path("~/runs").expanduser()
-    assert config.language == "pt-BR"
-    assert (config.clips, config.min_score) == (8, 65)
-    assert (config.min_duration, config.max_duration) == (20.0, 45.0)
-    assert config.overlap_threshold == 0.5
-    assert config.text_similarity_threshold == 0.95
-    assert config.refinement_pre_roll == 0.2
-    assert config.refinement_post_roll == 0.3
-    assert config.aspect_ratio == "9:16"
-    assert (config.vertical_width, config.vertical_height) == (720, 1280)
-    assert config.subtitle_template == "yellow-pop"
-    assert config.subtitle_template_dir == template_dir
-    assert config.scorer == "hybrid"
-    assert config.model == "large-v3"
-    assert config.semantic_provider == "openai"
-    assert config.semantic_model == "gpt-6-luna"
-    assert config.semantic_reasoning_effort == "max"
-    assert config.semantic_fallback == "none"
-    assert config.keep_intermediates
-    assert config.force_recompute
-    assert config.verbose
+    assert config.output_dir == tmp_path / "out"
+    assert config.llm_backend == "anthropic"
+    assert config.llm_model == "process-model"
+    assert config.llm_effort == "high"
+    assert config.overlap_threshold == 0.8
+    assert config.subtitles_enabled
 
 
-def test_no_subtitles_option_disables_burn_in() -> None:
-    config = parse_run_config(["source.mp4", "--no-subtitles"])
-
-    assert not config.subtitles_enabled
-
-
-def test_auto_language_is_normalized_by_run_config() -> None:
-    assert parse_run_config(["source.mp4", "--lang", "auto"]).language is None
+def test_cli_rejects_removed_fixed_count_and_heuristic_options() -> None:
+    assert main(_args() + ["--clips", "2"]) == 2
+    assert main(_args() + ["--scorer", "heuristic"]) == 2
+    assert main(_args() + ["--min-score", "70"]) == 2
 
 
-@pytest.mark.parametrize(
-    ("option", "value", "message"),
-    [
-        ("--clips", "0", "clips"),
-        ("--min-score", "101", "min_score"),
-        ("--aspect-ratio", "square", "aspect_ratio"),
-        ("--vertical-width", "719", "vertical target"),
-        ("--overlap-threshold", "1.1", "overlap_threshold"),
-        ("--pre-roll", "-0.1", "refinement_pre_roll"),
-    ],
-)
-def test_semantic_cli_errors_reach_run_config_validation(
-    option: str, value: str, message: str
+@pytest.mark.parametrize("flag", ["--ai-backend", "--ai-model", "--ai-effort"])
+def test_cli_rejects_removed_ai_flags(flag: str) -> None:
+    assert main(_args() + [flag, "legacy"]) == 2
+
+
+def test_cli_ignores_removed_ai_environment_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(ConfigurationError, match=message):
-        parse_run_config(["source.mp4", option, value])
+    monkeypatch.chdir(tmp_path)
+    for name in ("LLM_BACKEND", "LLM_MODEL", "LLM_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AI_BACKEND", "codex")
+    monkeypatch.setenv("AI_MODEL", "old-model")
+    monkeypatch.setenv("AI_EFFORT", "high")
+    assert main(["source.mp4", "--output-dir", str(tmp_path / "out")]) == 2
 
 
-def test_custom_template_directory_is_validated_by_run_config(
-    tmp_path: Path,
+def test_cli_requires_backend_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(ConfigurationError, match="subtitle_template_dir"):
-        parse_run_config(
-            [
-                "source.mp4",
-                "--subtitle-template-dir",
-                str(tmp_path / "missing-templates"),
-            ]
-        )
-
-
-def test_help_exposes_the_documented_options_and_score_semantics() -> None:
-    result = CliRunner().invoke(app, ["--help"], prog_name="multicuts")
-
-    assert result.exit_code == 0
-    help_text = _without_ansi(result.stdout)
-    assert "Usage: multicuts" in help_text
-    assert "SOURCE" in help_text
-    assert "{generate}" not in help_text
-    for option in (
-        "--output-dir",
-        "--lang",
-        "--clips",
-        "--min-score",
-        "--min-duration",
-        "--max-duration",
-        "--candidate-budget",
-        "--overlap-threshold",
-        "--text-threshold",
-        "--pre-roll",
-        "--post-roll",
-        "--aspect-ratio",
-        "--vertical-width",
-        "--vertical-height",
-        "--subtitle-template",
-        "--subtitle-template-dir",
-        "--no-subtitles",
-        "--scorer",
-        "--model",
-        "--semantic-provider",
-        "--semantic-model",
-        "--semantic-effort",
-        "--semantic-fallback",
-        "--keep-intermediates",
-        "--force-recompute",
-        "--verbose",
-    ):
-        assert option in help_text
-    assert "ranking heuristic, not a probability" in " ".join(help_text.split())
-
-
-def test_removed_generate_subcommand_is_rejected() -> None:
-    result = CliRunner().invoke(app, ["generate", "source.mp4"])
-
-    assert result.exit_code == 2
-
-
-def _published_result(
-    outcome: RunOutcome = RunOutcome.COMPLETED,
-    *,
-    clips: tuple[Path, ...] = (Path("clip.mp4"),),
-    warnings: tuple[str, ...] = (),
-) -> RunResult:
-    return RunResult("run-123", outcome, Path("output/manifest.json"), clips, warnings)
-
-
-def test_main_passes_one_validated_config_to_pipeline(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    received: list[RunConfig] = []
-
-    def fake_pipeline(config: RunConfig) -> RunResult:
-        received.append(config)
-        return _published_result()
-
-    exit_code = main(["source.mp4", "--clips", "2"], pipeline=fake_pipeline)
-
-    assert exit_code == 0
-    assert len(received) == 1
-    assert received[0].clips == 2
-    assert "Run run-123: completed; completed clips=1" in capsys.readouterr().out
-
-
-def test_main_uses_the_default_pipeline_boundary(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    called: list[RunConfig] = []
-
-    def fake_pipeline(config: RunConfig) -> RunResult:
-        called.append(config)
-        return _published_result()
-
-    monkeypatch.setattr("multicuts.cli.run_pipeline", fake_pipeline)
-
-    assert main(["source.mp4"]) == 0
-    assert called[0].source == "source.mp4"
-
-
-@pytest.mark.parametrize(
-    ("outcome", "clips", "warnings", "exit_code"),
-    [
-        (RunOutcome.ZERO_SELECTION, (), (), 0),
-        (RunOutcome.PARTIAL, (Path("clip.mp4"),), ("raw_render_failed",), 6),
-        (RunOutcome.FAILED, (), ("final_render_failed",), 6),
-    ],
-)
-def test_main_reports_published_run_outcomes(
-    outcome: RunOutcome,
-    clips: tuple[Path, ...],
-    warnings: tuple[str, ...],
-    exit_code: int,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def fake_pipeline(_config: RunConfig) -> RunResult:
-        return _published_result(outcome, clips=clips, warnings=warnings)
-
-    assert main(["source.mp4"], pipeline=fake_pipeline) == exit_code
-    output = capsys.readouterr().out
-    assert f"Run run-123: {outcome.value}" in output
-    assert f"completed clips={len(clips)}" in output
-    assert "manifest=output/manifest.json" in output
-    assert f"warnings={', '.join(warnings) if warnings else 'none'}" in output
-
-
-def test_main_maps_incomplete_pipeline_to_unexpected_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def incomplete_pipeline(_config: RunConfig) -> None:
-        raise RuntimeError("pipeline incomplete")
-
-    monkeypatch.setattr("multicuts.cli.run_pipeline", incomplete_pipeline)
-
-    assert main(["source.mp4"]) == 1
-    output = capsys.readouterr().err
-    assert "Unexpected failure; no diagnostic details are available" in output
-    assert "pipeline incomplete" not in output
-    assert "Traceback" not in output
-
-
-@pytest.mark.parametrize(
-    ("error", "expected_exit", "label"),
-    [
-        (ConfigurationError("clips must be positive"), 2, "Invalid configuration"),
-        (AcquisitionError("source is unavailable"), 3, "Acquisition failed"),
-        (MediaError("source has no audio"), 3, "Media preflight failed"),
-        (TranscriptionError("provider failed"), 4, "Transcription failed"),
-        (ScoringError("scorer failed"), 5, "Scoring failed"),
-        (RenderingError("FFmpeg failed"), 6, "Rendering failed"),
-        (
-            ArtifactError("manifest could not be written"),
-            6,
-            "Artifact publication failed",
-        ),
-    ],
-)
-def test_main_maps_project_errors_to_documented_exit_codes(
-    error: Exception,
-    expected_exit: int,
-    label: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def failing_pipeline(_config: RunConfig) -> RunResult:
-        raise error
-
-    assert main(["source.mp4"], pipeline=failing_pipeline) == expected_exit
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    output = captured.err
-    assert f"{label}: {error}" in output
-    assert "Traceback" not in output
-
-
-def test_main_reports_semantic_configuration_errors_without_running_pipeline(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    called = False
-
-    def failing_pipeline(_config: RunConfig) -> RunResult:
-        nonlocal called
-        called = True
-        return _published_result()
-
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    assert main(["source.mp4", "--output-dir", str(tmp_path / "out")]) == 2
     assert (
         main(
-            ["source.mp4", "--clips", "0"],
-            pipeline=failing_pipeline,
+            [
+                "source.mp4",
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--llm-backend",
+                "openai",
+            ]
         )
         == 2
     )
-    assert not called
-    assert "Invalid configuration: clips" in capsys.readouterr().err
 
 
-def test_main_maps_typer_parse_errors_to_configuration_exit(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert main(["source.mp4", "--clips", "not-an-integer"]) == 2
-    assert "Invalid value for '--clips'" in _without_ansi(capsys.readouterr().err)
-
-
-def test_main_verbose_diagnostics_include_safe_failure_metadata(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def failing_pipeline(_config: RunConfig) -> RunResult:
-        raise AcquisitionError("download failed token=super-secret") from RuntimeError(
-            "provider token=super-secret"
+def test_cli_reports_zero_selection_as_success(tmp_path: Path) -> None:
+    def fake_pipeline(config: AppConfig) -> RunResult:
+        assert config.source == "source.mp4"
+        return RunResult(
+            "run-1", RunOutcome.ZERO_SELECTION, tmp_path / "manifest.json", ()
         )
 
-    assert (
-        main(
-            ["https://example.test/video?token=super-secret", "--verbose"],
-            pipeline=failing_pipeline,
-        )
-        == 3
+    assert main(_args(), pipeline=fake_pipeline) == 0
+
+
+def test_cli_reports_provider_failure_without_fallback() -> None:
+    def fake_pipeline(_config: AppConfig) -> RunResult:
+        raise ScoringError("provider unavailable")
+
+    assert main(_args(), pipeline=fake_pipeline) == 5
+
+
+def test_transcription_language_comes_only_from_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "TRANSCRIPTION_LANGUAGE=es\nLLM_BACKEND=codex\nLLM_MODEL=test-model\n",
+        encoding="utf-8",
     )
-    output = capsys.readouterr().err
-    assert "stage=acquire" in output
-    assert "error_type=AcquisitionError" in output
-    assert "super-secret" not in output
-    assert "Traceback" not in output
-
-
-def test_main_unexpected_failure_uses_only_generic_and_typed_diagnostics(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def failing_pipeline(_config: RunConfig) -> RunResult:
-        raise RuntimeError("provider response token=super-secret") from ValueError(
-            "raw provider payload"
-        )
-
-    assert (
-        main(
-            ["source.mp4", "--verbose"],
-            pipeline=failing_pipeline,
-        )
-        == 1
+    monkeypatch.setenv("TRANSCRIPTION_LANGUAGE", "fr")
+    automatic = parse_run_config(["source.mp4", "--output-dir", str(tmp_path / "out")])
+    specified = parse_run_config(
+        ["source.mp4", "--output-dir", str(tmp_path / "out"), "--lang", "pt"]
     )
-    output = capsys.readouterr().err
-    assert "Unexpected failure; no diagnostic details are available" in output
-    assert "stage=run error_type=RuntimeError cause_type=ValueError" in output
-    assert "provider response" not in output
-    assert "raw provider payload" not in output
-    assert "super-secret" not in output
+    assert automatic.language is None
+    assert specified.language == "pt"
 
 
-def test_main_returns_clean_interruption_exit_without_success_summary(
-    capsys: pytest.CaptureFixture[str],
+def test_output_dir_is_required_even_when_environment_defines_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def interrupt_pipeline(_config: RunConfig) -> RunResult:
-        raise KeyboardInterrupt
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "OUTPUT_DIR=dotenv-out\nLLM_BACKEND=codex\nLLM_MODEL=test-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OUTPUT_DIR", "process-out")
+    assert main(["source.mp4"]) == 2
+    config = parse_run_config(["source.mp4", "--output-dir", "cli-out"])
+    assert config.output_dir == Path("cli-out")
 
-    assert main(["source.mp4"], pipeline=interrupt_pipeline) == 130
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    output = captured.err
-    assert "Run interrupted" in output
-    assert "completion summary" in output
+
+def test_asr_model_flag_replaces_model_flag() -> None:
+    config = parse_run_config(_args() + ["--asr-model", "large-v3"])
+    assert config.transcription_model == "large-v3"
+    assert main(_args() + ["--model", "large-v3"]) == 2
 
 
-def test_pipeline_logging_configuration_sets_debug_level_for_verbose() -> None:
-    from multicuts.cli import configure_logging
+def test_llm_effort_from_environment_and_auto_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("LLM_EFFORT=low\n", encoding="utf-8")
+    assert parse_run_config(_args()).llm_effort == "low"
+    monkeypatch.setenv("LLM_EFFORT", "medium")
+    assert parse_run_config(_args()).llm_effort == "medium"
+    assert parse_run_config(_args() + ["--llm-effort", "auto"]).llm_effort is None
 
-    root_logger = logging.getLogger()
-    project_logger = logging.getLogger("multicuts")
-    root_level = root_logger.level
-    configure_logging(verbose=True)
-    assert project_logger.level == logging.DEBUG
-    assert root_logger.level == root_level
-    configure_logging(verbose=False)
-    assert project_logger.level == logging.WARNING
-    assert root_logger.level == root_level
+
+@pytest.mark.parametrize(
+    ("backend", "effort"),
+    [
+        ("openai", "ultra"),
+        ("anthropic", "none"),
+        ("gemini", "xhigh"),
+        ("codex", "none"),
+        ("claude", "ultra"),
+        ("agy", "xhigh"),
+    ],
+)
+def test_cli_rejects_effort_unsupported_by_backend(
+    backend: str, effort: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LLM_EFFORT", raising=False)
+    args = _args() + ["--llm-backend", backend, "--llm-effort", effort]
+    assert main(args) == 2
+
+
+def test_gemini_25_rejects_explicit_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LLM_EFFORT", raising=False)
+    args = _args() + [
+        "--llm-backend",
+        "gemini",
+        "--llm-model",
+        "gemini-2.5-pro",
+        "--llm-effort",
+        "high",
+    ]
+    assert main(args) == 2
+    assert parse_run_config(args[:-2]).llm_effort is None
+
+
+@pytest.mark.parametrize("location", ["dotenv", "process"])
+def test_run_controls_are_cli_only(
+    location: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    variables = {
+        "VERBOSE": "true",
+        "FORCE_RECOMPUTE": "true",
+        "KEEP_INTERMEDIATES": "true",
+    }
+    if location == "dotenv":
+        (tmp_path / ".env").write_text(
+            "".join(f"{name}={value}\n" for name, value in variables.items()),
+            encoding="utf-8",
+        )
+    else:
+        for name, value in variables.items():
+            monkeypatch.setenv(name, value)
+
+    automatic = parse_run_config(_args())
+    explicit = parse_run_config(
+        _args() + ["--verbose", "--force-recompute", "--keep-intermediates"]
+    )
+    assert not automatic.verbose
+    assert not automatic.force_recompute
+    assert not automatic.keep_intermediates
+    assert explicit.verbose
+    assert explicit.force_recompute
+    assert explicit.keep_intermediates
+
+
+def test_main_ignores_verbose_environment_before_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VERBOSE", "true")
+    calls: list[bool] = []
+    monkeypatch.setattr("multicuts.cli.configure_logging", calls.append)
+
+    def fake_pipeline(_config: AppConfig) -> RunResult:
+        return RunResult(
+            "run-1", RunOutcome.ZERO_SELECTION, tmp_path / "manifest.json", ()
+        )
+
+    assert main(_args(), pipeline=fake_pipeline) == 0
+    assert calls == [False, False]

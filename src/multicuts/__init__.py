@@ -1,1 +1,1 @@
-"""Create ranked, subtitled short clips from long-form videos."""
+"""Generate ranked short and long clips from long-form video."""

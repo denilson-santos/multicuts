@@ -5,6 +5,7 @@ import inspect
 import re
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 
@@ -20,11 +21,11 @@ def _installed_provider() -> ModuleType:
         raise
 
 
-def _assert_supported_provider_version(provider: ModuleType) -> None:
-    version = getattr(provider, "__version__", "")
-    parts = version.split(".") if isinstance(version, str) else []
+def _assert_supported_provider_version() -> None:
+    version = metadata.version("multisubs")
+    parts = version.split(".")
     assert len(parts) >= 2 and all(part.isdigit() for part in parts[:2]), (
-        "multisubs does not expose a numeric major/minor version"
+        "multisubs distribution lacks a numeric major/minor version"
     )
     assert parts[0] == "4" and int(parts[1]) >= 3, (
         "multisubs 4.3 or newer is required by the consumed public contract"
@@ -36,7 +37,7 @@ def test_public_transcription_signature_and_version(language: str | None) -> Non
     provider = _installed_provider()
     generate = getattr(provider, "generate_transcriptions", None)
     assert callable(generate), "multisubs.generate_transcriptions is unavailable"
-    _assert_supported_provider_version(provider)
+    _assert_supported_provider_version()
 
     try:
         inspect.signature(generate).bind(
@@ -53,7 +54,7 @@ def test_public_transcription_signature_and_version(language: str | None) -> Non
 def test_multisubs_subtitle_timed_cue_json_signature_and_artifact_shape() -> None:
     """Pin the 4.3 contract consumed through the supported CLI boundary."""
     provider = _installed_provider()
-    _assert_supported_provider_version(provider)
+    _assert_supported_provider_version()
 
     generate = getattr(provider, "generate_subtitles_from_json", None)
     assert callable(generate), "multisubs.generate_subtitles_from_json is unavailable"
