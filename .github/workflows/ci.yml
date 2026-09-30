@@ -180,7 +180,7 @@ jobs:
             tests/integration/test_youtube_live.py \
             -ra --junitxml=release-evidence/contracts.xml
           "$PROVISIONED_VENV/bin/python" -m pytest \
-            tests/integration/test_clip_rendering_ffmpeg.py \
+            tests/integration/test_render_ffmpeg.py \
             -ra --junitxml=release-evidence/rendering.xml
 
       - name: Upload provisioned evidence

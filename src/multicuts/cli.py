@@ -1,4 +1,6 @@
-"""Typer command-line parsing and process-boundary handling for one run."""
+"""Command line interface for one semantic multicuts run."""
+
+from __future__ import annotations
 
 import logging
 import re
@@ -10,7 +12,8 @@ from typing import Annotated
 
 import typer
 
-from multicuts.config import RunConfig
+from multicuts.adapters._llm_common import setting
+from multicuts.app_config import AppConfig
 from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
@@ -21,37 +24,15 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.final_artifacts import RunOutcome
-from multicuts.pipeline import RunResult, run_pipeline
+from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 
-DEFAULT_OUTPUT_DIR = Path("multicuts-output")
-DEFAULT_CLIPS = 5
-DEFAULT_MIN_SCORE = 0
-DEFAULT_CANDIDATE_BUDGET = 50
-DEFAULT_OVERLAP_THRESHOLD = 0.60
-DEFAULT_TEXT_SIMILARITY_THRESHOLD = 0.90
-DEFAULT_REFINEMENT_PRE_ROLL = 0.15
-DEFAULT_REFINEMENT_POST_ROLL = 0.25
-DEFAULT_ASPECT_RATIO = "original"
-DEFAULT_VERTICAL_WIDTH = 1080
-DEFAULT_VERTICAL_HEIGHT = 1920
-DEFAULT_SUBTITLE_TEMPLATE = "yellow-pop"
-DEFAULT_SCORER = "heuristic"
-DEFAULT_MODEL = "default"
-DEFAULT_SEMANTIC_PROVIDER = "openai"
-DEFAULT_SEMANTIC_MODEL = "gpt-6-luna"
-DEFAULT_SEMANTIC_REASONING_EFFORT = "max"
-DEFAULT_SEMANTIC_FALLBACK = "heuristic"
-
-
-PipelineRunner = Callable[[RunConfig], RunResult]
+PipelineRunner = Callable[[AppConfig], RunResult]
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class _CliContext:
-    """State shared between Typer's command callback and the process boundary."""
-
-    parsed_config: RunConfig | None = None
+    parsed_config: AppConfig | None = None
 
 
 EXIT_SUCCESS = 0
@@ -62,186 +43,90 @@ EXIT_TRANSCRIPTION = 4
 EXIT_SCORING = 5
 EXIT_RENDERING = 6
 
-logger = logging.getLogger(__name__)
-_CLI_HANDLER_MARKER = "_multicuts_cli_handler"
-_MAX_SAFE_ERROR_LENGTH = 500
-_SECRET_VALUE_PATTERN = re.compile(
+_ERROR_DETAILS: tuple[tuple[type[MulticutsError], int, str], ...] = (
+    (ConfigurationError, EXIT_CONFIGURATION, "Invalid configuration"),
+    (AcquisitionError, EXIT_ACQUISITION, "Acquisition failed"),
+    (MediaError, EXIT_ACQUISITION, "Media preflight failed"),
+    (TranscriptionError, EXIT_TRANSCRIPTION, "Transcription failed"),
+    (ScoringError, EXIT_SCORING, "AI analysis failed"),
+    (RenderingError, EXIT_RENDERING, "Rendering failed"),
+    (ArtifactError, EXIT_RENDERING, "Artifact publication failed"),
+)
+_SECRET = re.compile(
     r"(?i)(\b(?:access[_ -]?token|api[_ -]?key|authorization|cookie|password|"
     r"secret|token)\b\s*(?:[:=]\s*(?:bearer\s+)?|bearer\s+))[^\s,;]+"
 )
-_URL_SECRET_PATTERN = re.compile(
-    r"(?i)([?&](?:access[_-]?token|api[_-]?key|signature|token|key)=)[^&#\s]+"
-)
 
-_ERROR_DETAILS: tuple[tuple[type[MulticutsError], int, str, str], ...] = (
-    (ConfigurationError, EXIT_CONFIGURATION, "configuration", "Invalid configuration"),
-    (AcquisitionError, EXIT_ACQUISITION, "acquire", "Acquisition failed"),
-    # Media preflight is part of validating the acquired input.
-    (MediaError, EXIT_ACQUISITION, "probe", "Media preflight failed"),
-    (TranscriptionError, EXIT_TRANSCRIPTION, "transcribe", "Transcription failed"),
-    (ScoringError, EXIT_SCORING, "score", "Scoring failed"),
-    (RenderingError, EXIT_RENDERING, "render", "Rendering failed"),
-    # Artifact publication is an output-stage failure and shares rendering's exit.
-    (ArtifactError, EXIT_RENDERING, "publish", "Artifact publication failed"),
-)
+
+class _CliHandler(logging.StreamHandler):
+    """Marker for the handler owned by this CLI."""
 
 
 def configure_logging(verbose: bool) -> None:
-    """Configure standard logging for one CLI invocation.
-
-    The handler is attached only to the project logger hierarchy. This keeps
-    verbose provider logging disabled while still allowing repeated in-process
-    invocations to follow the current ``sys.stderr``.
-    """
-    project_logger = logging.getLogger("multicuts")
-    project_logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
-
-    handler: logging.StreamHandler | None = next(
-        (
-            candidate
-            for candidate in project_logger.handlers
-            if isinstance(candidate, logging.StreamHandler)
-            and getattr(candidate, _CLI_HANDLER_MARKER, False)
-        ),
-        None,
-    )
-    if handler is not None:
-        project_logger.removeHandler(handler)
-        handler.close()
-
-    handler = logging.StreamHandler(sys.stderr)
-    setattr(handler, _CLI_HANDLER_MARKER, True)
+    project = logging.getLogger("multicuts")
+    project.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    for handler in list(project.handlers):
+        if isinstance(handler, _CliHandler):
+            project.removeHandler(handler)
+            handler.close()
+    handler = _CliHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    project_logger.addHandler(handler)
+    project.addHandler(handler)
 
 
 def _safe_text(value: object) -> str:
-    """Bound and redact text before it reaches user-facing diagnostics."""
-    message = " ".join(str(value).split())
-    if not message:
-        message = "no further details available"
-    message = _SECRET_VALUE_PATTERN.sub(r"\1[REDACTED]", message)
-    message = _URL_SECRET_PATTERN.sub(r"\1[REDACTED]", message)
-    if len(message) > _MAX_SAFE_ERROR_LENGTH:
-        message = message[:_MAX_SAFE_ERROR_LENGTH].rstrip() + "..."
-    return message
+    message = _SECRET.sub(r"\1[REDACTED]", " ".join(str(value).split()))
+    return (message[:500] + "...") if len(message) > 500 else message
 
 
-def _error_details(error: MulticutsError) -> tuple[int, str, str]:
-    """Return the exit code, stage, and user-facing label for an expected error."""
-    for error_type, exit_code, stage, label in _ERROR_DETAILS:
-        if isinstance(error, error_type):
-            return exit_code, stage, label
-    return EXIT_UNEXPECTED, "unknown", "Unexpected project failure"
+def _value(option: object | None, name: str, default: object) -> object:
+    if option is not None:
+        return option
+    from_environment = setting(name)
+    return default if from_environment is None else from_environment
 
 
-def _log_project_error(error: MulticutsError, *, verbose: bool) -> int:
-    """Log a safe project error and return its documented process exit code."""
-    exit_code, stage, label = _error_details(error)
-    logger.error("%s: %s", label, _safe_text(error))
-    if verbose:
-        cause_type = type(error.__cause__).__name__ if error.__cause__ else "none"
-        logger.debug(
-            "stage=%s error_type=%s cause_type=%s exit_code=%d",
-            stage,
-            type(error).__name__,
-            cause_type,
-            exit_code,
-        )
-    return exit_code
+def _integer(option: int | None, name: str, default: int) -> int:
+    raw = _value(option, name, default)
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        raise ConfigurationError(f"{name} must be an integer")
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be an integer") from exc
 
 
-def _log_unexpected_error(error: BaseException, *, stage: str, verbose: bool) -> int:
-    """Log an unexpected failure without exposing its raw message or cause."""
-    logger.error("Unexpected failure; no diagnostic details are available")
-    if verbose:
-        cause_type = type(error.__cause__).__name__ if error.__cause__ else "none"
-        logger.debug(
-            "stage=%s error_type=%s cause_type=%s exit_code=%d",
-            stage,
-            type(error).__name__,
-            cause_type,
-            EXIT_UNEXPECTED,
-        )
-    return EXIT_UNEXPECTED
+def _float(option: float | None, name: str, default: float) -> float:
+    raw = _value(option, name, default)
+    if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+        raise ConfigurationError(f"{name} must be a number")
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be a number") from exc
+
+
+def _boolean(option: bool | None, name: str, default: bool) -> bool:
+    raw = _value(option, name, default)
+    if type(raw) is bool:
+        return raw
+    if isinstance(raw, str):
+        if raw.casefold() in ("true", "yes", "1", "on"):
+            return True
+        if raw.casefold() in ("false", "no", "0", "off"):
+            return False
+    raise ConfigurationError(f"{name} must be a boolean")
 
 
 app = typer.Typer(
     name="multicuts",
     help=(
-        "Generate ranked short clips from SOURCE. The viral-potential score is "
-        "an explainable ranking heuristic, not a probability."
+        "Find and render transcript-based short and long clips with "
+        "explainable viral-potential scores."
     ),
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
-    no_args_is_help=False,
 )
-
-
-def _build_run_config(
-    *,
-    source: str,
-    output_dir: Path,
-    language: str,
-    clips: int,
-    min_score: int,
-    min_duration: float,
-    max_duration: float,
-    candidate_budget: int,
-    overlap_threshold: float,
-    text_similarity_threshold: float,
-    refinement_pre_roll: float,
-    refinement_post_roll: float,
-    aspect_ratio: str,
-    vertical_width: int,
-    vertical_height: int,
-    subtitle_template: str,
-    subtitle_template_dir: Path | None,
-    subtitles_enabled: bool,
-    scorer: str,
-    model: str,
-    semantic_provider: str,
-    semantic_model: str,
-    semantic_reasoning_effort: str,
-    semantic_fallback: str,
-    keep_intermediates: bool,
-    force_recompute: bool,
-    verbose: bool,
-) -> RunConfig:
-    """Convert Typer values into one validated project-owned configuration."""
-    return RunConfig(
-        source=source,
-        output_dir=output_dir.expanduser(),
-        clips=clips,
-        min_score=min_score,
-        aspect_ratio=aspect_ratio,
-        vertical_width=vertical_width,
-        vertical_height=vertical_height,
-        subtitle_template=subtitle_template,
-        subtitles_enabled=subtitles_enabled,
-        scorer=scorer,
-        model=model,
-        semantic_provider=semantic_provider,
-        semantic_model=semantic_model,
-        semantic_reasoning_effort=semantic_reasoning_effort,
-        semantic_fallback=semantic_fallback,
-        language=language,
-        min_duration=min_duration,
-        max_duration=max_duration,
-        candidate_budget=candidate_budget,
-        overlap_threshold=overlap_threshold,
-        text_similarity_threshold=text_similarity_threshold,
-        refinement_pre_roll=refinement_pre_roll,
-        refinement_post_roll=refinement_post_roll,
-        subtitle_template_dir=(
-            subtitle_template_dir.expanduser()
-            if subtitle_template_dir is not None
-            else None
-        ),
-        keep_intermediates=keep_intermediates,
-        force_recompute=force_recompute,
-        verbose=verbose,
-    )
 
 
 @app.command()
@@ -250,254 +135,124 @@ def run_command(
     source: Annotated[
         str,
         typer.Argument(
-            ...,
-            metavar="SOURCE",
-            help="Local video path or supported source URL.",
+            ..., metavar="SOURCE", help="Local video path or supported YouTube URL."
         ),
     ],
     output_dir: Annotated[
         Path,
+        typer.Option("--output-dir", help="Root for unique runs and shared caches."),
+    ],
+    llm_backend: Annotated[
+        str | None,
         typer.Option(
-            "--output-dir",
-            metavar="PATH",
-            help="Directory for run artifacts and final clips.",
-        ),
-    ] = DEFAULT_OUTPUT_DIR,
-    language: Annotated[
-        str,
-        typer.Option(
-            "--lang",
-            metavar="CODE|auto",
-            help="Requested source language, or auto for provider detection.",
-        ),
-    ] = "auto",
-    clips: Annotated[
-        int,
-        typer.Option(
-            "--clips",
-            metavar="INTEGER",
-            help="Maximum number of selected clips.",
-        ),
-    ] = DEFAULT_CLIPS,
-    min_score: Annotated[
-        int,
-        typer.Option(
-            "--min-score",
-            metavar="INTEGER",
-            help="Minimum ranking score from 0 to 100.",
-        ),
-    ] = DEFAULT_MIN_SCORE,
-    min_duration: Annotated[
-        float,
-        typer.Option(
-            "--min-duration",
-            metavar="SECONDS",
-            help="Minimum candidate duration in seconds.",
-        ),
-    ] = 15.0,
-    max_duration: Annotated[
-        float,
-        typer.Option(
-            "--max-duration",
-            metavar="SECONDS",
-            help="Maximum candidate duration in seconds.",
-        ),
-    ] = 60.0,
-    candidate_budget: Annotated[
-        int,
-        typer.Option(
-            "--candidate-budget",
-            metavar="INTEGER",
-            help="Maximum candidates sent to downstream scoring.",
-        ),
-    ] = DEFAULT_CANDIDATE_BUDGET,
-    overlap_threshold: Annotated[
-        float,
-        typer.Option(
-            "--overlap-threshold",
-            metavar="RATIO",
-            help="Inclusive temporal-overlap suppression threshold from 0 to 1.",
-        ),
-    ] = DEFAULT_OVERLAP_THRESHOLD,
-    text_similarity_threshold: Annotated[
-        float,
-        typer.Option(
-            "--text-threshold",
-            metavar="RATIO",
-            help="Inclusive normalized-text redundancy threshold from 0 to 1.",
-        ),
-    ] = DEFAULT_TEXT_SIMILARITY_THRESHOLD,
-    refinement_pre_roll: Annotated[
-        float,
-        typer.Option(
-            "--pre-roll",
-            metavar="SECONDS",
-            help="Padding before each refined cut in seconds.",
-        ),
-    ] = DEFAULT_REFINEMENT_PRE_ROLL,
-    refinement_post_roll: Annotated[
-        float,
-        typer.Option(
-            "--post-roll",
-            metavar="SECONDS",
-            help="Padding after each refined cut in seconds.",
-        ),
-    ] = DEFAULT_REFINEMENT_POST_ROLL,
-    aspect_ratio: Annotated[
-        str,
-        typer.Option(
-            "--aspect-ratio",
-            metavar="original|9:16",
-            help="Output presentation geometry.",
-        ),
-    ] = DEFAULT_ASPECT_RATIO,
-    vertical_width: Annotated[
-        int,
-        typer.Option(
-            "--vertical-width",
-            metavar="PIXELS",
-            help="Width of the 9:16 output; default 1080.",
-        ),
-    ] = DEFAULT_VERTICAL_WIDTH,
-    vertical_height: Annotated[
-        int,
-        typer.Option(
-            "--vertical-height",
-            metavar="PIXELS",
-            help="Height of the 9:16 output; default 1920.",
-        ),
-    ] = DEFAULT_VERTICAL_HEIGHT,
-    subtitle_template: Annotated[
-        str,
-        typer.Option(
-            "--subtitle-template",
-            metavar="NAME",
-            help="Built-in or custom multisubs template name.",
-        ),
-    ] = DEFAULT_SUBTITLE_TEMPLATE,
-    subtitle_template_dir: Annotated[
-        Path | None,
-        typer.Option(
-            "--subtitle-template-dir",
-            metavar="PATH",
-            help="Directory containing custom subtitle templates.",
+            "--llm-backend", help="openai, anthropic, gemini, codex, claude, or agy."
         ),
     ] = None,
-    no_subtitles: Annotated[
-        bool,
+    llm_model: Annotated[
+        str | None,
+        typer.Option("--llm-model", help="Model identifier for the selected backend."),
+    ] = None,
+    llm_effort: Annotated[
+        str | None,
         typer.Option(
-            "--no-subtitles",
-            help="Publish validated raw clips without burning subtitles.",
+            "--llm-effort", help="Reasoning level; auto uses provider default."
         ),
-    ] = False,
-    scorer: Annotated[
-        str,
+    ] = None,
+    lang: Annotated[
+        str | None, typer.Option("--lang", help="Transcription language code or auto.")
+    ] = None,
+    asr_model: Annotated[
+        str | None, typer.Option("--asr-model", help="multisubs transcription model.")
+    ] = None,
+    overlap_threshold: Annotated[
+        float | None,
         typer.Option(
-            "--scorer",
-            metavar="heuristic|hybrid",
-            help="Local heuristic or network-dependent hybrid scoring.",
+            "--overlap-threshold", help="Same-class overlap suppression ratio."
         ),
-    ] = DEFAULT_SCORER,
-    model: Annotated[
-        str,
-        typer.Option("--model", metavar="NAME", help="Transcription model name."),
-    ] = DEFAULT_MODEL,
-    semantic_provider: Annotated[
-        str,
-        typer.Option(
-            "--semantic-provider",
-            metavar="NAME",
-            help="Remote provider used by hybrid scoring.",
-        ),
-    ] = DEFAULT_SEMANTIC_PROVIDER,
-    semantic_model: Annotated[
-        str,
-        typer.Option(
-            "--semantic-model",
-            metavar="NAME",
-            help="Remote semantic model used by hybrid scoring.",
-        ),
-    ] = DEFAULT_SEMANTIC_MODEL,
-    semantic_reasoning_effort: Annotated[
-        str,
-        typer.Option(
-            "--semantic-effort",
-            metavar="LEVEL",
-            help="Semantic model reasoning effort.",
-        ),
-    ] = DEFAULT_SEMANTIC_REASONING_EFFORT,
-    semantic_fallback: Annotated[
-        str,
-        typer.Option(
-            "--semantic-fallback",
-            metavar="heuristic|none",
-            help="Behavior when semantic scoring fails for a candidate.",
-        ),
-    ] = DEFAULT_SEMANTIC_FALLBACK,
+    ] = None,
+    short_aspect_ratio: Annotated[
+        str | None,
+        typer.Option("--short-aspect-ratio", help="original, 9:16, or 16:9."),
+    ] = None,
+    long_aspect_ratio: Annotated[
+        str | None, typer.Option("--long-aspect-ratio", help="original, 9:16, or 16:9.")
+    ] = None,
+    vertical_width: Annotated[int | None, typer.Option("--vertical-width")] = None,
+    vertical_height: Annotated[int | None, typer.Option("--vertical-height")] = None,
+    horizontal_width: Annotated[int | None, typer.Option("--horizontal-width")] = None,
+    horizontal_height: Annotated[
+        int | None, typer.Option("--horizontal-height")
+    ] = None,
+    subtitle_template: Annotated[
+        str | None, typer.Option("--subtitle-template")
+    ] = None,
+    subtitle_template_dir: Annotated[
+        Path | None, typer.Option("--subtitle-template-dir")
+    ] = None,
+    subtitles: Annotated[
+        bool | None, typer.Option("--subtitles/--no-subtitles")
+    ] = None,
+    block_chars: Annotated[int | None, typer.Option("--block-chars")] = None,
+    block_overlap_chars: Annotated[
+        int | None, typer.Option("--block-overlap-chars")
+    ] = None,
     keep_intermediates: Annotated[
-        bool,
-        typer.Option(
-            "--keep-intermediates",
-            help="Keep useful intermediate artifacts for diagnostics.",
-        ),
-    ] = False,
+        bool | None, typer.Option("--keep-intermediates/--discard-intermediates")
+    ] = None,
     force_recompute: Annotated[
-        bool,
-        typer.Option(
-            "--force-recompute",
-            help="Ignore reusable artifacts and recompute stages.",
-        ),
-    ] = False,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", help="Enable diagnostic output for the run."),
-    ] = False,
+        bool | None, typer.Option("--force-recompute/--reuse-cache")
+    ] = None,
+    verbose: Annotated[bool | None, typer.Option("--verbose/--quiet")] = None,
 ) -> None:
-    """Generate ranked short clips from SOURCE.
-
-    The viral-potential score is an explainable ranking heuristic, not a
-    probability.
-    """
-    config = _build_run_config(
+    backend = _value(llm_backend, "LLM_BACKEND", "")
+    llm_model_value = _value(llm_model, "LLM_MODEL", "")
+    if not isinstance(backend, str) or not backend.strip():
+        raise ConfigurationError("Set LLM_BACKEND or pass --llm-backend")
+    if not isinstance(llm_model_value, str) or not llm_model_value.strip():
+        raise ConfigurationError("Set LLM_MODEL or pass --llm-model")
+    effort_value = _value(llm_effort, "LLM_EFFORT", None)
+    if effort_value is not None and not isinstance(effort_value, str):
+        raise ConfigurationError("LLM_EFFORT must be a string")
+    template_dir = _value(subtitle_template_dir, "SUBTITLE_TEMPLATE_DIR", None)
+    config = AppConfig(
         source=source,
-        output_dir=output_dir,
-        language=language,
-        clips=clips,
-        min_score=min_score,
-        min_duration=min_duration,
-        max_duration=max_duration,
-        candidate_budget=candidate_budget,
-        overlap_threshold=overlap_threshold,
-        text_similarity_threshold=text_similarity_threshold,
-        refinement_pre_roll=refinement_pre_roll,
-        refinement_post_roll=refinement_post_roll,
-        aspect_ratio=aspect_ratio,
-        vertical_width=vertical_width,
-        vertical_height=vertical_height,
-        subtitle_template=subtitle_template,
-        subtitle_template_dir=subtitle_template_dir,
-        subtitles_enabled=not no_subtitles,
-        scorer=scorer,
-        model=model,
-        semantic_provider=semantic_provider,
-        semantic_model=semantic_model,
-        semantic_reasoning_effort=semantic_reasoning_effort,
-        semantic_fallback=semantic_fallback,
-        keep_intermediates=keep_intermediates,
-        force_recompute=force_recompute,
-        verbose=verbose,
+        output_dir=output_dir.expanduser(),
+        llm_backend=backend,
+        llm_model=llm_model_value,
+        llm_effort=effort_value,
+        overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
+        language=lang,
+        transcription_model=str(_value(asr_model, "TRANSCRIPTION_MODEL", "default")),
+        short_aspect_ratio=str(
+            _value(short_aspect_ratio, "SHORT_ASPECT_RATIO", "9:16")
+        ),
+        long_aspect_ratio=str(_value(long_aspect_ratio, "LONG_ASPECT_RATIO", "16:9")),
+        vertical_width=_integer(vertical_width, "VERTICAL_WIDTH", 1080),
+        vertical_height=_integer(vertical_height, "VERTICAL_HEIGHT", 1920),
+        horizontal_width=_integer(horizontal_width, "HORIZONTAL_WIDTH", 1920),
+        horizontal_height=_integer(horizontal_height, "HORIZONTAL_HEIGHT", 1080),
+        subtitles_enabled=_boolean(subtitles, "SUBTITLES_ENABLED", True),
+        subtitle_template=str(
+            _value(subtitle_template, "SUBTITLE_TEMPLATE", "yellow-pop")
+        ),
+        subtitle_template_dir=Path(str(template_dir)).expanduser()
+        if template_dir
+        else None,
+        block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
+        block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
+        keep_intermediates=bool(keep_intermediates),
+        force_recompute=bool(force_recompute),
+        verbose=bool(verbose),
     )
     state = ctx.obj if isinstance(ctx.obj, _CliContext) else _CliContext()
     state.parsed_config = config
 
 
-def parse_run_config(argv: Sequence[str] | None = None) -> RunConfig:
-    """Parse ``argv`` and validate it as one project-owned run configuration."""
-    arguments = list(sys.argv[1:] if argv is None else argv)
+def parse_run_config(argv: Sequence[str] | None = None) -> AppConfig:
     state = _CliContext()
     try:
         app(
-            args=arguments,
+            args=list(sys.argv[1:] if argv is None else argv),
             prog_name="multicuts",
             obj=state,
             standalone_mode=True,
@@ -511,26 +266,15 @@ def parse_run_config(argv: Sequence[str] | None = None) -> RunConfig:
 
 
 def main(
-    argv: Sequence[str] | None = None,
-    *,
-    pipeline: PipelineRunner | None = None,
+    argv: Sequence[str] | None = None, *, pipeline: PipelineRunner | None = None
 ) -> int:
-    """Run one command and translate process-boundary failures into exit codes."""
     arguments = list(sys.argv[1:] if argv is None else argv)
-    verbose = any(argument == "--verbose" for argument in arguments)
-    configure_logging(verbose)
-
-    stage = "validate"
     state = _CliContext()
+    configure_logging("--verbose" in arguments)
     try:
-        app(
-            args=arguments,
-            prog_name="multicuts",
-            obj=state,
-            standalone_mode=True,
-        )
+        app(args=arguments, prog_name="multicuts", obj=state, standalone_mode=True)
     except KeyboardInterrupt:
-        logger.warning("Run interrupted; no completion summary was produced")
+        logger.warning("Run interrupted")
         return 130
     except SystemExit as error:
         if error.code not in (0, None):
@@ -538,33 +282,37 @@ def main(
         if state.parsed_config is None:
             return EXIT_SUCCESS
     except MulticutsError as error:
-        return _log_project_error(error, verbose=verbose)
-    except Exception as error:
-        return _log_unexpected_error(error, stage=stage, verbose=verbose)
-
+        for error_type, code, label in _ERROR_DETAILS:
+            if isinstance(error, error_type):
+                logger.error("%s: %s", label, _safe_text(error))
+                return code
+        return EXIT_UNEXPECTED
+    except Exception:
+        logger.error("Unexpected failure while parsing options")
+        return EXIT_UNEXPECTED
     if state.parsed_config is None:
         return EXIT_SUCCESS
-    logger.info("stage=validate complete")
-    stage = "run"
+    configure_logging(state.parsed_config.verbose)
     try:
-        runner = run_pipeline if pipeline is None else pipeline
-        result = runner(state.parsed_config)
-        if result.outcome is RunOutcome.INTERRUPTED:
-            logger.warning("Run interrupted; no completion summary was produced")
-            return 130
-        warnings = ", ".join(sorted(set(result.warnings))) or "none"
+        result = (pipeline or run_pipeline)(state.parsed_config)
         typer.echo(
             f"Run {result.run_id}: {result.outcome.value}; "
-            f"completed clips={len(result.clip_paths)}; "
-            f"manifest={result.manifest_path}; warnings={warnings}"
+            f"clips={len(result.clip_paths)}; manifest={result.manifest_path}"
         )
-        if result.outcome in (RunOutcome.PARTIAL, RunOutcome.FAILED):
-            return EXIT_RENDERING
-        return EXIT_SUCCESS
+        return (
+            EXIT_SUCCESS
+            if result.outcome in (RunOutcome.COMPLETED, RunOutcome.ZERO_SELECTION)
+            else EXIT_RENDERING
+        )
     except KeyboardInterrupt:
-        logger.warning("Run interrupted; no completion summary was produced")
+        logger.warning("Run interrupted")
         return 130
     except MulticutsError as error:
-        return _log_project_error(error, verbose=verbose)
-    except Exception as error:
-        return _log_unexpected_error(error, stage=stage, verbose=verbose)
+        for error_type, code, label in _ERROR_DETAILS:
+            if isinstance(error, error_type):
+                logger.error("%s: %s", label, _safe_text(error))
+                return code
+        return EXIT_UNEXPECTED
+    except Exception:
+        logger.error("Unexpected run failure")
+        return EXIT_UNEXPECTED

@@ -51,7 +51,7 @@ If product requirements and implementation disagree, do not silently choose one.
 
 - accepts a local video or supported YouTube URL;
 - transcribes the source once;
-- generates and ranks short-form clip candidates;
+- proposes and ranks short and long clip candidates from the timed transcript;
 - assigns explainable scores;
 - renders selected clips;
 - burns subtitles using `multisubs`.

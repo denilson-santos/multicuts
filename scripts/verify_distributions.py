@@ -80,7 +80,7 @@ def _project_metadata() -> _ProjectMetadata:
         name="multicuts",
         requires_python=">=3.10,<3.14",
         dependencies=("typer", "yt-dlp", "multisubs"),
-        extras=("openai", "dev"),
+        extras=("dev",),
         console_script="multicuts.cli:main",
     )
 

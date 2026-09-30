@@ -63,7 +63,7 @@ def test_adapter_downloads_one_source_into_controlled_workspace(tmp_path: Path) 
     assert acquired.local_path.is_file()
     assert acquired.source_kind == "youtube"
     assert acquired.provider_id == "abc123"
-    assert acquired.source_id == "abc123"
+    assert acquired.provider_id == "abc123"
     assert acquired.title == "A useful title"
     assert acquired.original_url == url
     assert acquired.fingerprint.startswith(f"{YOUTUBE_FINGERPRINT_VERSION}:")

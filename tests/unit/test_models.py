@@ -6,9 +6,7 @@ import pytest
 
 from multicuts.models import (
     AcquiredSource,
-    Candidate,
     MediaInfo,
-    SemanticUnit,
     Transcript,
     TranscriptSegment,
     Word,
@@ -35,8 +33,8 @@ def test_acquired_source_model_keeps_safe_remote_metadata() -> None:
         original_url="https://www.youtube.com/watch?v=abc123",
     )
 
-    assert source.source_id == "abc123"
-    assert source.source_title == "A video"
+    assert source.provider_id == "abc123"
+    assert source.title == "A video"
     assert source.original_url == "https://www.youtube.com/watch?v=abc123"
 
 
@@ -97,29 +95,6 @@ def test_transcript_model_serializes_project_owned_values_as_json() -> None:
         {"text": "mundo", "start": None, "end": None, "confidence": None},
     ]
     assert payload["provider_version"] == "4.1.0"
-
-
-def test_candidate_models_serialize_project_owned_values_as_json() -> None:
-    unit = SemanticUnit("A complete thought.", 1.0, 16.0)
-    candidate = Candidate(
-        candidate_id="candidate-v1:abc123",
-        start=1.0,
-        end=16.0,
-        text=unit.text,
-        unit_indexes=(0,),
-        generator_version="1",
-    )
-
-    payload = json.loads(json.dumps(asdict(candidate), ensure_ascii=False))
-
-    assert payload == {
-        "candidate_id": "candidate-v1:abc123",
-        "start": 1.0,
-        "end": 16.0,
-        "text": "A complete thought.",
-        "unit_indexes": [0],
-        "generator_version": "1",
-    }
 
 
 @pytest.mark.parametrize(
