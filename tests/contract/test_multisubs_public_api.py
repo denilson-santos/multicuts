@@ -27,8 +27,8 @@ def _assert_supported_provider_version() -> None:
     assert len(parts) >= 2 and all(part.isdigit() for part in parts[:2]), (
         "multisubs distribution lacks a numeric major/minor version"
     )
-    assert parts[0] == "4" and int(parts[1]) >= 3, (
-        "multisubs 4.3 or newer is required by the consumed public contract"
+    assert parts[0] == "4" and int(parts[1]) >= 4, (
+        "multisubs 4.4 or newer is required by the consumed public contract"
     )
 
 
@@ -52,7 +52,7 @@ def test_public_transcription_signature_and_version(language: str | None) -> Non
 
 
 def test_multisubs_subtitle_timed_cue_json_signature_and_artifact_shape() -> None:
-    """Pin the 4.3 contract consumed through the supported CLI boundary."""
+    """Pin the 4.4 timed-cue splitting contract consumed by the adapter."""
     provider = _installed_provider()
     _assert_supported_provider_version()
 

@@ -66,7 +66,7 @@ Assume:
 
 ```text
 Python >=3.10,<3.14
-multisubs >=4.1,<5
+multisubs >=4.4,<5
 FFmpeg
 ffprobe
 yt-dlp
@@ -75,7 +75,7 @@ Ruff
 Pyright
 ```
 
-Early development may pin the official `multisubs[whisperx]` 4.2.0 wheel.
+Early development may pin the official `multisubs[whisperx]` 4.4.0 wheel.
 
 Do not silently raise the minimum Python version.
 
