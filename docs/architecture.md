@@ -58,7 +58,7 @@ The manifest summarizes the source identity, transcription and AI provenance, ca
 
 FFmpeg encodes each selected interval into a private temporary MP4, then FFprobe validates its geometry, duration tolerance, and audio presence before it is published. Short and long defaults are 9:16 at 1080×1920 and 16:9 at 1920×1080. Rotation and source presentation geometry come from `media.py`. `original` geometry is available for either class.
 
-Subtitles are generated after the final crop. Source segment and word timings are shifted to the local clip timeline without another transcription. The supported public timed-cue `multisubs` path requires complete observed word timing; missing timing fails clearly. Final MP4 and subtitle sidecars are validated and published beside per-clip metadata. The default suite mocks these external boundaries; opt-in integration tests exercise installed tools.
+Subtitles are generated after the final crop. Source segment and word timings are shifted to the local clip timeline without another transcription. The public timed-cue `multisubs` 4.4 path requires complete observed word timing and splits oversized cues against the final template and geometry; missing timing fails clearly. The published cues JSON records the supplied timed source cues, while SRT and ASS reflect the provider's final layout. Final MP4 and subtitle sidecars are validated and published beside per-clip metadata. The default suite mocks these external boundaries; opt-in integration tests exercise installed tools.
 
 ## Limits and failure behavior
 

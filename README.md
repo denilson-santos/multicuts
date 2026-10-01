@@ -4,7 +4,7 @@
 
 ## Installation and development
 
-Use Python 3.10–3.13, FFmpeg/ffprobe, and the supported `multisubs` 4.3 wheel. A full installation resolves the WhisperX dependencies:
+Use Python 3.10–3.13, FFmpeg/ffprobe, and the supported `multisubs` 4.4 wheel. A full installation resolves the WhisperX dependencies:
 
 ```bash
 python3.10 -m venv .venv
@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install --editable ".[dev]"
 ```
 
-The runtime `multisubs[whisperx]` dependency points to the author's pinned 4.3.0 GitHub Release wheel. The default test suite does not require model downloads, a GPU, YouTube access, or AI credentials. Run checks with:
+The runtime `multisubs[whisperx]` dependency points to the author's pinned 4.4.0 GitHub Release wheel. The default test suite does not require model downloads, a GPU, YouTube access, or AI credentials. Run checks with:
 
 ```bash
 ruff format --check .
@@ -183,7 +183,7 @@ Long cuts preferably run 3–15 minutes, with no hard duration ceiling. Change f
 
 Scores rank editorially approved cuts and decide which overlapping cut to keep; they never impose a publication threshold. Scores weight hook 20%, standalone context 20%, development 15%, payoff 25%, and interest or novelty 20%. Each clip JSON explains its scores and the model's reason. A score only evaluates the transcript and does not measure audience response, visual quality, audio quality, or the probability of virality.
 
-Subtitles are on by default. `multisubs` burns them after the final crop so they fit the actual clip frame. `--no-subtitles` publishes raw final clips. Word timing must be complete for subtitled output; the app never retranscribes a cut or invents timestamps.
+Subtitles are on by default. `multisubs` burns them after the final crop so they fit the actual clip frame. `--no-subtitles` publishes raw final clips. Word timing must be complete for subtitled output; the app never retranscribes a cut or invents timestamps. Multisubs splits supplied timed cues when they exceed the final clip layout.
 
 ## Results and reruns
 

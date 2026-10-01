@@ -461,7 +461,7 @@ def _clip(*, complete: bool = True) -> ClipTranscript:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, 0),
         ),
         provider="multisubs",
-        provider_version="4.3.0",
+        provider_version="4.4.0",
         word_timing_complete=complete,
     )
 
@@ -471,7 +471,7 @@ def test_public_cli_receives_clip_local_json_and_template(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw video")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
     (tmp_path / "multisubs").write_text("", encoding="utf-8")
     monkeypatch.setattr(
         multisubs.sys,
@@ -528,7 +528,7 @@ def test_public_cli_receives_clip_local_json_and_template(
         str(template_dir),
     ]
     assert result.video_path.read_bytes() == b"rendered"
-    assert result.provider_version == "4.3.0"
+    assert result.provider_version == "4.4.0"
     assert result.template_resolved == "amber-word"
 
 
@@ -544,7 +544,7 @@ def test_partial_segment_keeps_selected_word_text_without_outside_words() -> Non
         segments=(ClipTranscriptSegment("Olá mundo. Adeus", 0.0, 1.0, 0),),
         words=(ClipTranscriptWord("mundo.", 0.1, 0.8, None, 1, 0),),
         provider="multisubs",
-        provider_version="4.3.0",
+        provider_version="4.4.0",
         word_timing_complete=True,
     )
 
@@ -558,7 +558,7 @@ def test_partial_segment_keeps_selected_word_text_without_outside_words() -> Non
     ]
 
 
-def test_long_asr_segment_becomes_short_observed_word_cues() -> None:
+def test_long_asr_segment_is_submitted_as_one_timed_cue() -> None:
     tokens = (
         "Lembrando que a Bianquinha ela tá se apegando muito a essa treta do Felca aí"
     ).split()
@@ -577,20 +577,23 @@ def test_long_asr_segment_becomes_short_observed_word_cues() -> None:
         segments=(ClipTranscriptSegment(" ".join(tokens), 0.0, 5.0, 0),),
         words=words,
         provider="multisubs",
-        provider_version="4.3.0",
+        provider_version="4.4.0",
         word_timing_complete=True,
     )
 
     cues = multisubs._timed_cues(clip)["cues"]
 
-    assert isinstance(cues, list)
-    assert len(cues) > 1
-    assert all(len(cue["words"]) <= 4 and len(cue["text"]) <= 28 for cue in cues)
-    assert [word for cue in cues for word in cue["words"]] == [
-        {"start": word.start, "end": word.end, "text": word.text} for word in words
+    assert cues == [
+        {
+            "start": 0.0,
+            "end": 5.0,
+            "text": " ".join(tokens),
+            "words": [
+                {"start": word.start, "end": word.end, "text": word.text}
+                for word in words
+            ],
+        }
     ]
-    assert cues[0]["start"] == 0.0
-    assert cues[-1]["end"] == 5.0
 
 
 def test_missing_word_timing_fails_before_renderer(
@@ -598,7 +601,7 @@ def test_missing_word_timing_fails_before_renderer(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
 
     with pytest.raises(RenderingError, match="complete observed word timing"):
         MultisubsAdapter().subtitle_clip(
@@ -614,9 +617,9 @@ def test_missing_word_timing_fails_before_renderer(
 def test_old_provider_fails_with_compatibility_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.2.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
 
-    with pytest.raises(RenderingError, match="install version 4.3"):
+    with pytest.raises(RenderingError, match="install version 4.4"):
         MultisubsAdapter().subtitle_clip(
             tmp_path / "raw.mp4",
             _clip(),
@@ -631,7 +634,7 @@ def test_layout_failure_identifies_template_space_without_raw_provider_output(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
     (tmp_path / "multisubs").write_text("", encoding="utf-8")
     monkeypatch.setattr(multisubs.sys, "executable", str(tmp_path / "python"))
 
@@ -665,7 +668,7 @@ def test_incomplete_provider_output_is_rejected(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
     (tmp_path / "multisubs").write_text("", encoding="utf-8")
     monkeypatch.setattr(multisubs.sys, "executable", str(tmp_path / "python"))
 
@@ -711,7 +714,7 @@ def test_unassigned_words_fail_instead_of_disappearing() -> None:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, None),
         ),
         provider="multisubs",
-        provider_version="4.3.0",
+        provider_version="4.4.0",
         word_timing_complete=True,
     )
     with pytest.raises(RenderingError, match="cannot be mapped"):

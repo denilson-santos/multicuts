@@ -170,16 +170,16 @@ def _require_provider_version() -> str:
         version = importlib.metadata.version("multisubs")
     except importlib.metadata.PackageNotFoundError as exc:
         raise RenderingError(
-            "multisubs is unavailable; install the configured multisubs 4.3 release"
+            "multisubs is unavailable; install the configured multisubs 4.4 release"
         ) from exc
     try:
         major, minor = (int(part) for part in version.split(".")[:2])
     except (ValueError, TypeError) as exc:
         raise RenderingError(f"Unsupported multisubs version: {version}") from exc
-    if major != 4 or minor < 3:
+    if major != 4 or minor < 4:
         raise RenderingError(
-            f"multisubs {version} cannot render timed-cue JSON; "
-            "install version 4.3 or newer"
+            f"multisubs {version} cannot split timed cues to fit the clip; "
+            "install version 4.4 or newer"
         )
     return version
 
@@ -203,16 +203,11 @@ def _source_text_for_words(segment_text: str, words: list[ClipTranscriptWord]) -
     return " ".join(tokens)
 
 
-_MAX_CUE_WORDS = 4
-_MAX_CUE_CHARS = 28
-_CUE_PAUSE_SECONDS = 0.75
-
-
 def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
     if not clip.word_animation_safe:
         raise RenderingError(
             "Clip subtitles require complete observed word timing; "
-            "multisubs 4.3 cannot infer missing word times"
+            "multisubs cannot infer missing word times"
         )
     language = clip.language_detected or clip.language_requested
     if (
@@ -242,51 +237,21 @@ def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
                 )
             previous_end = word.end
             assigned.add(word.source_index)
-        # A whole ASR segment can exceed multisubs' subtitle layout envelope.
-        groups: list[list[ClipTranscriptWord]] = []
-        group: list[ClipTranscriptWord] = []
-        for word in words:
-            candidate = " ".join(item.text.strip() for item in (*group, word))
-            previous_end = group[-1].end if group else None
-            if group and (
-                len(group) >= _MAX_CUE_WORDS
-                or len(candidate) > _MAX_CUE_CHARS
-                or (
-                    previous_end is not None
-                    and word.start is not None
-                    and word.start - previous_end >= _CUE_PAUSE_SECONDS
-                )
-            ):
-                groups.append(group)
-                group = []
-            group.append(word)
-        if group:
-            groups.append(group)
-
-        for index, group in enumerate(groups):
-            first_start = group[0].start
-            last_end = group[-1].end
-            if first_start is None or last_end is None:
-                raise RenderingError("Clip subtitle word timing is incomplete")
-            cues.append(
-                {
-                    "start": min(segment.start, first_start)
-                    if index == 0
-                    else first_start,
-                    "end": max(segment.end, last_end)
-                    if index == len(groups) - 1
-                    else last_end,
-                    "text": _source_text_for_words(segment.text, group),
-                    "words": [
-                        {
-                            "start": word.start,
-                            "end": word.end,
-                            "text": word.text.strip(),
-                        }
-                        for word in group
-                    ],
-                }
-            )
+        first_start = words[0].start
+        last_end = words[-1].end
+        if first_start is None or last_end is None:
+            raise RenderingError("Clip subtitle word timing is incomplete")
+        cues.append(
+            {
+                "start": min(segment.start, first_start),
+                "end": max(segment.end, last_end),
+                "text": _source_text_for_words(segment.text, words),
+                "words": [
+                    {"start": word.start, "end": word.end, "text": word.text.strip()}
+                    for word in words
+                ],
+            }
+        )
     if not cues or len(assigned) != len(clip.words):
         raise RenderingError(
             "Clip words cannot be mapped to timed source segments for subtitles"
