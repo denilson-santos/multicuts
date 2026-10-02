@@ -59,7 +59,7 @@ def test_short_clip_is_cropped_and_published_without_subtitles(tmp_path: Path) -
         "Title",
         "Rationale",
     )
-    clip = JudgedClip(proposal, {}, 80.0, True, "Good")
+    clip = JudgedClip(proposal, {}, 80.0, True, "Good", "u0", "u1")
     config = AppConfig(
         source=str(source_path),
         output_dir=tmp_path / "output",

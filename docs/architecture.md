@@ -11,7 +11,7 @@ local path / YouTube URL
   -> timed semantic units and overlapping text blocks
   -> selected AI backend proposes short and long intervals by unit ID
   -> strict interval/class checks
-  -> selected AI backend judges each interval
+  -> selected AI backend reviews nearby observed boundaries and judges each interval
   -> editorial approval, weighted ranking, same-class overlap suppression
   -> FFmpeg render at final geometry
   -> clip-local transcript and multisubs subtitles
@@ -25,7 +25,7 @@ The backend never receives video or audio. Prompts explicitly treat source trans
 - `source.py`, `local_source.py`, and `adapters/youtube.py`: acquisition and source fingerprinting.
 - `media.py`: FFmpeg/ffprobe availability and normalized media geometry.
 - `adapters/multisubs.py`: the single `multisubs` boundary for transcription and subtitle rendering. Provider artifacts remain internal, and both operations return project-owned models.
-- `clips.py`: provider-independent prompts, ID/duration validation, scoring weights, and nonredundant selection.
+- `clips.py`: provider-independent prompts, nearby boundary options, ID/duration validation, scoring weights, and nonredundant selection.
 - `adapters/backends.py`: selects one explicitly configured backend. Each provider has its own named adapter class and module under `adapters/`; shared HTTP, CLI, and JSON boundary helpers live in `adapters/_llm_common.py`. The adapters normalize JSON before domain validation and do not log secrets. An explicit AI effort is translated to each provider's reasoning control; no setting leaves the provider default. Transient HTTP failures have finite retries; there is no run-wide call cap.
 - `cache.py`: validated transcript and AI response caches.
 - `render.py`: FFmpeg encoding, final media validation, clip-local timed transcript, and public `multisubs` subtitle rendering.
@@ -52,7 +52,7 @@ The output root has two distinct parts:
 
 The transcript key includes media fingerprint and ASR settings/version. The AI key includes the complete normalized transcript fingerprint, backend/model/effort, prompt/schema, and task. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
 
-The manifest summarizes the source identity, transcription and AI provenance, cache hits, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
+The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
 
 ## Media and subtitles
 

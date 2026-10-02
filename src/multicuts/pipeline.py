@@ -29,7 +29,6 @@ from multicuts.cache import (
 )
 from multicuts.clips import (
     DIMENSION_WEIGHTS,
-    JUDGMENT_SCHEMA,
     PROMPT_VERSION,
     PROPOSAL_SCHEMA,
     SCORE_VERSION,
@@ -37,6 +36,7 @@ from multicuts.clips import (
     JudgedClip,
     context_blocks,
     judgment_prompt,
+    judgment_schema,
     parse_judgment,
     parse_proposals,
     proposal_prompt,
@@ -298,9 +298,9 @@ def run_pipeline(
                     )
                 proposals.setdefault(proposal.id, proposal)
         logger.info("stage=propose clips=%d", len(proposals))
-        judged: list[JudgedClip] = []
+        judged_by_id: dict[str, JudgedClip] = {}
         for proposal in proposals.values():
-            prompt = judgment_prompt(proposal)
+            prompt = judgment_prompt(proposal, units)
             response = _ai_request(
                 ai,
                 config,
@@ -308,15 +308,24 @@ def run_pipeline(
                 transcript_fingerprint=fingerprint,
                 task="judge",
                 prompt=prompt,
-                schema=JUDGMENT_SCHEMA,
-                validate=lambda value, current=proposal: parse_judgment(value, current),
+                schema=judgment_schema(proposal, units),
+                validate=lambda value, current=proposal: parse_judgment(
+                    value, current, units, source.fingerprint
+                ),
                 cache_stats=cache_stats,
             )
-            judged.append(parse_judgment(response, proposal))
+            clip = parse_judgment(response, proposal, units, source.fingerprint)
+            if clip.proposal.end > media.duration + 0.001:
+                raise ScoringError("AI revised a clip beyond source media duration")
+            previous = judged_by_id.get(clip.proposal.id)
+            if previous is None or (clip.approved, clip.score) > (
+                previous.approved,
+                previous.score,
+            ):
+                judged_by_id[clip.proposal.id] = clip
+        judged = tuple(judged_by_id.values())
         eligible = sum(clip.approved for clip in judged)
-        selected = select_clips(
-            tuple(judged), overlap_threshold=config.overlap_threshold
-        )
+        selected = select_clips(judged, overlap_threshold=config.overlap_threshold)
         logger.info("stage=select eligible=%d selected=%d", eligible, len(selected))
         clips: list[Path] = []
         references: list[dict[str, object]] = []
@@ -392,6 +401,11 @@ def run_pipeline(
                 "overlap_threshold": config.overlap_threshold,
                 "timed_units": len(units),
                 "proposed": len(proposals),
+                "boundary_adjusted": sum(
+                    clip.proposed_start_id != clip.proposal.start_id
+                    or clip.proposed_end_id != clip.proposal.end_id
+                    for clip in judged
+                ),
                 "editorially_eligible": eligible,
                 "selected": len(selected),
                 "ai_cache": cache_stats,

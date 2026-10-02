@@ -62,6 +62,8 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
         80.0,
         True,
         "Good",
+        "u0",
+        "u0",
     )
     config = AppConfig("source.mp4", tmp_path, "codex", "test-model")
 
