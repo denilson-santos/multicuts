@@ -303,6 +303,59 @@ def test_zero_approved_clips_is_a_valid_completed_analysis(tmp_path: Path) -> No
     assert json.loads(result.manifest_path.read_text())["outcome"] == "zero_selection"
 
 
+@pytest.mark.parametrize("reject_long", [False, True])
+def test_pipeline_preserves_editorial_rejections_after_boundary_review_and_cache(
+    tmp_path: Path, reject_long: bool
+) -> None:
+    class RejectingBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            response = super().complete(prompt, schema)
+            if "Original boundary IDs: u0 through u1" in prompt:
+                assert isinstance(response, dict)
+                return {
+                    **response,
+                    "start_id": "u1",
+                    "approved": False,
+                    "reason": "The revised opening cannot repair the missing close",
+                }
+            if reject_long and "Original boundary IDs: u0 through u5" in prompt:
+                assert isinstance(response, dict)
+                return {
+                    **response,
+                    "approved": False,
+                    "reason": "The discussion lacks a complete central idea",
+                }
+            return response
+
+    first_ai = RejectingBackend()
+    first = _run(tmp_path, FakeTranscriber(), first_ai)
+    assert first_ai.calls == 3
+
+    second_asr = FakeTranscriber()
+    second_ai = RejectingBackend()
+    second = _run(tmp_path, second_asr, second_ai)
+    assert second_asr.calls == 0
+    assert second_ai.calls == 0
+    assert json.loads(second.manifest_path.read_text())["analysis"]["ai_cache"] == {
+        "hits": 3,
+        "misses": 0,
+    }
+
+    expected_count = 0 if reject_long else 1
+    for result in (first, second):
+        manifest = json.loads(result.manifest_path.read_text())
+        assert manifest["analysis"]["proposed"] == 2
+        assert manifest["analysis"]["boundary_adjusted"] == 1
+        assert manifest["analysis"]["editorially_eligible"] == expected_count
+        assert manifest["analysis"]["selected"] == expected_count
+        assert manifest["outcome"] == ("zero_selection" if reject_long else "completed")
+        assert len(result.clip_paths) == expected_count
+        for path in result.clip_paths:
+            metadata = json.loads(path.with_suffix(".json").read_text())
+            assert metadata["class"] == "long"
+            assert metadata["viral_potential"]["approved"] is True
+
+
 def test_invalid_ai_response_fails_explicitly_and_is_not_cached(tmp_path: Path) -> None:
     invalid = FakeBackend(invalid=True)
     with pytest.raises(ScoringError):

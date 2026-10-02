@@ -125,7 +125,7 @@ def build_semantic_units(
     return _semantic_units_from_items(items, pause_threshold=pause_threshold)
 
 
-PROMPT_VERSION = "semantic-clips-v2"
+PROMPT_VERSION = "semantic-clips-v3"
 SCORE_VERSION = "viral-potential-v3"
 DIMENSION_WEIGHTS = {
     "hook": 0.20,
@@ -474,8 +474,11 @@ def judgment_prompt(proposal: Proposal, units: tuple[TimedUnit, ...]) -> str:
         "clip, and preserve the candidate's central idea when moving them. The end ID "
         "is inclusive. "
         f"The revised {proposal.clip_class} clip must be {duration_rule}. "
-        "Score and approve the transcript within the chosen boundaries. "
-        "Decide whether it is editorially worth publishing. Give 0–100 scores for "
+        "Evaluate and score the transcript within the chosen boundaries. "
+        "Decide independently whether it is editorially worth publishing: a proposal "
+        "is only a candidate, not an approval. Set approved to true or false based "
+        "on the reviewed transcript. There is no approval or rejection quota; all "
+        "or none of the candidates may qualify. Give 0–100 scores for "
         "hook, standalone_context, development, payoff, and interest_novelty. "
         "Standalone context means the central idea can be followed by a plausible "
         "general or topic-aware audience; familiar names, organizations, and events "
