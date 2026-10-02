@@ -1,6 +1,7 @@
 """Hermetic checks for semantic selection, reruns, and run artifacts."""
 
 import json
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,8 @@ import pytest
 from multicuts.app_config import AppConfig
 from multicuts.clips import (
     TimedUnit,
+    judgment_prompt,
+    judgment_schema,
     parse_judgment,
     parse_proposals,
     select_clips,
@@ -76,7 +79,11 @@ class FakeBackend:
                     },
                 ]
             }
+        bounds = re.search(r"Original boundary IDs: (u\d+) through (u\d+)", prompt)
+        assert bounds is not None
         return {
+            "start_id": bounds.group(1),
+            "end_id": bounds.group(2),
             "approved": True,
             "dimensions": {
                 "hook": 80,
@@ -324,6 +331,8 @@ def test_long_class_has_no_hard_maximum_and_score_is_weighted() -> None:
     )[0]
     judged = parse_judgment(
         {
+            "start_id": "u0",
+            "end_id": "u0",
             "approved": True,
             "dimensions": {
                 "hook": 100,
@@ -335,27 +344,37 @@ def test_long_class_has_no_hard_maximum_and_score_is_weighted() -> None:
             "reason": "Clear payoff",
         },
         proposal,
+        (unit,),
+        "sha256-v1:source",
     )
     assert proposal.end == 1200.0
     assert judged.score == 76.5
     assert select_clips((judged,)) == (judged,)
     low_score = parse_judgment(
         {
+            "start_id": "u0",
+            "end_id": "u0",
             "approved": True,
             "dimensions": {name: 5 for name in judged.dimensions},
             "reason": "Eligible despite a low relative ranking",
         },
         proposal,
+        (unit,),
+        "sha256-v1:source",
     )
     assert low_score.score == 5
     assert select_clips((low_score,)) == (low_score,)
     rejected = parse_judgment(
         {
+            "start_id": "u0",
+            "end_id": "u0",
             "approved": False,
             "dimensions": {name: 100 for name in judged.dimensions},
             "reason": "Lacks a complete editorial idea",
         },
         proposal,
+        (unit,),
+        "sha256-v1:source",
     )
     assert select_clips((rejected,)) == ()
 
@@ -420,3 +439,192 @@ def test_three_minute_boundary_is_short_and_long_starts_above_it() -> None:
             (TimedUnit("u0", 0.0, 180.0, "A complete idea."),),
             "sha256-v1:source",
         )
+
+
+def test_judgment_revises_only_observed_nearby_boundaries() -> None:
+    units = tuple(
+        TimedUnit(f"u{index}", index * 20.0, (index + 1) * 20.0, f"Point {index}.")
+        for index in range(5)
+    )
+    proposal = parse_proposals(
+        {
+            "clips": [
+                {
+                    "class": "short",
+                    "start_id": "u1",
+                    "end_id": "u2",
+                    "title": "A title that should not guide the judge",
+                    "rationale": "A complete point",
+                }
+            ]
+        },
+        units,
+        "sha256-v1:source",
+    )[0]
+    prompt = judgment_prompt(proposal, units)
+    assert proposal.title not in prompt
+    assert "topic-aware audience" in prompt
+    assert "u0 [0.000-20.000]" in prompt
+    properties = judgment_schema(proposal, units)["properties"]
+    assert isinstance(properties, dict)
+    assert properties["start_id"]["enum"] == ["u0", "u1", "u2", "u3", "u4"]
+    judged = parse_judgment(
+        {
+            "start_id": "u0",
+            "end_id": "u3",
+            "approved": True,
+            "dimensions": {
+                "hook": 70,
+                "standalone_context": 70,
+                "development": 70,
+                "payoff": 70,
+                "interest_novelty": 70,
+            },
+            "reason": "The revised span gives the idea a complete opening and close",
+        },
+        proposal,
+        units,
+        "sha256-v1:source",
+    )
+    assert (judged.proposal.start, judged.proposal.end) == (0.0, 80.0)
+    assert (judged.proposal.start_id, judged.proposal.end_id) == ("u0", "u3")
+    assert judged.proposal.text == "Point 0. Point 1. Point 2. Point 3."
+    assert judged.proposal.id != proposal.id
+    assert (judged.proposed_start_id, judged.proposed_end_id) == ("u1", "u2")
+
+
+def test_judgment_rejects_boundary_outside_review_window() -> None:
+    units = tuple(
+        TimedUnit(f"u{index}", index * 5.0, (index + 1) * 5.0, f"Point {index}.")
+        for index in range(25)
+    )
+    proposal = parse_proposals(
+        {
+            "clips": [
+                {
+                    "class": "short",
+                    "start_id": "u13",
+                    "end_id": "u14",
+                    "title": "Idea",
+                    "rationale": "Complete",
+                }
+            ]
+        },
+        units,
+        "sha256-v1:source",
+    )[0]
+    with pytest.raises(ScoringError, match="outside its review window"):
+        parse_judgment(
+            {
+                "start_id": "u0",
+                "end_id": "u14",
+                "approved": True,
+                "dimensions": {
+                    "hook": 70,
+                    "standalone_context": 70,
+                    "development": 70,
+                    "payoff": 70,
+                    "interest_novelty": 70,
+                },
+                "reason": "Complete",
+            },
+            proposal,
+            units,
+            "sha256-v1:source",
+        )
+
+
+def test_judgment_keeps_revised_clip_in_original_duration_class() -> None:
+    units = (
+        TimedUnit("u0", 0.0, 100.0, "First point."),
+        TimedUnit("u1", 100.0, 170.0, "Second point."),
+        TimedUnit("u2", 170.0, 200.0, "Closing point."),
+    )
+    proposal = parse_proposals(
+        {
+            "clips": [
+                {
+                    "class": "short",
+                    "start_id": "u0",
+                    "end_id": "u1",
+                    "title": "Idea",
+                    "rationale": "Complete",
+                }
+            ]
+        },
+        units,
+        "sha256-v1:source",
+    )[0]
+    with pytest.raises(ScoringError, match="duration class"):
+        parse_judgment(
+            {
+                "start_id": "u0",
+                "end_id": "u2",
+                "approved": True,
+                "dimensions": {
+                    "hook": 70,
+                    "standalone_context": 70,
+                    "development": 70,
+                    "payoff": 70,
+                    "interest_novelty": 70,
+                },
+                "reason": "Complete",
+            },
+            proposal,
+            units,
+            "sha256-v1:source",
+        )
+
+
+def test_pipeline_publishes_revised_boundary_and_counts_adjustment(
+    tmp_path: Path,
+) -> None:
+    class RevisingBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            response = super().complete(prompt, schema)
+            if "Original boundary IDs: u0 through u1" in prompt:
+                assert isinstance(response, dict)
+                return {**response, "start_id": "u1"}
+            return response
+
+    result = _run(tmp_path, FakeTranscriber(), RevisingBackend())
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["analysis"]["boundary_adjusted"] == 1
+    short_path = next(path for path in result.clip_paths if "short" in path.name)
+    short_metadata = json.loads(short_path.with_suffix(".json").read_text())
+    assert (short_metadata["start"], short_metadata["end"]) == (60.0, 120.0)
+    assert short_metadata["transcript_unit_ids"] == {"start": "u1", "end": "u1"}
+
+
+def test_pipeline_merges_proposals_revised_to_same_interval(tmp_path: Path) -> None:
+    class DuplicateRevisingBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Find every" in prompt:
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": "u0",
+                            "end_id": "u1",
+                            "title": "First version",
+                            "rationale": "Complete point",
+                        },
+                        {
+                            "class": "short",
+                            "start_id": "u1",
+                            "end_id": "u2",
+                            "title": "Second version",
+                            "rationale": "Complete point",
+                        },
+                    ]
+                }
+            response = super().complete(prompt, schema)
+            assert isinstance(response, dict)
+            return {**response, "start_id": "u1", "end_id": "u1"}
+
+    result = _run(tmp_path, FakeTranscriber(), DuplicateRevisingBackend())
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["analysis"]["proposed"] == 2
+    assert manifest["analysis"]["editorially_eligible"] == 1
+    assert manifest["analysis"]["selected"] == 1
+    assert len(result.clip_paths) == 1
