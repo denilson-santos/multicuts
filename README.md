@@ -1,26 +1,254 @@
-# multicuts
+<h1 align="center">🎬 multicuts</h1>
 
-`multicuts` is a Python CLI that finds and renders strong short and long clips from podcasts, interviews, and opinion videos. It accepts a local video path or a supported YouTube URL, transcribes the source once with `multisubs`, and analyzes the timed transcript with one explicitly selected AI backend. The 0–100 viral-potential score is an explainable editorial signal, not a probability.
+<p align="center">
+  <strong>Turn long videos into ranked, subtitled short and long clips.</strong><br>
+  A Python CLI for podcasts, interviews, and opinion videos.
+</p>
 
-## Installation and development
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 to 3.13">
+  <img src="https://img.shields.io/badge/Media-FFmpeg-007808?logo=ffmpeg&amp;logoColor=white" alt="Media processing with FFmpeg">
+  <img src="https://img.shields.io/badge/Subtitles-multisubs-7C3AED" alt="Subtitles powered by multisubs">
+</p>
 
-Use Python 3.10–3.13, FFmpeg/ffprobe, and the supported `multisubs` 4.4 wheel. A full installation resolves the WhisperX dependencies:
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#output-and-reruns">Output</a> ·
+  <a href="#reference">Reference</a> ·
+  <a href="#development">Development</a>
+</p>
 
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-python -m pip install --editable ".[dev]"
+## Features
+
+| Feature | What you can do |
+| --- | --- |
+| 📥 **Local videos & YouTube** | Process a video file or a supported YouTube URL. |
+| ✂️ **Short & long clips** | Find both formats from the same source, with vertical shorts and horizontal long clips by default. |
+| 🧠 **Editorial review** | Find complete ideas, refine nearby opening and closing boundaries, and select clips for general or topic-aware audiences. |
+| 🏆 **Explainable ranking** | See a 0–100 score, its component scores, and the editorial reason in each clip's JSON. |
+| 💬 **Styled subtitles** | Burn subtitles with `multisubs` templates, using the source transcript's word timings. |
+| 🎞️ **Flexible framing** | Choose vertical, horizontal, or original framing and customize output dimensions. |
+| ♻️ **Reusable analysis** | Reuse transcription and AI results when changing subtitle style or framing. |
+| 📦 **Organized output** | Get MP4 clips, per-clip metadata, and a run manifest in a separate folder for each invocation. |
+
+### How it works
+
+```mermaid
+flowchart LR
+    A["📥 Video"] --> B["📝 Transcribe once"]
+    B --> C["🧠 Propose & review"]
+    C --> D["🏆 Rank & deduplicate"]
+    D --> E["🎬 Render & subtitle"]
 ```
 
-The runtime `multisubs[whisperx]` dependency points to the author's pinned 4.4.0 GitHub Release wheel. The default test suite does not require model downloads, a GPU, YouTube access, or AI credentials. Run checks with:
+One source is processed per invocation. The selected AI backend analyzes transcript text and timing; media files are not sent to that backend.
+
+## Quick start
+
+### 1. Install
+
+Use **Python 3.10–3.13** and have **FFmpeg/ffprobe** on your PATH. Subtitle rendering requires FFmpeg's `subtitles` filter (libass).
 
 ```bash
+git clone https://github.com/denilson-santos/multicuts.git
+cd multicuts
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install --editable .
+```
+
+Installation includes the pinned `multisubs[whisperx]` 4.4.0 release wheel and its transcription dependencies.
+
+### 2. Choose an AI backend
+
+Copy the configuration example:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your backend, model identifier, and credentials. For example:
+
+```dotenv
+LLM_BACKEND=openai
+LLM_MODEL=YOUR_MODEL
+OPENAI_API_KEY=YOUR_API_KEY
+```
+
+Replace the placeholders. Both the backend and model are required; neither has a built-in default. API backends need their corresponding key; CLI backends need an installed, authenticated command.
+
+### 3. Generate clips
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --lang pt
+```
+
+This example uses Portuguese audio. Set `--lang` to your source language when known, or omit it for automatic detection. Each run searches for both clip classes:
+
+| Class | Duration | Default output |
+| --- | --- | --- |
+| 📱 Short | Up to 3 minutes | 9:16 · 1080×1920 |
+| 🖥️ Long | More than 3 minutes | 16:9 · 1920×1080 |
+
+Long clips preferably span 3–15 minutes, with no hard duration ceiling. The number of clips follows the content and editorial decisions, with redundant overlaps suppressed.
+
+## Usage
+
+The following examples use the backend and model configured in `.env`.
+
+**Use a YouTube source**
+
+```bash
+multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
+```
+
+**Keep the source framing and disable subtitles**
+
+```bash
+multicuts ./interview.mp4 --output-dir ./interview-cuts \
+  --short-aspect-ratio original --long-aspect-ratio original --no-subtitles
+```
+
+**Override the AI configuration for one run**
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
+  --llm-backend codex --llm-model YOUR_MODEL --llm-effort high
+```
+
+### Supported backends
+
+| Access | `--llm-backend` | Authentication |
+| --- | --- | --- |
+| API | `openai`, `anthropic`, `gemini` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, respectively |
+| Installed CLI | `codex`, `claude`, `agy` | Authenticate the corresponding command |
+
+### Common options
+
+| Option | Purpose |
+| --- | --- |
+| `--lang CODE` | Set the transcription language; omission enables automatic detection. |
+| `--asr-model MODEL` | Choose the transcription model, independently of `--llm-model`. |
+| `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
+| `--short-aspect-ratio` / `--long-aspect-ratio` | Choose `9:16`, `16:9`, or `original` for each class. |
+| `--force-recompute` | Bypass cached transcription and AI analysis. |
+| `--keep-intermediates` | Retain intermediate files for inspection. |
+| `--verbose` | Enable detailed logging. |
+
+Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls.
+
+## Output and reruns
+
+Pass `--output-dir` on every invocation. Each run gets a unique directory:
+
+```text
+cuts/
+├── runs/
+│   └── <run-id>/
+│       ├── manifest.json
+│       └── clips/
+│           ├── <clip>.mp4
+│           └── <clip>.json
+└── .cache/
+```
+
+- **MP4:** the final rendered clip, with subtitles enabled by default.
+- **Clip JSON:** its interval, scores, and editorial explanation.
+- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references.
+
+Reruns create fresh output files and preserve completed runs. Cached transcripts and validated AI responses reduce repeated work:
+
+| What changes? | Transcription | AI analysis |
+| --- | --- | --- |
+| Nothing, or only subtitles/framing | Reused | Reused |
+| AI model or reasoning effort | Reused | Recomputed |
+| `--force-recompute` enabled | Recomputed | Recomputed |
+
+YouTube acquisition may download the source again before its media fingerprint is known.
+
+## Reference
+
+<details>
+<summary><strong>🧠 Editorial review and scoring</strong></summary>
+
+The AI can adjust a proposed clip's boundaries to nearby observed transcript units before judging it. The revised clip must remain in its duration class. Review uses the transcript without the generated title.
+
+A complete idea can work for a general or topic-aware audience; familiar names alone do not cause rejection. Each proposal is independently approved or rejected, with no approval or rejection quota. Zero selected clips is a valid result.
+
+The **viral-potential score is an editorial ranking signal, not a probability of virality**. It ranks approved clips and helps choose between same-class overlaps; there is no publication score threshold.
+
+| Component | Weight |
+| --- | ---: |
+| Hook | 20% |
+| Standalone context | 20% |
+| Development | 15% |
+| Payoff | 25% |
+| Interest or novelty | 20% |
+
+The score evaluates the transcript, not visual quality, audio quality, or measured audience response. Same-class overlap suppression defaults to `0.60` and can be changed with `--overlap-threshold`. There is no fixed clip count, heuristic scorer, silent fallback, or per-run AI request cap. Provider failures stop the run with exit code `5`.
+
+</details>
+
+<details>
+<summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
+
+Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+
+`--llm-effort` or `LLM_EFFORT` sets the reasoning level. Omit it or use `auto` for the provider default.
+
+| Backend | Accepted explicit levels |
+| --- | --- |
+| OpenAI | none, minimal, low, medium, high, xhigh, max |
+| Anthropic | low, medium, high, xhigh, max |
+| Gemini 3 | minimal, low, medium, high |
+| Codex CLI | low, medium, high, xhigh, max, ultra |
+| Claude CLI | low, medium, high, xhigh, max |
+| agy CLI | low, medium, high, max |
+
+Use a level supported by your specific model and installed CLI version. Gemini 2.5 uses a thinking budget; omit explicit effort because this CLI does not expose thinking budgets.
+
+Long sources are split into overlapping transcript blocks. `--block-chars` and `--block-overlap-chars` control model context, not clip count or a duration ceiling. Very long ideas may require a larger block supported by the model. Proposals must reference observed transcript unit IDs.
+
+Cache reuse depends on the source, transcription settings, AI backend, model, effort, prompt version, and transcript content. Only normalized transcripts and validated AI responses are cached.
+
+Subtitles are generated after the final crop so they fit the clip frame. Complete word timings are required: clips are never retranscribed and timestamps are never invented. `multisubs` splits supplied timed cues when they exceed the final layout.
+
+</details>
+
+<details>
+<summary><strong>🚦 Exit codes</strong></summary>
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | Completed, including zero selected clips |
+| 1 | Unexpected failure |
+| 2 | Invalid configuration or CLI usage |
+| 3 | Acquisition or media preflight failure |
+| 4 | Transcription failure |
+| 5 | AI analysis failure |
+| 6 | Rendering or artifact publication failure |
+
+</details>
+
+## Development
+
+Install development tools and run the local quality checks:
+
+```bash
+python -m pip install --editable ".[dev]"
 ruff format --check .
 ruff check .
 pyright
 pytest -m "not integration"
 python -m build
 ```
+
+The default test suite requires no network, model downloads, GPU, YouTube access, or AI credentials.
+
+<details>
+<summary><strong>📦 Package versioning and release verification</strong></summary>
 
 ### Package versioning
 
@@ -139,78 +367,16 @@ inputs, JUnit and `-ra` record two skips; no live ASR or YouTube
 validation is claimed. Publication and registry credentials remain separate
 decisions.
 
-## Use
-
-Choose exactly one AI backend and model through flags or environment variables. For API backends, provide its corresponding `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`. CLI backends use the installed and authenticated `codex`, `claude`, or `agy` command. The CLI sends transcript text and timing to the selected backend; it does not send media to the AI backend.
-
-```bash
-multicuts /path/to/podcast.mp4 --output-dir ./podcast-cuts --llm-backend openai --llm-model YOUR_MODEL
-multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts --llm-backend codex --llm-model YOUR_MODEL
-```
-
-Copy `.env.example` to `.env` to configure the selected AI backend and other defaults:
-
-```dotenv
-LLM_BACKEND=gemini
-LLM_MODEL=YOUR_MODEL
-# LLM_EFFORT=high
-GEMINI_API_KEY=YOUR_API_KEY
-```
-
-For other settings, precedence is command line, process environment, `.env`, then built-in defaults. `LLM_BACKEND` and `LLM_MODEL` have no built-in defaults and are required. Omit `--lang` for automatic language detection by `multisubs`, or pass `--lang CODE` for an explicit language. Source path or URL, output directory (`--output-dir`), language, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. `--asr-model` chooses the `multisubs` transcription model, while `--llm-model` chooses the semantic model. `--llm-effort` optionally sets the reasoning level; omit it or use `auto` for the provider default. The corresponding environment variable is `LLM_EFFORT`. Supported levels depend on the selected backend and model. Gemini 2.5 uses a thinking budget and cannot take an explicit effort level. Use `multicuts --help` for every option.
-
-Explicit effort levels by backend:
-
-| Backend | Accepted levels |
-| --- | --- |
-| OpenAI | none, minimal, low, medium, high, xhigh, max |
-| Anthropic | low, medium, high, xhigh, max |
-| Gemini 3 | minimal, low, medium, high |
-| Codex CLI | low, medium, high, xhigh, max, ultra |
-| Claude CLI | low, medium, high, xhigh, max |
-| agy CLI | low, medium, high, max |
-
-Use a level supported by your specific model and installed CLI version. For example, --llm-effort high overrides LLM_EFFORT for one run. Gemini 2.5 requires the provider default because this CLI does not expose thinking budgets.
-
-The app searches **both** classes on every source:
-
-| Class | Duration | Default frame |
-| --- | --- | --- |
-| Short | Up to 3 minutes | 9:16, 1080×1920 |
-| Long | More than 3 minutes | 16:9, 1920×1080 |
-
-Long cuts preferably run 3–15 minutes, with no hard duration ceiling. Change framing with `--short-aspect-ratio`, `--long-aspect-ratio`, and the geometry options. The number of cuts is determined by transcript content, editorial approval from the AI, and same-class overlap suppression (`--overlap-threshold`, default 0.60). Zero selected cuts is a valid run. There is no `--clips` count, heuristic scorer, silent fallback, or per-run AI request cap. Provider failures stop the run with the scoring exit code.
-
-Before scoring, the AI can adjust a proposed cut's start and end to nearby observed transcript units when that gives it a better opening or close. The revised interval must remain in its duration class. A complete idea can serve a general or topic-aware audience; familiar names alone do not cause rejection. The judgment uses the transcript without the generated title. Scores rank editorially approved cuts and decide which overlapping cut to keep; they never impose a publication threshold. Scores weight hook 20%, standalone context 20%, development 15%, payoff 25%, and interest or novelty 20%. Each clip JSON explains its scores and the model's reason. A score only evaluates the transcript and does not measure audience response, visual quality, audio quality, or the probability of virality.
-
-Subtitles are on by default. `multisubs` burns them after the final crop so they fit the actual clip frame. `--no-subtitles` publishes raw final clips. Word timing must be complete for subtitled output; the app never retranscribes a cut or invents timestamps. Multisubs splits supplied timed cues when they exceed the final clip layout.
-
-## Results and reruns
-
-Each invocation writes a distinct `<output-dir>/runs/<run-id>/` with `manifest.json`, final MP4 files under `clips/`, and one detailed JSON file per clip. The manifest is a concise run summary with source provenance, model and prompt versions, cache hits, editorially eligible and selected counts, and clip references. Pass `--output-dir PATH` on every run.
-
-Only normalized transcripts and validated AI responses are cached under `<output-dir>/.cache/`. A second run with the same source, transcription settings, AI backend, model, effort, prompt, and transcript content skips ASR and AI analysis, but renders fresh output files. Changing the AI model or effort reuses transcription and recomputes AI; changing subtitle style or geometry reuses both. `--force-recompute` bypasses both shared caches. Existing completed outputs are never overwritten. YouTube acquisition may download again before its media fingerprint is known.
-
-Context is divided into overlapping transcript blocks for long sources. The block size and overlap are configurable with `--block-chars` and `--block-overlap-chars`; these control model context, not the number of clips or a duration ceiling. A cut must be proposed using observed transcript unit IDs. Very long ideas that cannot fit in one overlapping context block may require a larger block size supported by the chosen model.
-
-## Exit codes
-
-| Code | Meaning |
-| ---: | --- |
-| 0 | Completed, including zero selected clips |
-| 1 | Unexpected failure |
-| 2 | Invalid configuration or CLI usage |
-| 3 | Acquisition or media preflight failure |
-| 4 | Transcription failure |
-| 5 | AI analysis failure |
-| 6 | Rendering or artifact publication failure |
+</details>
 
 ## Documentation
 
-- [Product requirements](docs/prd.md)
-- [Architecture](docs/architecture.md)
-- [Engineering conventions](docs/conventions.md)
-- [Agent instructions](AGENTS.md)
+| Guide | Covers |
+| --- | --- |
+| [Product requirements](docs/prd.md) | Behavior, scoring semantics, and acceptance criteria |
+| [Architecture](docs/architecture.md) | Pipeline, provider boundaries, artifacts, and caches |
+| [Engineering conventions](docs/conventions.md) | Code style, testing, and media integration |
+| [Agent instructions](AGENTS.md) | Repository rules for coding agents |
 
 ## License
 
