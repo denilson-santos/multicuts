@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from time import perf_counter
 from typing import Protocol
 
 from multicuts.adapters.backends import LlmBackend
@@ -127,7 +128,11 @@ def _ai_request(
         cached = load_ai_response(config.output_dir, key, validate=validate)
         if cached is not None:
             cache_stats["hits"] += 1
+            logger.debug("AI task=%s cache=hit", task)
             return cached
+    logger.debug(
+        "AI task=%s cache=%s", task, "bypassed" if config.force_recompute else "miss"
+    )
     response = backend.complete(prompt, schema)
     validate(response)
     save_ai_response(config.output_dir, key, response)
@@ -153,9 +158,14 @@ def _transcribe(
             and cached.provider_version == version
             and cached.language_requested == config.language
         ):
-            logger.info("stage=transcribe cache=hit")
+            logger.info("Transcription cache hit; reusing the source transcript")
             return cached, True
-    logger.info("stage=transcribe cache=miss")
+    logger.info(
+        "Transcription cache %s; running ASR (model=%s, language=%s)",
+        "bypassed" if config.force_recompute else "miss",
+        config.transcription_model,
+        config.language or "auto",
+    )
     transcript = transcriber.transcribe(
         source.local_path,
         language=config.language,
@@ -244,6 +254,7 @@ def run_pipeline(
     ] = render_final,
 ) -> RunResult:
     """Analyze both classes and publish every approved nonredundant cut."""
+    started = perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         + "-"
@@ -256,11 +267,28 @@ def run_pipeline(
     except OSError as exc:
         raise ArtifactError("Could not create a unique run workspace") from exc
     try:
-        logger.info("stage=acquire")
+        logger.info("Run %s started; output: %s", run_id, root)
+        logger.info("[1/6] Acquiring source and checking media")
         source = acquire(config.source, work / "acquisition")
         media = probe(source)
+        logger.info(
+            "Source ready: %.1fs, %dx%d (%.1fs elapsed)",
+            media.duration,
+            media.presentation_width,
+            media.presentation_height,
+            perf_counter() - started,
+        )
+        logger.info("[2/6] Loading source transcription")
+        transcription_started = perf_counter()
         provider = transcriber or MultisubsAdapter()
         transcript, transcript_hit = _transcribe(config, source, provider, work)
+        logger.info(
+            "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
+            len(transcript.segments),
+            len(transcript.words),
+            transcript.language_detected or "unknown",
+            perf_counter() - transcription_started,
+        )
         fingerprint = transcript_content_fingerprint(transcript)
         units = timed_units(
             transcript, max_unit_chars=min(6000, config.block_chars - 48)
@@ -270,11 +298,20 @@ def run_pipeline(
         )
         cache_stats = {"hits": 0, "misses": 0}
         proposals = {}
-        for block in context_blocks(
+        blocks = context_blocks(
             units,
             max_chars=config.block_chars,
             overlap_chars=config.block_overlap_chars,
-        ):
+        )
+        logger.info(
+            "[3/6] Finding candidates in %d transcript blocks (backend=%s, model=%s)",
+            len(blocks),
+            config.llm_backend,
+            config.llm_model,
+        )
+        analysis_started = perf_counter()
+        for block_index, block in enumerate(blocks, start=1):
+            logger.info("Analyzing transcript block %d/%d", block_index, len(blocks))
             prompt = proposal_prompt(block)
 
             def validate(value: object, current: tuple = block) -> object:
@@ -297,9 +334,22 @@ def run_pipeline(
                         "AI proposed a clip beyond source media duration"
                     )
                 proposals.setdefault(proposal.id, proposal)
-        logger.info("stage=propose clips=%d", len(proposals))
+        logger.info(
+            "Found %d unique candidates: %d short, %d long",
+            len(proposals),
+            sum(clip.clip_class == "short" for clip in proposals.values()),
+            sum(clip.clip_class == "long" for clip in proposals.values()),
+        )
+        logger.info("[4/6] Reviewing %d candidates", len(proposals))
         judged_by_id: dict[str, JudgedClip] = {}
-        for proposal in proposals.values():
+        for index, proposal in enumerate(proposals.values(), start=1):
+            logger.info(
+                "Reviewing candidate %d/%d: %s, %.1fs",
+                index,
+                len(proposals),
+                proposal.clip_class,
+                proposal.end - proposal.start,
+            )
             prompt = judgment_prompt(proposal, units)
             response = _ai_request(
                 ai,
@@ -317,6 +367,15 @@ def run_pipeline(
             clip = parse_judgment(response, proposal, units, source.fingerprint)
             if clip.proposal.end > media.duration + 0.001:
                 raise ScoringError("AI revised a clip beyond source media duration")
+            logger.debug(
+                "Candidate %d/%d: %s, score=%.2f, interval=%.2f-%.2fs",
+                index,
+                len(proposals),
+                "approved" if clip.approved else "rejected",
+                clip.score,
+                clip.proposal.start,
+                clip.proposal.end,
+            )
             previous = judged_by_id.get(clip.proposal.id)
             if previous is None or (clip.approved, clip.score) > (
                 previous.approved,
@@ -326,10 +385,48 @@ def run_pipeline(
         judged = tuple(judged_by_id.values())
         eligible = sum(clip.approved for clip in judged)
         selected = select_clips(judged, overlap_threshold=config.overlap_threshold)
-        logger.info("stage=select eligible=%d selected=%d", eligible, len(selected))
+        boundary_adjusted = sum(
+            clip.proposed_start_id != clip.proposal.start_id
+            or clip.proposed_end_id != clip.proposal.end_id
+            for clip in judged
+        )
+        logger.info(
+            "[5/6] Selection: %d approved, %d rejected, %d selected "
+            "(%d merged intervals, %d overlaps removed, %d boundaries adjusted)",
+            eligible,
+            len(judged) - eligible,
+            len(selected),
+            len(proposals) - len(judged),
+            eligible - len(selected),
+            boundary_adjusted,
+        )
+        logger.info(
+            "AI analysis finished in %.1fs; cache: %d hits, %d misses",
+            perf_counter() - analysis_started,
+            cache_stats["hits"],
+            cache_stats["misses"],
+        )
+        if not selected:
+            logger.info("[6/6] No clips selected; rendering skipped")
+        else:
+            logger.info(
+                "[6/6] Rendering %d clips (subtitles=%s)",
+                len(selected),
+                "on" if config.subtitles_enabled else "off",
+            )
         clips: list[Path] = []
         references: list[dict[str, object]] = []
         for rank, clip in enumerate(selected, start=1):
+            clip_started = perf_counter()
+            logger.info(
+                "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%.2f",
+                rank,
+                len(selected),
+                clip.proposal.clip_class,
+                clip.proposal.start,
+                clip.proposal.end,
+                clip.score,
+            )
             stem = f"{rank:03d}-{clip.proposal.clip_class}-{clip.proposal.id}"
             raw_path = work / f"{stem}.mp4"
             final_path = root / "clips" / f"{stem}.mp4"
@@ -337,6 +434,13 @@ def run_pipeline(
                 source, media, clip, config, output=raw_path, work=work
             )
             final_path.parent.mkdir(parents=True, exist_ok=True)
+            if config.subtitles_enabled:
+                logger.info(
+                    "Adding subtitles to clip %d/%d (template=%s)",
+                    rank,
+                    len(selected),
+                    config.subtitle_template,
+                )
             final, sidecars, template = final_renderer(
                 raw,
                 raw_media,
@@ -363,6 +467,13 @@ def run_pipeline(
             )
             metadata_path = final.with_suffix(".json")
             _publish_json(metadata_path, metadata, work)
+            logger.info(
+                "Clip %d/%d saved: %s (%.1fs)",
+                rank,
+                len(selected),
+                final.name,
+                perf_counter() - clip_started,
+            )
             clips.append(final)
             references.append(
                 {
@@ -401,11 +512,7 @@ def run_pipeline(
                 "overlap_threshold": config.overlap_threshold,
                 "timed_units": len(units),
                 "proposed": len(proposals),
-                "boundary_adjusted": sum(
-                    clip.proposed_start_id != clip.proposal.start_id
-                    or clip.proposed_end_id != clip.proposal.end_id
-                    for clip in judged
-                ),
+                "boundary_adjusted": boundary_adjusted,
                 "editorially_eligible": eligible,
                 "selected": len(selected),
                 "ai_cache": cache_stats,
@@ -414,6 +521,11 @@ def run_pipeline(
         }
         manifest_path = root / "manifest.json"
         _publish_json(manifest_path, manifest, work)
+        logger.info(
+            "Run finished in %.1fs; manifest: %s",
+            perf_counter() - started,
+            manifest_path,
+        )
         return RunResult(
             run_id,
             RunOutcome.COMPLETED if clips else RunOutcome.ZERO_SELECTION,

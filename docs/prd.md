@@ -26,6 +26,8 @@ Source, output directory, transcription language, verbosity, forced recomputatio
 
 `--force-recompute` bypasses the shared transcription and AI caches. It does not authorize overwriting a completed output. `--keep-intermediates` retains private work files for diagnosis.
 
+Normal CLI output reports only `multicuts` progress and errors, including stages, cache reuse, candidate/block and clip counters, selection results, elapsed time, and output locations. Dependency logging, direct terminal writes, and progress bars are suppressed during processing. `--verbose` enables application debug details and allows dependency output. Progress/errors use stderr and the final run summary uses stdout. Suppression is scoped to the synchronous pipeline and must restore terminal streams and logging filters after success, failure, or interruption.
+
 ## Cache and reruns
 
 Only two reusable caches are part of the active pipeline:

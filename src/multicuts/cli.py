@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -62,16 +64,85 @@ class _CliHandler(logging.StreamHandler):
     """Marker for the handler owned by this CLI."""
 
 
+class _ProjectLogs(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name == "multicuts" or record.name.startswith("multicuts.")
+
+
 def configure_logging(verbose: bool) -> None:
     project = logging.getLogger("multicuts")
-    project.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    level = logging.DEBUG if verbose else logging.INFO
+    project.setLevel(level)
+    project.propagate = False
     for handler in list(project.handlers):
         if isinstance(handler, _CliHandler):
             project.removeHandler(handler)
             handler.close()
     handler = _CliHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    handler.setLevel(level)
+    handler.addFilter(_ProjectLogs())
+    label = "%(name)s" if verbose else "multicuts"
+    handler.setFormatter(logging.Formatter(f"%(levelname)s [{label}]: %(message)s"))
     project.addHandler(handler)
+
+
+@contextmanager
+def _pipeline_output(verbose: bool) -> Iterator[None]:
+    """Keep dependency output off the terminal during a normal synchronous run."""
+    if verbose:
+        yield
+        return
+    with ExitStack() as stack:
+        sink = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
+        project = logging.getLogger("multicuts")
+        for handler in project.handlers:
+            if not isinstance(handler, _CliHandler):
+                continue
+            try:
+                descriptor = handler.stream.fileno()
+            except (AttributeError, OSError, ValueError):
+                continue
+            if descriptor == 2:
+                console = stack.enter_context(
+                    os.fdopen(os.dup(2), "w", encoding="utf-8", errors="replace")
+                )
+                original = handler.setStream(console)
+                stack.callback(handler.setStream, original)
+
+        # Existing handlers can retain streams that Python redirection cannot reach.
+        loggers = [logging.getLogger(), *logging.Logger.manager.loggerDict.values()]
+        handlers = {
+            handler
+            for current in loggers
+            if isinstance(current, logging.Logger)
+            for handler in current.handlers
+            if isinstance(handler, logging.StreamHandler)
+            and not isinstance(handler, logging.FileHandler)
+        }
+        if isinstance(logging.lastResort, logging.StreamHandler):
+            handlers.add(logging.lastResort)
+        project_filter = _ProjectLogs()
+        for handler in handlers:
+            handler.addFilter(project_filter)
+            stack.callback(handler.removeFilter, project_filter)
+
+        streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
+        for stream in streams:
+            if stream is not None:
+                stream.flush()
+        # Native libraries and inherited subprocess streams write directly to 1/2.
+        for descriptor in (1, 2):
+            saved = os.dup(descriptor)
+            stack.callback(os.close, saved)
+            stack.callback(os.dup2, saved, descriptor)
+            os.dup2(sink.fileno(), descriptor)
+        with redirect_stdout(sink), redirect_stderr(sink):
+            try:
+                yield
+            finally:
+                for stream in streams:
+                    if stream is not None:
+                        stream.flush()
 
 
 def _safe_text(value: object) -> str:
@@ -202,7 +273,12 @@ def run_command(
     force_recompute: Annotated[
         bool | None, typer.Option("--force-recompute/--reuse-cache")
     ] = None,
-    verbose: Annotated[bool | None, typer.Option("--verbose/--quiet")] = None,
+    verbose: Annotated[
+        bool | None,
+        typer.Option(
+            "--verbose/--quiet", help="Show debug details and dependency output."
+        ),
+    ] = None,
 ) -> None:
     backend = _value(llm_backend, "LLM_BACKEND", "")
     llm_model_value = _value(llm_model, "LLM_MODEL", "")
@@ -265,7 +341,7 @@ def parse_run_config(argv: Sequence[str] | None = None) -> AppConfig:
     return state.parsed_config
 
 
-def main(
+def _main(
     argv: Sequence[str] | None = None, *, pipeline: PipelineRunner | None = None
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
@@ -294,7 +370,8 @@ def main(
         return EXIT_SUCCESS
     configure_logging(state.parsed_config.verbose)
     try:
-        result = (pipeline or run_pipeline)(state.parsed_config)
+        with _pipeline_output(state.parsed_config.verbose):
+            result = (pipeline or run_pipeline)(state.parsed_config)
         typer.echo(
             f"Run {result.run_id}: {result.outcome.value}; "
             f"clips={len(result.clip_paths)}; manifest={result.manifest_path}"
@@ -316,3 +393,19 @@ def main(
     except Exception:
         logger.error("Unexpected run failure")
         return EXIT_UNEXPECTED
+
+
+def main(
+    argv: Sequence[str] | None = None, *, pipeline: PipelineRunner | None = None
+) -> int:
+    project = logging.getLogger("multicuts")
+    level, propagate = project.level, project.propagate
+    try:
+        return _main(argv, pipeline=pipeline)
+    finally:
+        for handler in list(project.handlers):
+            if isinstance(handler, _CliHandler):
+                project.removeHandler(handler)
+                handler.close()
+        project.setLevel(level)
+        project.propagate = propagate

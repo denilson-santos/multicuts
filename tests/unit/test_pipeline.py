@@ -1,6 +1,7 @@
 """Hermetic checks for semantic selection, reruns, and run artifacts."""
 
 import json
+import logging
 import re
 import shutil
 from dataclasses import replace
@@ -191,6 +192,60 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert manifest["analysis"]["editorially_eligible"] == 2
     assert manifest["analysis"]["selected"] == 2
     assert "minimum_score" not in manifest["analysis"]
+
+
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
+    subtitles: bool, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
+    config = AppConfig(
+        source=str(tmp_path / "source.mp4"),
+        output_dir=tmp_path / "out",
+        llm_backend="codex",
+        llm_model="test-model",
+        subtitles_enabled=subtitles,
+    )
+    first = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    messages = caplog.messages
+    for stage in range(1, 7):
+        assert any(message.startswith(f"[{stage}/6]") for message in messages)
+    assert (
+        "Transcription cache miss; running ASR (model=default, language=auto)"
+        in messages
+    )
+    assert "Found 2 unique candidates: 1 short, 1 long" in messages
+    assert "Analyzing transcript block 1/1" in messages
+    assert any("Reviewing candidate 2/2" in message for message in messages)
+    assert any("2 approved, 0 rejected, 2 selected" in message for message in messages)
+    assert any("cache: 0 hits, 3 misses" in message for message in messages)
+    assert any("Rendering clip 2/2: long" in message for message in messages)
+    assert any("Clip 2/2 saved:" in message for message in messages)
+    assert any(str(first.manifest_path) in message for message in messages)
+    assert (
+        any("Adding subtitles to clip" in message for message in messages) is subtitles
+    )
+    assert not any("Point 0." in message for message in messages)
+
+    caplog.clear()
+    asr, ai = FakeTranscriber(), FakeBackend()
+    _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == ai.calls == 0
+    assert "Transcription cache hit; reusing the source transcript" in caplog.messages
+    assert any("cache: 3 hits, 0 misses" in message for message in caplog.messages)
+    assert not any("running ASR" in message for message in caplog.messages)
+
+
+def test_pipeline_explains_zero_selection_without_rendering_progress(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
+    _run(tmp_path, FakeTranscriber(), FakeBackend(empty=True))
+    assert "[6/6] No clips selected; rendering skipped" in caplog.messages
+    assert any(
+        "0 approved, 0 rejected, 0 selected" in message for message in caplog.messages
+    )
+    assert not any("Rendering clip" in message for message in caplog.messages)
 
 
 def test_force_recompute_bypasses_both_expensive_caches(tmp_path: Path) -> None:
