@@ -135,7 +135,9 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--short-aspect-ratio` / `--long-aspect-ratio` | Choose `9:16`, `16:9`, or `original` for each class. |
 | `--force-recompute` | Bypass cached transcription and AI analysis. |
 | `--keep-intermediates` | Retain intermediate files for inspection. |
-| `--verbose` | Enable detailed logging. |
+| `--verbose` | Show debug details and dependency output. |
+
+By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls.
 
