@@ -18,7 +18,7 @@ local path / YouTube URL
   -> per-clip JSON and concise run manifest
 ```
 
-The backend never receives video or audio. Prompts explicitly treat source transcript text as data. An invalid provider response or provider failure raises a scoring error. There is no heuristic branch or provider fallback in the active CLI flow.
+The backend never receives video or audio. Prompts explicitly treat source transcript text as data. Optional `AppConfig.editorial_context` describes the video's subject and scope and is included as a separate JSON string in both proposal and judgment prompts. It guides interpretation of speakers, terminology, references, and relationships between ideas, helping the AI discover relevant complete clips and review their role in the conversation. It cannot supply transcript evidence or override editorial quality and structured-response rules. Context guides prompts while retaining the existing response schemas, approval validation, score composition, and deterministic selection rules. An invalid provider response or provider failure raises a scoring error. There is no heuristic branch or provider fallback in the active CLI flow.
 
 ## Module boundaries
 
@@ -50,9 +50,11 @@ The output root has two distinct parts:
     .work/  # optional after completion
 ```
 
-The transcript key includes media fingerprint and ASR settings/version. The AI key includes the complete normalized transcript fingerprint, backend/model/effort, prompt/schema, and task. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
+The transcript key includes media fingerprint and ASR settings/version. The AI key includes the complete normalized transcript fingerprint, backend/model/effort, prompt/schema, and task. Editorial context is part of each prompt, so changing it invalidates AI responses while reusing ASR. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
 
 The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
+
+The manifest's `analysis.editorial_context` and per-clip `viral_potential.editorial_context` record the applied optional context as text or null. Normal and verbose application logs may report that video context is enabled but do not print the text.
 
 ## Media and subtitles
 
@@ -64,7 +66,7 @@ Subtitles are generated after the final crop. Source segment and word timings ar
 
 The app never sets a clip quota or a run-wide AI call limit. Text blocks keep each provider request within a configurable context size and overlap so ideas around ordinary boundaries can be proposed. This context size is a model-input constraint, not a clip duration rule. An idea spanning more text than any one block covers may require a larger block supported by the selected model. Long clips are not rejected merely for exceeding 15 minutes.
 
-Acquisition, media, transcription, scoring, rendering, and artifact failures remain distinct. Failed AI responses are not converted into synthetic scores. An interrupted or failed run can leave its unique directory for diagnosis; the next invocation receives another directory and may reuse only validated shared caches. Completed runs cannot be overwritten.
+Acquisition, media, transcription, scoring, rendering, and artifact failures remain distinct. Judgment `reason` must be nonempty text with no application-imposed character limit. The prompt and field description request concise explanations with additional detail when needed. Local validation trims surrounding whitespace and rejects nontext or empty values without including raw text in errors. Artifacts preserve the complete normalized explanation; the cache preserves the full validated provider response. Failed AI responses are neither cached nor converted into synthetic scores. An interrupted or failed run can leave its unique directory for diagnosis; the next invocation receives another directory and may reuse only validated shared caches. Completed runs cannot be overwritten.
 
 ## Privacy and security
 

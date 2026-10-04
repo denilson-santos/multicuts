@@ -43,6 +43,7 @@ class AppConfig:
     force_recompute: bool = False
     verbose: bool = False
     llm_effort: str | None = None
+    editorial_context: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str) or not self.source.strip():
@@ -53,6 +54,12 @@ class AppConfig:
             )
         if not isinstance(self.llm_model, str) or not self.llm_model.strip():
             raise ConfigurationError("LLM_MODEL must not be empty")
+        if self.editorial_context is not None:
+            if not isinstance(self.editorial_context, str):
+                raise ConfigurationError("--context must be text")
+            object.__setattr__(
+                self, "editorial_context", self.editorial_context.strip() or None
+            )
         if self.llm_effort is not None:
             if not isinstance(self.llm_effort, str) or not self.llm_effort.strip():
                 raise ConfigurationError("LLM_EFFORT must be a supported effort level")

@@ -4,13 +4,14 @@ import logging
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from multicuts.app_config import AppConfig
 from multicuts.cli import main, parse_run_config
-from multicuts.errors import ScoringError
+from multicuts.errors import ConfigurationError, ScoringError
 from multicuts.pipeline import RunOutcome, RunResult
 
 
@@ -71,6 +72,51 @@ def test_cli_options_override_process_environment_and_dotenv(
     assert config.llm_effort == "high"
     assert config.overlap_threshold == 0.8
     assert config.subtitles_enabled
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_editorial_context_is_optional_and_cli_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_in: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLIP_CONTEXT", raising=False)
+    assert parse_run_config(_args()).editorial_context is None
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text(
+            'CLIP_CONTEXT="Interview about leadership"\n', encoding="utf-8"
+        )
+    else:
+        monkeypatch.setenv("CLIP_CONTEXT", "Prioritize entrepreneurship")
+    assert parse_run_config(_args()).editorial_context is None
+    context = '  Entrevista sobre educação.\nO convidado é chamado de "professor".  '
+    assert (
+        parse_run_config(_args() + ["--context", context]).editorial_context
+        == context.strip()
+    )
+    assert parse_run_config(_args() + ["--context", "  "]).editorial_context is None
+
+
+def test_cli_passes_optional_context_to_pipeline(tmp_path: Path) -> None:
+    def fake_pipeline(config: AppConfig) -> RunResult:
+        assert config.editorial_context == "Prioritize hiring lessons"
+        return RunResult(
+            "run-context", RunOutcome.ZERO_SELECTION, tmp_path / "manifest.json", ()
+        )
+
+    assert (
+        main(
+            _args() + ["--context", "Prioritize hiring lessons"], pipeline=fake_pipeline
+        )
+        == 0
+    )
+
+
+def test_configuration_rejects_nontext_editorial_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ConfigurationError, match="--context must be text"):
+        replace(parse_run_config(_args()), editorial_context=42)
 
 
 def test_cli_rejects_removed_fixed_count_and_heuristic_options() -> None:

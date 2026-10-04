@@ -224,6 +224,7 @@ def _clip_metadata(
             "model": config.llm_model,
             "effort": config.llm_effort,
             "prompt_version": PROMPT_VERSION,
+            "editorial_context": config.editorial_context,
         },
         "render": {
             "aspect_ratio": ratio,
@@ -309,10 +310,15 @@ def run_pipeline(
             config.llm_backend,
             config.llm_model,
         )
+        if config.editorial_context is not None:
+            logger.info(
+                "Video context enabled (%d characters)",
+                len(config.editorial_context),
+            )
         analysis_started = perf_counter()
         for block_index, block in enumerate(blocks, start=1):
             logger.info("Analyzing transcript block %d/%d", block_index, len(blocks))
-            prompt = proposal_prompt(block)
+            prompt = proposal_prompt(block, context=config.editorial_context)
 
             def validate(value: object, current: tuple = block) -> object:
                 return parse_proposals(value, current, source.fingerprint)
@@ -350,7 +356,7 @@ def run_pipeline(
                 proposal.clip_class,
                 proposal.end - proposal.start,
             )
-            prompt = judgment_prompt(proposal, units)
+            prompt = judgment_prompt(proposal, units, context=config.editorial_context)
             response = _ai_request(
                 ai,
                 config,
@@ -507,6 +513,7 @@ def run_pipeline(
                 "model": config.llm_model,
                 "effort": config.llm_effort,
                 "prompt_version": PROMPT_VERSION,
+                "editorial_context": config.editorial_context,
                 "score_version": SCORE_VERSION,
                 "score_weights": DIMENSION_WEIGHTS,
                 "overlap_threshold": config.overlap_threshold,

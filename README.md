@@ -131,6 +131,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | --- | --- |
 | `--lang CODE` | Set the transcription language; omission enables automatic detection. |
 | `--asr-model MODEL` | Choose the transcription model, independently of `--llm-model`. |
+| `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
 | `--short-aspect-ratio` / `--long-aspect-ratio` | Choose `9:16`, `16:9`, or `original` for each class. |
 | `--force-recompute` | Bypass cached transcription and AI analysis. |
@@ -140,6 +141,21 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls.
+
+### Optional editorial context
+
+Use `--context` to describe what the video is about and help the AI understand its scope:
+
+```bash
+multicuts ./interview.mp4 --output-dir ./cuts \
+  --context "A review of Pokémon games, covering mechanics, collecting, and the host's experience."
+```
+
+Context helps the AI interpret speakers, terms, references, and connections between ideas. It guides the discovery of relevant complete clips and their editorial review. It does not impose a mandatory topic or keyword filter, and it cannot supply missing transcript evidence. Approval still depends on the actual content within the reviewed boundaries.
+
+Supply context through `--context` for each source invocation. Omitting the flag or passing empty or whitespace-only text runs without additional video context.
+
+The applied context is recorded in the run manifest and each clip's JSON. Logs report that video context is enabled without printing its contents.
 
 ## Output and reruns
 
@@ -165,7 +181,7 @@ Reruns create fresh output files and preserve completed runs. Cached transcripts
 | What changes? | Transcription | AI analysis |
 | --- | --- | --- |
 | Nothing, or only subtitles/framing | Reused | Reused |
-| AI model or reasoning effort | Reused | Recomputed |
+| AI model, reasoning effort, or editorial context | Reused | Recomputed |
 | `--force-recompute` enabled | Recomputed | Recomputed |
 
 YouTube acquisition may download the source again before its media fingerprint is known.
@@ -196,7 +212,7 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <details>
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
-Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
 
 `--llm-effort` or `LLM_EFFORT` sets the reasoning level. Omit it or use `auto` for the provider default.
 
