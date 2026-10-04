@@ -260,6 +260,95 @@ def test_force_recompute_bypasses_both_expensive_caches(tmp_path: Path) -> None:
     assert ai.calls == 3
 
 
+def test_editorial_context_reaches_both_prompts_and_invalidates_only_ai_cache(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    class ContextBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prompts: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            self.prompts.append(prompt)
+            return super().complete(prompt, schema)
+
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
+    base = AppConfig(
+        source=str(tmp_path / "source.mp4"),
+        output_dir=tmp_path / "out",
+        llm_backend="codex",
+        llm_model="test-model",
+        subtitles_enabled=False,
+    )
+    initial_ai = ContextBackend()
+    initial = _run(tmp_path, FakeTranscriber(), initial_ai, config=base)
+    assert initial_ai.calls == 3
+    assert all("Editorial context:" not in prompt for prompt in initial_ai.prompts)
+    assert (
+        json.loads(initial.manifest_path.read_text(encoding="utf-8"))["analysis"][
+            "editorial_context"
+        ]
+        is None
+    )
+
+    context = 'Entrevista sobre educação.\nO convidado é conhecido como "professor".'
+    contextual = replace(base, editorial_context=context)
+    asr, ai = FakeTranscriber(), ContextBackend()
+    result = _run(tmp_path, asr, ai, config=contextual)
+    assert asr.calls == 0
+    assert ai.calls == len(ai.prompts) == 3
+    assert len(result.clip_paths) == 2
+    for prompt in ai.prompts:
+        assert json.dumps(context, ensure_ascii=False) in prompt
+        assert "mandatory topic or keyword filter" in prompt
+        assert "Context is background, not transcript evidence" in prompt
+    assert "identify the most relevant complete ideas" in ai.prompts[0]
+    for prompt in ai.prompts[1:]:
+        assert "Context alone neither approves nor rejects a candidate" in prompt
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["analysis"]["editorial_context"] == context
+    assert manifest["analysis"]["ai_cache"] == {"hits": 0, "misses": 3}
+    for video in result.clip_paths:
+        assert (
+            json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))[
+                "viral_potential"
+            ]["editorial_context"]
+            == context
+        )
+    assert any("Video context enabled" in message for message in caplog.messages)
+    assert "Entrevista sobre educação" not in caplog.text
+
+    repeated_asr, repeated_ai = FakeTranscriber(), ContextBackend()
+    repeated = _run(
+        tmp_path,
+        repeated_asr,
+        repeated_ai,
+        config=replace(base, editorial_context="  " + context + "  "),
+    )
+    assert repeated_asr.calls == repeated_ai.calls == 0
+    assert json.loads(repeated.manifest_path.read_text(encoding="utf-8"))["analysis"][
+        "ai_cache"
+    ] == {
+        "hits": 3,
+        "misses": 0,
+    }
+
+    changed_asr, changed_ai = FakeTranscriber(), ContextBackend()
+    _run(
+        tmp_path,
+        changed_asr,
+        changed_ai,
+        config=replace(base, editorial_context="Interview about running a business"),
+    )
+    assert changed_asr.calls == 0
+    assert changed_ai.calls == 3
+    restored_asr, restored_ai = FakeTranscriber(), ContextBackend()
+    _run(
+        tmp_path, restored_asr, restored_ai, config=replace(base, editorial_context="")
+    )
+    assert restored_asr.calls == restored_ai.calls == 0
+
+
 def test_model_change_reuses_asr_but_recomputes_ai(tmp_path: Path) -> None:
     base = AppConfig(
         "source.mp4", tmp_path / "out", "codex", "model-a", subtitles_enabled=False
@@ -359,8 +448,9 @@ def test_zero_approved_clips_is_a_valid_completed_analysis(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("reject_long", [False, True])
+@pytest.mark.parametrize("context", [None, "A host reviews Pokémon games."])
 def test_pipeline_preserves_editorial_rejections_after_boundary_review_and_cache(
-    tmp_path: Path, reject_long: bool
+    tmp_path: Path, reject_long: bool, context: str | None
 ) -> None:
     class RejectingBackend(FakeBackend):
         def complete(self, prompt: str, schema: dict[str, object]) -> object:
@@ -382,13 +472,21 @@ def test_pipeline_preserves_editorial_rejections_after_boundary_review_and_cache
                 }
             return response
 
+    config = AppConfig(
+        source=str(tmp_path / "source.mp4"),
+        output_dir=tmp_path / "out",
+        llm_backend="codex",
+        llm_model="test-model",
+        subtitles_enabled=False,
+        editorial_context=context,
+    )
     first_ai = RejectingBackend()
-    first = _run(tmp_path, FakeTranscriber(), first_ai)
+    first = _run(tmp_path, FakeTranscriber(), first_ai, config=config)
     assert first_ai.calls == 3
 
     second_asr = FakeTranscriber()
     second_ai = RejectingBackend()
-    second = _run(tmp_path, second_asr, second_ai)
+    second = _run(tmp_path, second_asr, second_ai, config=config)
     assert second_asr.calls == 0
     assert second_ai.calls == 0
     assert json.loads(second.manifest_path.read_text())["analysis"]["ai_cache"] == {
@@ -418,6 +516,89 @@ def test_invalid_ai_response_fails_explicitly_and_is_not_cached(tmp_path: Path) 
     valid = FakeBackend()
     _run(tmp_path, FakeTranscriber(), valid)
     assert valid.calls == 3
+
+
+@pytest.mark.parametrize("context", [None, "A host reviews Pokémon games."])
+def test_score_reason_guidance_reaches_prompt_and_schema(
+    tmp_path: Path, context: str | None
+) -> None:
+    class CheckingBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Original boundary IDs:" in prompt:
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                reason = properties["reason"]
+                assert isinstance(reason, dict)
+                assert reason["type"] == "string"
+                description = reason["description"]
+                assert isinstance(description, str)
+                assert "non-empty text" in description
+                assert "Prefer a concise explanation" in description
+                assert "include more detail when needed" in description
+                assert "Avoid whitespace-only text" in description
+                assert description in prompt
+            return super().complete(prompt, schema)
+
+    config = AppConfig(
+        source=str(tmp_path / "source.mp4"),
+        output_dir=tmp_path / "out",
+        llm_backend="codex",
+        llm_model="test-model",
+        subtitles_enabled=False,
+        editorial_context=context,
+    )
+    ai = CheckingBackend()
+    result = _run(tmp_path, FakeTranscriber(), ai, config=config)
+    assert ai.calls == 3
+    assert len(result.clip_paths) == 2
+
+
+@pytest.mark.parametrize(
+    ("reason", "error"),
+    [
+        ("  Concise editorial explanation.  ", None),
+        ("", "text is empty"),
+        (" \t\n", "text is empty"),
+        (None, "expected text, received NoneType"),
+        (["provider-secret"], "expected text, received list"),
+    ],
+)
+def test_score_reason_validation_and_cache_recovery(
+    tmp_path: Path, reason: object, error: str | None
+) -> None:
+    class ReasonBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            response = super().complete(prompt, schema)
+            if "Original boundary IDs:" in prompt:
+                assert isinstance(response, dict)
+                return {**response, "reason": reason}
+            return response
+
+    ai = ReasonBackend()
+    if error is not None:
+        with pytest.raises(ScoringError, match=error) as raised:
+            _run(tmp_path, FakeTranscriber(), ai)
+        assert str(raised.value).startswith("AI returned invalid score reason:")
+        assert "provider-secret" not in str(raised.value)
+        assert ai.calls == 2
+        corrected_asr, corrected_ai = FakeTranscriber(), FakeBackend()
+        corrected = _run(tmp_path, corrected_asr, corrected_ai)
+        assert corrected_asr.calls == 0
+        assert corrected_ai.calls == 2
+        assert json.loads(corrected.manifest_path.read_text(encoding="utf-8"))[
+            "analysis"
+        ]["ai_cache"] == {"hits": 1, "misses": 2}
+    else:
+        assert isinstance(reason, str)
+        result = _run(tmp_path, FakeTranscriber(), ai)
+        assert ai.calls == 3
+        assert len(result.clip_paths) == 2
+        for path in result.clip_paths:
+            metadata = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+            assert metadata["viral_potential"]["reason"] == reason.strip()
+        repeated_asr, repeated_ai = FakeTranscriber(), ReasonBackend()
+        _run(tmp_path, repeated_asr, repeated_ai)
+        assert repeated_asr.calls == repeated_ai.calls == 0
 
 
 def test_long_class_has_no_hard_maximum_and_score_is_weighted() -> None:

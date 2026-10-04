@@ -229,6 +229,12 @@ def run_command(
             "--llm-effort", help="Reasoning level; auto uses provider default."
         ),
     ] = None,
+    context: Annotated[
+        str | None,
+        typer.Option(
+            "--context", help="Describe the video's subject and scope to guide clips."
+        ),
+    ] = None,
     lang: Annotated[
         str | None, typer.Option("--lang", help="Transcription language code or auto.")
     ] = None,
@@ -296,6 +302,7 @@ def run_command(
         llm_backend=backend,
         llm_model=llm_model_value,
         llm_effort=effort_value,
+        editorial_context=context,
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
         transcription_model=str(_value(asr_model, "TRANSCRIPTION_MODEL", "default")),
