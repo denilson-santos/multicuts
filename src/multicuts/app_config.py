@@ -9,6 +9,7 @@ from pathlib import Path
 from multicuts.errors import ConfigurationError
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
+ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
 LLM_EFFORT_LEVELS = {
     "openai": frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
     "anthropic": frozenset({"low", "medium", "high", "xhigh", "max"}),
@@ -27,7 +28,7 @@ class AppConfig:
     llm_model: str
     overlap_threshold: float = 0.60
     language: str | None = None
-    transcription_model: str = "default"
+    transcription_model: str = "turbo"
     short_aspect_ratio: str = "9:16"
     long_aspect_ratio: str = "16:9"
     vertical_width: int = 1080
@@ -44,6 +45,7 @@ class AppConfig:
     verbose: bool = False
     llm_effort: str | None = None
     editorial_context: str | None = None
+    asr_backend: str = "whisperx"
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str) or not self.source.strip():
@@ -54,6 +56,10 @@ class AppConfig:
             )
         if not isinstance(self.llm_model, str) or not self.llm_model.strip():
             raise ConfigurationError("LLM_MODEL must not be empty")
+        if self.asr_backend not in ASR_BACKENDS:
+            raise ConfigurationError(
+                "ASR_BACKEND must be whisperx, faster-whisper, parakeet, or qwen"
+            )
         if self.editorial_context is not None:
             if not isinstance(self.editorial_context, str):
                 raise ConfigurationError("--context must be text")

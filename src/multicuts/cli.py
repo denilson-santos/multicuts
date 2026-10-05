@@ -239,7 +239,17 @@ def run_command(
         str | None, typer.Option("--lang", help="Transcription language code or auto.")
     ] = None,
     asr_model: Annotated[
-        str | None, typer.Option("--asr-model", help="multisubs transcription model.")
+        str | None,
+        typer.Option(
+            "--asr-model", help="multisubs transcription model (default: turbo)."
+        ),
+    ] = None,
+    asr_backend: Annotated[
+        str | None,
+        typer.Option(
+            "--asr-backend",
+            help="whisperx, faster-whisper, parakeet, or qwen (default: whisperx).",
+        ),
     ] = None,
     overlap_threshold: Annotated[
         float | None,
@@ -305,7 +315,8 @@ def run_command(
         editorial_context=context,
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
-        transcription_model=str(_value(asr_model, "TRANSCRIPTION_MODEL", "default")),
+        transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),
+        asr_backend=str(_value(asr_backend, "ASR_BACKEND", "whisperx")),
         short_aspect_ratio=str(
             _value(short_aspect_ratio, "SHORT_ASPECT_RATIO", "9:16")
         ),

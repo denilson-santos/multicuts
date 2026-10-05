@@ -18,7 +18,7 @@ local path / YouTube URL
   -> per-clip JSON and concise run manifest
 ```
 
-The backend never receives video or audio. Prompts explicitly treat source transcript text as data. Optional `AppConfig.editorial_context` describes the video's subject and scope and is included as a separate JSON string in both proposal and judgment prompts. It guides interpretation of speakers, terminology, references, and relationships between ideas, helping the AI discover relevant complete clips and review their role in the conversation. It cannot supply transcript evidence or override editorial quality and structured-response rules. Context guides prompts while retaining the existing response schemas, approval validation, score composition, and deterministic selection rules. An invalid provider response or provider failure raises a scoring error. There is no heuristic branch or provider fallback in the active CLI flow.
+The AI backend never receives video or audio. Prompts explicitly treat source transcript text as data. Optional `AppConfig.editorial_context` describes the video's subject and scope and is included as a separate JSON string in both proposal and judgment prompts. It guides interpretation of speakers, terminology, references, and relationships between ideas, helping the AI discover relevant complete clips and review their role in the conversation. It cannot supply transcript evidence or override editorial quality and structured-response rules. Context guides prompts while retaining the existing response schemas, approval validation, score composition, and deterministic selection rules. An invalid provider response or provider failure raises a scoring error. There is no heuristic branch or provider fallback in the active CLI flow.
 
 ## Module boundaries
 
@@ -32,6 +32,8 @@ The backend never receives video or audio. Prompts explicitly treat source trans
 - `pipeline.py`: orchestration and output publication only.
 
 External provider objects and wire responses stay in adapters. Domain decisions use project-owned data. No database, queues, async workflow, or generic provider registry is required.
+
+`AppConfig` selects the ASR backend and model with explicit defaults of `whisperx` and `turbo`. The CLI reads `ASR_BACKEND` / `ASR_MODEL`, overridden by `--asr-backend` / `--asr-model`; the former `TRANSCRIPTION_MODEL` variable is no longer consumed. The pipeline passes both settings through the transcriber boundary. `MultisubsAdapter` forwards them as `asr_backend` and `model_name` to the public `multisubs.generate_transcriptions` API. Backend names are validated in configuration; provider-specific model/language compatibility and optional dependencies remain the provider's responsibility. An explicit legacy `model="default"` still omits `model_name`, while normal runs pass `turbo` explicitly.
 
 ## Identity and artifacts
 
@@ -50,9 +52,11 @@ The output root has two distinct parts:
     .work/  # optional after completion
 ```
 
-The transcript key includes media fingerprint and ASR settings/version. The AI key includes the complete normalized transcript fingerprint, backend/model/effort, prompt/schema, and task. Editorial context is part of each prompt, so changing it invalidates AI responses while reusing ASR. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
+The transcript key includes media fingerprint, ASR backend/model, requested language, and provider/stage/schema versions. Its stage version is 2: older keys are recomputed once, and each backend uses a separate transcript cache. The AI key includes the complete normalized transcript fingerprint, AI backend/model/effort, prompt/schema, and task. Identical normalized transcripts can reuse AI responses even if ASR settings change. Editorial context is part of each prompt, so changing it invalidates AI responses while reusing ASR. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
 
 The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
+
+The manifest's `transcription.backend` and `transcription.model` record the configured ASR engine and model on cache hits and fresh transcriptions. ASR progress logs include both settings.
 
 The manifest's `analysis.editorial_context` and per-clip `viral_potential.editorial_context` record the applied optional context as text or null. Normal and verbose application logs may report that video context is enabled but do not print the text.
 

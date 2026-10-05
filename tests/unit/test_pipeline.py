@@ -26,14 +26,22 @@ from multicuts.pipeline import run_pipeline
 class FakeTranscriber:
     def __init__(self) -> None:
         self.calls = 0
+        self.settings: list[tuple[str, str]] = []
 
     def version(self) -> str:
         return "4.3.0"
 
     def transcribe(
-        self, video_path: Path, *, language: str | None, model: str, workspace: Path
+        self,
+        video_path: Path,
+        *,
+        language: str | None,
+        backend: str,
+        model: str,
+        workspace: Path,
     ) -> Transcript:
         self.calls += 1
+        self.settings.append((backend, model))
         return Transcript(
             language_requested=language,
             language_detected="en",
@@ -171,6 +179,7 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     first_ai = FakeBackend()
     first = _run(tmp_path, first_asr, first_ai)
     assert first_asr.calls == 1
+    assert first_asr.settings == [("whisperx", "turbo")]
     assert first_ai.calls == 3
     assert len(first.clip_paths) == 2
     assert {"short", "long"} == {
@@ -187,6 +196,8 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert set(first.clip_paths).isdisjoint(second.clip_paths)
     manifest = json.loads(second.manifest_path.read_text())
     assert manifest["transcription"]["cache_hit"] is True
+    assert manifest["transcription"]["backend"] == "whisperx"
+    assert manifest["transcription"]["model"] == "turbo"
     assert manifest["analysis"]["ai_cache"] == {"hits": 3, "misses": 0}
     assert manifest["schema_version"] == 3
     assert manifest["analysis"]["editorially_eligible"] == 2
@@ -211,12 +222,37 @@ def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
     for stage in range(1, 7):
         assert any(message.startswith(f"[{stage}/6]") for message in messages)
     assert (
-        "Transcription cache miss; running ASR (model=default, language=auto)"
-        in messages
+        "[3/6] Finding candidates in 1 transcript blocks "
+        "(backend=codex, model=test-model, effort=auto)" in messages
+    )
+    assert (
+        "Transcription cache miss; running ASR "
+        "(backend=whisperx, model=turbo, language=auto)" in messages
     )
     assert "Found 2 unique candidates: 1 short, 1 long" in messages
     assert "Analyzing transcript block 1/1" in messages
     assert any("Reviewing candidate 2/2" in message for message in messages)
+    first_result = next(
+        index
+        for index, message in enumerate(messages)
+        if message.startswith("Candidate 1/2: approved,")
+    )
+    next_review = next(
+        index
+        for index, message in enumerate(messages)
+        if message.startswith("Reviewing candidate 2/2")
+    )
+    second_result = next(
+        index
+        for index, message in enumerate(messages)
+        if message.startswith("Candidate 2/2: approved,")
+    )
+    selection = next(
+        index
+        for index, message in enumerate(messages)
+        if message.startswith("[5/6] Selection:")
+    )
+    assert first_result < next_review < second_result < selection
     assert any("2 approved, 0 rejected, 2 selected" in message for message in messages)
     assert any("cache: 0 hits, 3 misses" in message for message in messages)
     assert any("Rendering clip 2/2: long" in message for message in messages)
@@ -231,7 +267,10 @@ def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
     asr, ai = FakeTranscriber(), FakeBackend()
     _run(tmp_path, asr, ai, config=config)
     assert asr.calls == ai.calls == 0
-    assert "Transcription cache hit; reusing the source transcript" in caplog.messages
+    assert (
+        "Transcription cache hit; reusing the source transcript "
+        "(backend=whisperx, model=turbo)" in caplog.messages
+    )
     assert any("cache: 3 hits, 0 misses" in message for message in caplog.messages)
     assert not any("running ASR" in message for message in caplog.messages)
 
@@ -361,7 +400,10 @@ def test_model_change_reuses_asr_but_recomputes_ai(tmp_path: Path) -> None:
     assert ai.calls == 3
 
 
-def test_effort_change_reuses_asr_but_recomputes_ai(tmp_path: Path) -> None:
+def test_effort_change_reuses_asr_but_recomputes_ai(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
     base = AppConfig(
         "source.mp4", tmp_path / "out", "codex", "model-a", subtitles_enabled=False
     )
@@ -370,6 +412,10 @@ def test_effort_change_reuses_asr_but_recomputes_ai(tmp_path: Path) -> None:
     asr = FakeTranscriber()
     ai = FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
+    assert (
+        "[3/6] Finding candidates in 1 transcript blocks "
+        "(backend=codex, model=model-a, effort=high)" in caplog.messages
+    )
     assert asr.calls == 0
     assert ai.calls == 3
     manifest = json.loads(result.manifest_path.read_text())
@@ -399,6 +445,36 @@ def test_geometry_change_reuses_both_expensive_caches(tmp_path: Path) -> None:
     )
     assert asr.calls == 0
     assert ai.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("backend", "model"), [("faster-whisper", "turbo"), ("whisperx", "medium")]
+)
+def test_asr_settings_have_separate_reusable_transcript_caches(
+    tmp_path: Path, backend: str, model: str
+) -> None:
+    base = AppConfig(
+        "source.mp4", tmp_path / "out", "codex", "test-model", subtitles_enabled=False
+    )
+    _run(tmp_path, FakeTranscriber(), FakeBackend(), config=base)
+    changed = replace(base, asr_backend=backend, transcription_model=model)
+    asr = FakeTranscriber()
+    result = _run(tmp_path, asr, FakeBackend(), config=changed)
+    assert asr.calls == 1
+    assert asr.settings == [(backend, model)]
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["transcription"]["backend"] == backend
+    assert manifest["transcription"]["model"] == model
+    assert manifest["transcription"]["cache_hit"] is False
+
+    for config in (changed, base):
+        repeated_asr = FakeTranscriber()
+        repeated = _run(tmp_path, repeated_asr, FakeBackend(), config=config)
+        assert repeated_asr.calls == 0
+        assert (
+            json.loads(repeated.manifest_path.read_text())["transcription"]["cache_hit"]
+            is True
+        )
 
 
 def test_language_change_invalidates_transcript_cache(tmp_path: Path) -> None:
@@ -450,8 +526,13 @@ def test_zero_approved_clips_is_a_valid_completed_analysis(tmp_path: Path) -> No
 @pytest.mark.parametrize("reject_long", [False, True])
 @pytest.mark.parametrize("context", [None, "A host reviews Pokémon games."])
 def test_pipeline_preserves_editorial_rejections_after_boundary_review_and_cache(
-    tmp_path: Path, reject_long: bool, context: str | None
+    tmp_path: Path,
+    reject_long: bool,
+    context: str | None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
+
     class RejectingBackend(FakeBackend):
         def complete(self, prompt: str, schema: dict[str, object]) -> object:
             response = super().complete(prompt, schema)
@@ -483,12 +564,27 @@ def test_pipeline_preserves_editorial_rejections_after_boundary_review_and_cache
     first_ai = RejectingBackend()
     first = _run(tmp_path, FakeTranscriber(), first_ai, config=config)
     assert first_ai.calls == 3
+    expected_results = [
+        "Candidate 1/2: rejected",
+        f"Candidate 2/2: {'rejected' if reject_long else 'approved'}",
+    ]
+    assert [
+        message.split(",", 1)[0]
+        for message in caplog.messages
+        if message.startswith("Candidate ")
+    ] == expected_results
 
+    caplog.clear()
     second_asr = FakeTranscriber()
     second_ai = RejectingBackend()
     second = _run(tmp_path, second_asr, second_ai, config=config)
     assert second_asr.calls == 0
     assert second_ai.calls == 0
+    assert [
+        message.split(",", 1)[0]
+        for message in caplog.messages
+        if message.startswith("Candidate ")
+    ] == expected_results
     assert json.loads(second.manifest_path.read_text())["analysis"]["ai_cache"] == {
         "hits": 3,
         "misses": 0,

@@ -130,7 +130,8 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | Option | Purpose |
 | --- | --- |
 | `--lang CODE` | Set the transcription language; omission enables automatic detection. |
-| `--asr-model MODEL` | Choose the transcription model, independently of `--llm-model`. |
+| `--asr-model MODEL` | Choose the transcription model; default: `turbo`. |
+| `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
 | `--short-aspect-ratio` / `--long-aspect-ratio` | Choose `9:16`, `16:9`, or `original` for each class. |
@@ -138,7 +139,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--keep-intermediates` | Retain intermediate files for inspection. |
 | `--verbose` | Show debug details and dependency output. |
 
-By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
+By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls.
 
@@ -182,6 +183,7 @@ Reruns create fresh output files and preserve completed runs. Cached transcripts
 | --- | --- | --- |
 | Nothing, or only subtitles/framing | Reused | Reused |
 | AI model, reasoning effort, or editorial context | Reused | Recomputed |
+| ASR backend or model | Separate cache | Depends on transcript content |
 | `--force-recompute` enabled | Recomputed | Recomputed |
 
 YouTube acquisition may download the source again before its media fingerprint is known.
@@ -213,6 +215,19 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
 Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+
+`--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
+
+The installation includes WhisperX dependencies. Other ASR backends require their matching optional `multisubs` dependencies and a compatible model. For example:
+
+```bash
+multicuts video.mp4 --output-dir out --lang pt \
+  --asr-backend faster-whisper --asr-model large-v3
+```
+
+Parakeet uses `--asr-model nvidia/parakeet-tdt-0.6b-v3`; Qwen uses `--asr-model Qwen/Qwen3-ASR-1.7B-hf`. The `turbo` default remains the same when switching backends, so select a compatible model explicitly. Logs and the manifest record the selected ASR backend and model.
+
+Transcription caches include the ASR backend, so changing it cannot reuse another backend's transcript. Caches from the earlier identity are recomputed once; completed runs remain available. AI responses can still be reused when the normalized transcript is identical.
 
 `--llm-effort` or `LLM_EFFORT` sets the reasoning level. Omit it or use `auto` for the provider default.
 

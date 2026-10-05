@@ -393,10 +393,15 @@ class MultisubsAdapter:
         language: str | None,
         model: str,
         workspace: Path,
+        backend: str = "whisperx",
     ) -> Transcript:
         """Return a project-owned transcript from one public provider call."""
         artifact = self._transcribe_to_artifact(
-            video_path, language=language, model=model, workspace=workspace
+            video_path,
+            language=language,
+            model=model,
+            workspace=workspace,
+            backend=backend,
         )
         return _normalize_artifact(artifact)
 
@@ -407,6 +412,7 @@ class MultisubsAdapter:
         language: str | None,
         model: str,
         workspace: Path,
+        backend: str,
     ) -> _TranscriptionArtifact:
         """Generate source artifacts inside the workspace and verify the JSON."""
         try:
@@ -442,12 +448,13 @@ class MultisubsAdapter:
                 actual_output_dir,
                 lang=language,
                 task="transcribe",
+                asr_backend=backend,
                 **model_options,
             )
         except Exception as exc:
             raise TranscriptionError(
                 "multisubs could not transcribe the source; check its audio, "
-                "language, and model compatibility"
+                "language, ASR backend dependencies, and model compatibility"
             ) from exc
 
         if (
