@@ -37,20 +37,22 @@ def transcript_paths(
     source: AcquiredSource,
     *,
     provider_version: str,
+    backend: str,
     model: str,
     language: str | None,
 ) -> tuple[Path, str]:
-    if not provider_version.strip() or not model.strip():
+    if not provider_version.strip() or not backend.strip() or not model.strip():
         raise ArtifactError("Transcription cache identity is incomplete")
     key = "sha256-v1:" + _digest(
         {
             "source_fingerprint": source.fingerprint,
             "provider": "multisubs",
             "provider_version": provider_version,
+            "backend": backend,
             "model": model,
             "language_requested": language,
             "task": "transcribe",
-            "stage_version": 1,
+            "stage_version": 2,
             "schema_version": 1,
         }
     )

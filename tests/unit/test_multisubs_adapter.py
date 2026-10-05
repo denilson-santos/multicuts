@@ -235,7 +235,7 @@ def test_auto_language_and_default_model_use_public_api(
         (
             video_path,
             (tmp_path / "run/multisubs").resolve(),
-            {"lang": None, "task": "transcribe"},
+            {"lang": None, "task": "transcribe", "asr_backend": "whisperx"},
         )
     ]
 
@@ -262,8 +262,17 @@ def test_transcript_provenance_matches_cache_provider_version(
     assert transcript.provider_version == adapter.version() == "4.3.0"
 
 
-def test_explicit_language_and_model_are_forwarded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("backend", "model"),
+    [
+        ("whisperx", "turbo"),
+        ("faster-whisper", "large-v3"),
+        ("parakeet", "nvidia/parakeet-tdt-0.6b-v3"),
+        ("qwen", "Qwen/Qwen3-ASR-1.7B-hf"),
+    ],
+)
+def test_explicit_language_backend_and_model_are_forwarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str, model: str
 ) -> None:
     options: list[dict[str, object]] = []
 
@@ -278,12 +287,20 @@ def test_explicit_language_and_model_are_forwarded(
     result = MultisubsAdapter().transcribe(
         tmp_path / "source.mp4",
         language="pt",
-        model="large-v3",
+        model=model,
+        backend=backend,
         workspace=tmp_path / "run",
     )
 
     assert result.language_requested == "pt"
-    assert options == [{"lang": "pt", "task": "transcribe", "model_name": "large-v3"}]
+    assert options == [
+        {
+            "lang": "pt",
+            "task": "transcribe",
+            "asr_backend": backend,
+            "model_name": model,
+        }
+    ]
 
 
 def test_provider_failure_is_chained_without_leaking_provider_message(

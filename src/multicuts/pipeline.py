@@ -62,7 +62,13 @@ class Transcriber(Protocol):
     def version(self) -> str: ...
 
     def transcribe(
-        self, video_path: Path, *, language: str | None, model: str, workspace: Path
+        self,
+        video_path: Path,
+        *,
+        language: str | None,
+        backend: str,
+        model: str,
+        workspace: Path,
     ) -> Transcript: ...
 
 
@@ -148,6 +154,7 @@ def _transcribe(
         config.output_dir,
         source,
         provider_version=version,
+        backend=config.asr_backend,
         model=config.transcription_model,
         language=config.language,
     )
@@ -158,17 +165,24 @@ def _transcribe(
             and cached.provider_version == version
             and cached.language_requested == config.language
         ):
-            logger.info("Transcription cache hit; reusing the source transcript")
+            logger.info(
+                "Transcription cache hit; reusing the source transcript "
+                "(backend=%s, model=%s)",
+                config.asr_backend,
+                config.transcription_model,
+            )
             return cached, True
     logger.info(
-        "Transcription cache %s; running ASR (model=%s, language=%s)",
+        "Transcription cache %s; running ASR (backend=%s, model=%s, language=%s)",
         "bypassed" if config.force_recompute else "miss",
+        config.asr_backend,
         config.transcription_model,
         config.language or "auto",
     )
     transcript = transcriber.transcribe(
         source.local_path,
         language=config.language,
+        backend=config.asr_backend,
         model=config.transcription_model,
         workspace=work / "transcription",
     )
@@ -305,10 +319,12 @@ def run_pipeline(
             overlap_chars=config.block_overlap_chars,
         )
         logger.info(
-            "[3/6] Finding candidates in %d transcript blocks (backend=%s, model=%s)",
+            "[3/6] Finding candidates in %d transcript blocks "
+            "(backend=%s, model=%s, effort=%s)",
             len(blocks),
             config.llm_backend,
             config.llm_model,
+            config.llm_effort or "auto",
         )
         if config.editorial_context is not None:
             logger.info(
@@ -373,7 +389,7 @@ def run_pipeline(
             clip = parse_judgment(response, proposal, units, source.fingerprint)
             if clip.proposal.end > media.duration + 0.001:
                 raise ScoringError("AI revised a clip beyond source media duration")
-            logger.debug(
+            logger.info(
                 "Candidate %d/%d: %s, score=%.2f, interval=%.2f-%.2fs",
                 index,
                 len(proposals),
@@ -503,6 +519,7 @@ def run_pipeline(
             "transcription": {
                 "provider": transcript.provider,
                 "provider_version": transcript.provider_version,
+                "backend": config.asr_backend,
                 "model": config.transcription_model,
                 "language_requested": config.language,
                 "language_detected": transcript.language_detected,

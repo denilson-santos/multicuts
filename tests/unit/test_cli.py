@@ -32,6 +32,8 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LLM_EFFORT", raising=False)
+    monkeypatch.delenv("ASR_MODEL", raising=False)
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
     config = parse_run_config(_args())
     assert config.llm_backend == "codex"
     assert config.llm_model == "test-model"
@@ -39,6 +41,8 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(
     assert config.short_aspect_ratio == "9:16"
     assert config.long_aspect_ratio == "16:9"
     assert config.language is None
+    assert config.transcription_model == "turbo"
+    assert config.asr_backend == "whisperx"
     assert not hasattr(config, "clips")
 
 
@@ -212,9 +216,65 @@ def test_output_dir_is_required_even_when_environment_defines_it(
 
 
 def test_asr_model_flag_replaces_model_flag() -> None:
-    config = parse_run_config(_args() + ["--asr-model", "large-v3"])
-    assert config.transcription_model == "large-v3"
-    assert main(_args() + ["--model", "large-v3"]) == 2
+    config = parse_run_config(_args() + ["--asr-model", "medium"])
+    assert config.transcription_model == "medium"
+    assert main(_args() + ["--model", "medium"]) == 2
+
+
+def test_asr_settings_resolve_cli_environment_and_dotenv_precedence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASR_MODEL", raising=False)
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
+    (tmp_path / ".env").write_text(
+        "ASR_BACKEND=faster-whisper\nASR_MODEL=large-v3\n", encoding="utf-8"
+    )
+    config = parse_run_config(_args())
+    assert (config.asr_backend, config.transcription_model) == (
+        "faster-whisper",
+        "large-v3",
+    )
+
+    monkeypatch.setenv("ASR_BACKEND", "parakeet")
+    monkeypatch.setenv("ASR_MODEL", "nvidia/parakeet-tdt-0.6b-v3")
+    config = parse_run_config(_args())
+    assert (config.asr_backend, config.transcription_model) == (
+        "parakeet",
+        "nvidia/parakeet-tdt-0.6b-v3",
+    )
+
+    config = parse_run_config(
+        _args() + ["--asr-backend", "whisperx", "--asr-model", "turbo"]
+    )
+    assert (config.asr_backend, config.transcription_model) == ("whisperx", "turbo")
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_removed_transcription_model_setting_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_in: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASR_MODEL", raising=False)
+    monkeypatch.delenv("TRANSCRIPTION_MODEL", raising=False)
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text("TRANSCRIPTION_MODEL=small\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("TRANSCRIPTION_MODEL", "small")
+    assert parse_run_config(_args()).transcription_model == "turbo"
+
+
+@pytest.mark.parametrize("backend", ["whisperx", "faster-whisper", "parakeet", "qwen"])
+def test_asr_backend_flag_is_independent_of_llm_backend(backend: str) -> None:
+    config = parse_run_config(_args() + ["--asr-backend", backend])
+    assert config.asr_backend == backend
+    assert config.llm_backend == "codex"
+
+
+@pytest.mark.parametrize("backend", ["", "unknown"])
+def test_invalid_asr_backend_is_rejected_before_pipeline(backend: str) -> None:
+    with pytest.raises(ConfigurationError, match="ASR_BACKEND must be"):
+        parse_run_config(_args() + ["--asr-backend", backend])
 
 
 def test_llm_effort_from_environment_and_auto_reset(

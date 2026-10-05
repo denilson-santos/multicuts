@@ -33,7 +33,18 @@ def _assert_supported_provider_version() -> None:
 
 
 @pytest.mark.parametrize("language", [None, "pt"])
-def test_public_transcription_signature_and_version(language: str | None) -> None:
+@pytest.mark.parametrize(
+    ("backend", "model"),
+    [
+        ("whisperx", "turbo"),
+        ("faster-whisper", "large-v3"),
+        ("parakeet", "nvidia/parakeet-tdt-0.6b-v3"),
+        ("qwen", "Qwen/Qwen3-ASR-1.7B-hf"),
+    ],
+)
+def test_public_transcription_signature_and_version(
+    language: str | None, backend: str, model: str
+) -> None:
     provider = _installed_provider()
     generate = getattr(provider, "generate_transcriptions", None)
     assert callable(generate), "multisubs.generate_transcriptions is unavailable"
@@ -45,7 +56,8 @@ def test_public_transcription_signature_and_version(language: str | None) -> Non
             Path("output"),
             lang=language,
             task="transcribe",
-            model_name="turbo",
+            model_name=model,
+            asr_backend=backend,
         )
     except (TypeError, ValueError) as exc:
         pytest.fail(f"multisubs public transcription signature changed: {exc}")
