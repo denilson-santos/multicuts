@@ -322,8 +322,10 @@ cuts/
 ```
 
 - **MP4:** the final rendered clip, with subtitles enabled by default.
-- **Clip JSON:** its interval, scores, and editorial explanation.
+- **Clip JSON:** its social-media title, interval, scores, and editorial explanation.
 - **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references.
+
+Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.
 
 Reruns create fresh output files and preserve completed runs. Cached transcripts and validated AI responses reduce repeated work:
 

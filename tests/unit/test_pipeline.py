@@ -615,6 +615,109 @@ def test_invalid_ai_response_fails_explicitly_and_is_not_cached(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("context", [None, "A host reviews Pokémon games."])
+def test_social_title_guidance_and_titles_survive_judgment_and_cache(
+    tmp_path: Path, context: str | None
+) -> None:
+    titles = {
+        "short": "Estudar mais não é aprender mais",
+        "long": "Por que você estuda tanto e aprende tão pouco?",
+    }
+
+    class TitleBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            response = super().complete(prompt, schema)
+            if "Find every" in prompt:
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                clips = properties["clips"]
+                assert isinstance(clips, dict)
+                title = clips["items"]["properties"]["title"]
+                assert title["type"] == "string"
+                description = title["description"]
+                assert isinstance(description, str)
+                assert description in prompt
+                for guidance in (
+                    "attention-grabbing social-media title",
+                    "same language as the clip's transcript",
+                    "simple, everyday words",
+                    "casual, conversational tone",
+                    "telling a friend",
+                    "direct, active verbs",
+                    "Avoid formal, academic, or corporate wording",
+                    "complex vocabulary",
+                    "do not copy the speaker's formal register",
+                    "Do not force slang",
+                    "40–80 characters",
+                    "never more than 120 characters",
+                    "Shorter titles are welcome",
+                    "never add filler",
+                    "Put the hook in the first words",
+                    "specific subject",
+                    "question that the clip answers",
+                    "What happens when you sleep too little?",
+                    "Buying on impulse is costing you money",
+                    "style examples only",
+                    "do not reuse their topics or claims",
+                    "within the chosen start_id and end_id",
+                    "editorial context cannot supply title facts",
+                    "without misleading clickbait",
+                    "Avoid hashtags, emojis, ALL CAPS",
+                ):
+                    assert guidance in description
+                assert isinstance(response, dict)
+                for proposal in response["clips"]:
+                    proposal["title"] = titles[proposal["class"]]
+            else:
+                assert all(title not in prompt for title in titles.values())
+            return response
+
+    config = AppConfig(
+        source=str(tmp_path / "source.mp4"),
+        output_dir=tmp_path / "out",
+        llm_backend="codex",
+        llm_model="test-model",
+        subtitles_enabled=False,
+        editorial_context=context,
+    )
+    first_asr, first_ai = FakeTranscriber(), TitleBackend()
+    first = _run(tmp_path, first_asr, first_ai, config=config)
+    assert first_asr.calls == 1
+    assert first_ai.calls == 3
+    repeated_asr, repeated_ai = FakeTranscriber(), TitleBackend()
+    repeated = _run(tmp_path, repeated_asr, repeated_ai, config=config)
+    assert repeated_asr.calls == repeated_ai.calls == 0
+    for result in (first, repeated):
+        assert len(result.clip_paths) == 2
+        for path in result.clip_paths:
+            metadata = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+            assert metadata["title"] == titles[metadata["class"]]
+
+
+@pytest.mark.parametrize("previous_version", ["semantic-clips-v8", "semantic-clips-v9"])
+def test_title_prompt_version_change_recomputes_ai_and_reuses_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_version: str
+) -> None:
+    with monkeypatch.context() as previous:
+        previous.setattr("multicuts.cache.PROMPT_VERSION", previous_version)
+        previous.setattr("multicuts.pipeline.PROMPT_VERSION", previous_version)
+        initial = _run(tmp_path, FakeTranscriber(), FakeBackend())
+    original_metadata = {
+        path: path.with_suffix(".json").read_bytes() for path in initial.clip_paths
+    }
+
+    asr, ai = FakeTranscriber(), FakeBackend()
+    current = _run(tmp_path, asr, ai)
+    assert asr.calls == 0
+    assert ai.calls == 3
+    manifest = json.loads(current.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["analysis"]["prompt_version"] == "semantic-clips-v10"
+    assert manifest["analysis"]["score_version"] == "viral-potential-v3"
+    assert manifest["analysis"]["ai_cache"] == {"hits": 0, "misses": 3}
+    for path, metadata in original_metadata.items():
+        assert path.with_suffix(".json").read_bytes() == metadata
+
+
+@pytest.mark.parametrize("context", [None, "A host reviews Pokémon games."])
 def test_score_reason_guidance_reaches_prompt_and_schema(
     tmp_path: Path, context: str | None
 ) -> None:
