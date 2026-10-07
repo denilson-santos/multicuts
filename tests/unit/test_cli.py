@@ -6,9 +6,11 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
+from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.cli import main, parse_run_config
 from multicuts.errors import ConfigurationError, ScoringError
@@ -182,6 +184,68 @@ def test_cli_reports_provider_failure_without_fallback() -> None:
         raise ScoringError("provider unavailable")
 
     assert main(_args(), pipeline=fake_pipeline) == 5
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
+    verbose: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[str] = []
+
+    def generate(_source: Path, _output: Path, **_kwargs: object) -> None:
+        calls.append("transcribe")
+        try:
+            raise RuntimeError(
+                "Library libcublas.so.12 is not found or cannot be loaded"
+            )
+        except RuntimeError as error:
+            raise RuntimeError("private input path; token=private-token") from error
+
+    provider = ModuleType("multisubs")
+    provider.__dict__["generate_transcriptions"] = generate
+    monkeypatch.setitem(sys.modules, "multisubs", provider)
+    monkeypatch.setattr(
+        "multicuts.adapters.multisubs.importlib.metadata.version", lambda _name: "4.4.0"
+    )
+
+    def missing_library(_name: str, *, mode: int) -> None:
+        raise OSError("Native libraries unavailable in this hermetic test")
+
+    def missing_distribution(name: str) -> None:
+        from importlib.metadata import PackageNotFoundError
+
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr("multicuts.adapters.multisubs.ctypes.CDLL", missing_library)
+    monkeypatch.setattr(
+        "multicuts.adapters.multisubs.importlib.metadata.distribution",
+        missing_distribution,
+    )
+
+    def pipeline(config: AppConfig) -> RunResult:
+        MultisubsAdapter().transcribe(
+            Path(config.source),
+            language=config.language,
+            backend=config.asr_backend,
+            model=config.transcription_model,
+            workspace=tmp_path / "work",
+        )
+        raise AssertionError("Provider failure must stop the run")
+
+    arguments = _args() + ["--asr-backend", "faster-whisper", "--asr-model", "turbo"]
+    if verbose:
+        arguments.append("--verbose")
+    assert main(arguments, pipeline=pipeline) == 4
+    output = capfd.readouterr()
+    assert "Transcription failed" in output.err
+    assert "NVIDIA cuBLAS (CUDA 12)" in output.err
+    assert "Python environment" in output.err
+    assert "private" not in output.out + output.err
+    assert calls == ["transcribe"]
 
 
 def test_transcription_language_comes_only_from_cli(

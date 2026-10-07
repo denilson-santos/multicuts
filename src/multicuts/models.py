@@ -5,11 +5,19 @@ from math import isfinite
 from pathlib import Path
 
 
-def _validate_interval(start: float | None, end: float | None) -> None:
+def _validate_interval(
+    start: float | None, end: float | None, *, allow_zero_duration: bool = False
+) -> None:
     if (start is None) != (end is None):
         raise ValueError("start and end must both be present or absent")
     if start is not None and end is not None:
-        if not isfinite(start) or not isfinite(end) or start < 0 or end <= start:
+        if (
+            not isfinite(start)
+            or not isfinite(end)
+            or start < 0
+            or end < start
+            or (end == start and not allow_zero_duration)
+        ):
             raise ValueError("timed intervals must have finite, ordered seconds")
 
 
@@ -18,9 +26,13 @@ def _approximately_equal(left: float, right: float, *, tolerance: float = 1e-9) 
 
 
 def _validate_clip_local_interval(
-    start: float | None, end: float | None, duration: float
+    start: float | None,
+    end: float | None,
+    duration: float,
+    *,
+    allow_zero_duration: bool = False,
 ) -> None:
-    _validate_interval(start, end)
+    _validate_interval(start, end, allow_zero_duration=allow_zero_duration)
     if start is not None and end is not None and (start < 0 or end > duration):
         raise ValueError("clip-local timestamps must stay within clip duration")
 
@@ -105,19 +117,24 @@ class MediaInfo:
 
 @dataclass(frozen=True, slots=True)
 class Word:
-    """A transcript word, with missing timing represented explicitly."""
+    """An ASR word, preserving observed point timestamps and missing timing."""
 
     text: str
     start: float | None
     end: float | None
     confidence: float | None = None
+    source_segment_index: int | None = None
 
     def __post_init__(self) -> None:
         if not self.text.strip():
             raise ValueError("word text must not be empty")
-        _validate_interval(self.start, self.end)
+        _validate_interval(self.start, self.end, allow_zero_duration=True)
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("word confidence must be finite")
+        if self.source_segment_index is not None and (
+            type(self.source_segment_index) is not int or self.source_segment_index < 0
+        ):
+            raise ValueError("word source segment index must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +228,7 @@ class ClipTranscriptWord:
             raise ValueError(
                 "clip transcript word source segment index must be non-negative"
             )
-        _validate_interval(self.start, self.end)
+        _validate_interval(self.start, self.end, allow_zero_duration=True)
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("clip transcript word confidence must be finite")
 
@@ -302,7 +319,9 @@ class ClipTranscript:
         for word in self.words:
             if not isinstance(word, ClipTranscriptWord):
                 raise ValueError("clip transcript words must be structured values")
-            _validate_clip_local_interval(word.start, word.end, self.duration)
+            _validate_clip_local_interval(
+                word.start, word.end, self.duration, allow_zero_duration=True
+            )
             if (
                 word.source_segment_index is not None
                 and word.source_segment_index not in segment_indexes
@@ -316,7 +335,7 @@ class ClipTranscript:
 
     @property
     def word_animation_safe(self) -> bool:
-        """Whether downstream word animation can rely on complete timing."""
+        """Whether subtitle groups can rely on complete observed word timing."""
         return (
             self.word_timing_complete
             and bool(self.words)

@@ -6,6 +6,8 @@ import pytest
 
 from multicuts.models import (
     AcquiredSource,
+    ClipTranscriptSegment,
+    ClipTranscriptWord,
     MediaInfo,
     Transcript,
     TranscriptSegment,
@@ -91,8 +93,20 @@ def test_transcript_model_serializes_project_owned_values_as_json() -> None:
     assert payload["language_detected"] == "pt"
     assert payload["segments"] == [{"text": "Olá mundo", "start": 0.125, "end": 1.25}]
     assert payload["words"] == [
-        {"text": "Olá", "start": 0.125, "end": 0.475, "confidence": 0.97},
-        {"text": "mundo", "start": None, "end": None, "confidence": None},
+        {
+            "text": "Olá",
+            "start": 0.125,
+            "end": 0.475,
+            "confidence": 0.97,
+            "source_segment_index": None,
+        },
+        {
+            "text": "mundo",
+            "start": None,
+            "end": None,
+            "confidence": None,
+            "source_segment_index": None,
+        },
     ]
     assert payload["provider_version"] == "4.1.0"
 
@@ -103,7 +117,6 @@ def test_transcript_model_serializes_project_owned_values_as_json() -> None:
         (None, 1.0),
         (0.0, None),
         (-1.0, 1.0),
-        (1.0, 1.0),
         (2.0, 1.0),
         (0.0, float("nan")),
     ],
@@ -115,6 +128,19 @@ def test_timed_text_models_reject_impossible_intervals(
         Word("word", start, end)
     with pytest.raises(ValueError):
         TranscriptSegment("segment", start, end)
+    with pytest.raises(ValueError):
+        ClipTranscriptWord("word", start, end, None, 0)
+
+
+def test_point_words_preserve_observed_timing_but_segments_require_duration() -> None:
+    word = Word("não", 31.5, 31.5, 0.99609375, source_segment_index=6)
+    assert word.start == word.end == 31.5
+    local = ClipTranscriptWord("não", 1.5, 1.5, word.confidence, 12, 6)
+    assert local.is_timed
+    with pytest.raises(ValueError):
+        TranscriptSegment("não", 31.5, 31.5)
+    with pytest.raises(ValueError):
+        ClipTranscriptSegment("não", 1.5, 1.5, 6)
 
 
 @pytest.mark.parametrize("duration", [0.0, -1.0, float("inf"), float("nan")])

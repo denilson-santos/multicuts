@@ -137,13 +137,24 @@ def _decode_transcript(value: object) -> Transcript:
         )
     words = []
     for item in raw_words:
-        entry = _record(item, {"text", "start", "end", "confidence"})
+        keys = {"text", "start", "end", "confidence"}
+        if isinstance(item, dict) and "source_segment_index" in item:
+            keys.add("source_segment_index")
+        entry = _record(item, keys)
+        raw_parent = entry.get("source_segment_index")
+        if raw_parent is None:
+            parent = None
+        elif type(raw_parent) is int and 0 <= raw_parent < len(segments):
+            parent = raw_parent
+        else:
+            raise ValueError("invalid word source segment index")
         words.append(
             Word(
                 _required_string(entry["text"]),
                 _number(entry["start"], optional=True),
                 _number(entry["end"], optional=True),
                 _number(entry["confidence"], optional=True),
+                source_segment_index=parent,
             )
         )
     return Transcript(
