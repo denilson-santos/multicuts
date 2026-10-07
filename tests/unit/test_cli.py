@@ -36,16 +36,187 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(
     monkeypatch.delenv("LLM_EFFORT", raising=False)
     monkeypatch.delenv("ASR_MODEL", raising=False)
     monkeypatch.delenv("ASR_BACKEND", raising=False)
+    monkeypatch.delenv("RENDER_VARIANTS", raising=False)
+    monkeypatch.delenv("SQUARE_SIZE", raising=False)
+    for name in (
+        "SHORT_SUBTITLES_ENABLED",
+        "LONG_SUBTITLES_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
     config = parse_run_config(_args())
     assert config.llm_backend == "codex"
     assert config.llm_model == "test-model"
     assert config.llm_effort is None
     assert config.short_aspect_ratio == "9:16"
     assert config.long_aspect_ratio == "16:9"
+    assert config.render_variants is True
+    assert config.square_size == 1080
+    assert config.subtitles_for("short") is True
+    assert config.subtitles_for("long") is True
     assert config.language is None
     assert config.transcription_model == "turbo"
     assert config.asr_backend == "whisperx"
     assert not hasattr(config, "clips")
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_class_subtitle_flags_respect_specificity_and_cli_precedence(
+    configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    settings = {
+        "SHORT_SUBTITLES_ENABLED": "false",
+        "LONG_SUBTITLES_ENABLED": "true",
+    }
+    for name in settings:
+        monkeypatch.delenv(name, raising=False)
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{name}={value}" for name, value in settings.items()) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        for name, value in settings.items():
+            monkeypatch.setenv(name, value)
+    inherited = parse_run_config(_args())
+    assert inherited.subtitles_for("short") is False
+    assert inherited.subtitles_for("long") is True
+    specific = parse_run_config(_args() + ["--short-subtitles", "--no-long-subtitles"])
+    assert specific.subtitles_for("short") is True
+    assert specific.subtitles_for("long") is False
+    for flag, expected in [("--subtitles", True), ("--no-subtitles", False)]:
+        general = parse_run_config(_args() + [flag])
+        assert (
+            general.subtitles_for("short") is general.subtitles_for("long") is expected
+        )
+    mixed = parse_run_config(_args() + ["--no-subtitles", "--long-subtitles"])
+    assert mixed.subtitles_for("short") is False
+    assert mixed.subtitles_for("long") is True
+
+
+def test_process_class_subtitle_settings_override_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "SHORT_SUBTITLES_ENABLED",
+        "LONG_SUBTITLES_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / ".env").write_text(
+        "SHORT_SUBTITLES_ENABLED=false\nLONG_SUBTITLES_ENABLED=false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SHORT_SUBTITLES_ENABLED", "true")
+    config = parse_run_config(_args())
+    assert config.subtitles_for("short") is True
+    assert config.subtitles_for("long") is False
+    monkeypatch.setenv("LONG_SUBTITLES_ENABLED", "true")
+    enabled = parse_run_config(_args())
+    assert enabled.subtitles_for("short") is enabled.subtitles_for("long") is True
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_removed_shared_subtitle_environment_setting_is_ignored(
+    configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "SUBTITLES_ENABLED",
+        "SHORT_SUBTITLES_ENABLED",
+        "LONG_SUBTITLES_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text("SUBTITLES_ENABLED=false\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("SUBTITLES_ENABLED", "false")
+    config = parse_run_config(_args())
+    assert config.subtitles_for("short") is config.subtitles_for("long") is True
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+def test_class_subtitle_settings_reject_invalid_booleans(
+    clip_class: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for setting_name in (
+        "SHORT_SUBTITLES_ENABLED",
+        "LONG_SUBTITLES_ENABLED",
+    ):
+        monkeypatch.delenv(setting_name, raising=False)
+    name = f"{clip_class.upper()}_SUBTITLES_ENABLED"
+    monkeypatch.setenv(name, "sometimes")
+    with pytest.raises(ConfigurationError, match=f"{name} must be a boolean"):
+        parse_run_config(_args())
+    with pytest.raises(
+        ConfigurationError,
+        match=f"{clip_class}_subtitles_enabled must be boolean or unset",
+    ):
+        replace(
+            AppConfig("source.mp4", tmp_path, "codex", "test"),
+            **{f"{clip_class}_subtitles_enabled": "false"},
+        )
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_variant_flag_overrides_environment_and_dotenv(
+    configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RENDER_VARIANTS", raising=False)
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text("RENDER_VARIANTS=false\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("RENDER_VARIANTS", "false")
+    assert parse_run_config(_args()).render_variants is False
+    assert parse_run_config(_args() + ["--variants"]).render_variants is True
+    assert parse_run_config(_args() + ["--no-variants"]).render_variants is False
+
+
+def test_square_format_and_size_resolve_environment_and_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SHORT_ASPECT_RATIO", "1:1")
+    monkeypatch.setenv("LONG_ASPECT_RATIO", "1:1")
+    monkeypatch.setenv("SQUARE_SIZE", "720")
+    config = parse_run_config(_args())
+    assert config.short_aspect_ratio == config.long_aspect_ratio == "1:1"
+    assert config.square_size == 720
+    override = parse_run_config(
+        _args()
+        + [
+            "--short-aspect-ratio",
+            "16:9",
+            "--long-aspect-ratio",
+            "original",
+            "--square-size",
+            "360",
+        ]
+    )
+    assert override.short_aspect_ratio == "16:9"
+    assert override.long_aspect_ratio == "original"
+    assert override.square_size == 360
+
+
+@pytest.mark.parametrize("size", [0, -2, 361, True])
+def test_square_size_requires_positive_even_pixels(size, tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="Square size"):
+        AppConfig("source.mp4", tmp_path, "codex", "test", square_size=size)
+
+
+def test_variants_setting_requires_a_boolean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RENDER_VARIANTS", "maybe")
+    with pytest.raises(ConfigurationError, match="RENDER_VARIANTS must be a boolean"):
+        parse_run_config(_args())
+    with pytest.raises(ConfigurationError, match="render_variants must be boolean"):
+        replace(
+            AppConfig("source.mp4", tmp_path, "codex", "test"), render_variants="false"
+        )
 
 
 def test_cli_options_override_process_environment_and_dotenv(
@@ -53,7 +224,9 @@ def test_cli_options_override_process_environment_and_dotenv(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
-        "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\nOVERLAP_THRESHOLD=0.7\nSUBTITLES_ENABLED=false\n",
+        "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\n"
+        "OVERLAP_THRESHOLD=0.7\nSHORT_SUBTITLES_ENABLED=false\n"
+        "LONG_SUBTITLES_ENABLED=false\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LLM_MODEL", "process-model")
@@ -78,6 +251,7 @@ def test_cli_options_override_process_environment_and_dotenv(
     assert config.llm_effort == "high"
     assert config.overlap_threshold == 0.8
     assert config.subtitles_enabled
+    assert config.subtitles_for("short") is config.subtitles_for("long") is True
 
 
 @pytest.mark.parametrize("configured_in", ["dotenv", "process"])

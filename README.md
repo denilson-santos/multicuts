@@ -25,11 +25,11 @@
 | Feature | What you can do |
 | --- | --- |
 | 📥 **Local videos & YouTube** | Process a video file or a supported YouTube URL. |
-| ✂️ **Short & long clips** | Find both formats from the same source, with vertical shorts and horizontal long clips by default. |
+| ✂️ **Short & long clips** | Find both classes from the same source, with vertical, horizontal, and square versions or a single chosen format. |
 | 🧠 **Editorial review** | Find complete ideas, refine nearby opening and closing boundaries, and select clips for general or topic-aware audiences. |
 | 🏆 **Explainable ranking** | See a 0–100 score, its component scores, and the editorial reason in each clip's JSON. |
 | 💬 **Styled subtitles** | Burn subtitles with `multisubs` templates, using the source transcript's word timings. |
-| 🎞️ **Flexible framing** | Choose vertical, horizontal, or original framing and customize output dimensions. |
+| 🎞️ **Flexible framing** | Choose vertical, horizontal, square, or original framing and customize output dimensions. |
 | ♻️ **Reusable analysis** | Reuse transcription and AI results when changing subtitle style or framing. |
 | 📦 **Organized output** | Get MP4 clips, per-clip metadata, and a run manifest in a separate folder for each invocation. |
 
@@ -237,8 +237,12 @@ This example uses Portuguese audio. Set `--lang` to your source language when kn
 
 | Class | Duration | Default output |
 | --- | --- | --- |
-| 📱 Short | Up to 3 minutes | 9:16 · 1080×1920 |
-| 🖥️ Long | More than 3 minutes | 16:9 · 1920×1080 |
+| 📱 Short | Up to 3 minutes | 9:16 · 1080×1920 + 16:9 · 1920×1080 + 1:1 · 1080×1080 |
+| 🖥️ Long | More than 3 minutes | 16:9 · 1920×1080 + 9:16 · 1080×1920 + 1:1 · 1080×1080 |
+
+Horizontal shorts show the complete vertical short in the center, with an enlarged, blurred copy of its video filling the background. Neither layer is mirrored. Subtitles stay inside the central short; the background has no captions. Long clips and 1:1 versions use a centered crop, with subtitle layout generated for that version's geometry.
+
+Use `--no-variants` (or `RENDER_VARIANTS=false`) to publish only the primary version of each cut. A primary `1:1` output, or `original` when the source geometry is square, always produces one version. A square source still gets all three social formats when the primary output is 9:16 or 16:9. Nonsquare original primary output produces four versions when variants are enabled. Square outputs default to 1080×1080; set `--square-size` or `SQUARE_SIZE` to change both sides together.
 
 Long clips preferably span 3–15 minutes, with no hard duration ceiling. The number of clips follows the content and editorial decisions, with redundant overlaps suppressed.
 
@@ -256,8 +260,18 @@ multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
 
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
-  --short-aspect-ratio original --long-aspect-ratio original --no-subtitles
+  --short-aspect-ratio original --long-aspect-ratio original \
+  --no-variants --no-subtitles
 ```
+
+**Enable subtitles only for short cuts**
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
+  --short-subtitles --no-long-subtitles
+```
+
+Subtitle settings apply to every version of the chosen class and default to enabled. Use `--short-subtitles` / `--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles` / `--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, for separate control. The shared `SUBTITLES_ENABLED` environment setting has been removed. CLI settings override process environment, which overrides `.env`; `--subtitles` / `--no-subtitles` are shortcuts for both classes, with class-specific CLI flags taking precedence. For example, `--no-subtitles --short-subtitles` enables subtitles only for shorts even if environment settings enable long subtitles.
 
 **Override the AI configuration for one run**
 
@@ -282,7 +296,12 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
-| `--short-aspect-ratio` / `--long-aspect-ratio` | Choose `9:16`, `16:9`, or `original` for each class. |
+| `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes; class-specific CLI flags take precedence. |
+| `--short-subtitles` / `--no-short-subtitles` | Override subtitles for all short versions; environment: `SHORT_SUBTITLES_ENABLED`. |
+| `--long-subtitles` / `--no-long-subtitles` | Override subtitles for all long versions; environment: `LONG_SUBTITLES_ENABLED`. |
+| `--short-aspect-ratio` / `--long-aspect-ratio` | Choose the primary version (`9:16`, `16:9`, `1:1`, or `original`) for each class. Square outputs have no variants. |
+| `--variants` / `--no-variants` | Enable additional social formats (default) or publish only the primary version; environment: `RENDER_VARIANTS`. |
+| `--square-size` | Set the square output side in pixels (positive and even; default: `1080`); environment: `SQUARE_SIZE`. |
 | `--force-recompute` | Bypass cached transcription and AI analysis. |
 | `--keep-intermediates` | Retain intermediate files for inspection. |
 | `--verbose` | Show debug details and dependency output. |
@@ -317,13 +336,17 @@ cuts/
 │       ├── manifest.json
 │       └── clips/
 │           ├── <clip>.mp4
-│           └── <clip>.json
+│           ├── <clip>.json
+│           ├── <clip>-<vertical-or-horizontal>.mp4
+│           ├── <clip>-<vertical-or-horizontal>.json
+│           ├── <clip>-square.mp4
+│           └── <clip>-square.json
 └── .cache/
 ```
 
-- **MP4:** the final rendered clip, with subtitles enabled by default.
-- **Clip JSON:** its social-media title, interval, scores, and editorial explanation.
-- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references.
+- **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions have `-vertical`, `-horizontal`, or `-square` suffixes.
+- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. Horizontal short subtitle sidecars describe the vertical foreground. When its vertical version is also published, the horizontal version references those sidecars and records that video in `render.subtitle_source_video`; otherwise it has its own sidecars and the source-video field is null.
+- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
 
 Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.
 
