@@ -49,17 +49,165 @@ One source is processed per invocation. The selected AI backend analyzes transcr
 
 ### 1. Install
 
-Use **Python 3.10–3.13** and have **FFmpeg/ffprobe** on your PATH. Subtitle rendering requires FFmpeg's `subtitles` filter (libass).
+Use **Python 3.10–3.13** and have **FFmpeg/ffprobe** on your PATH. Subtitle rendering requires FFmpeg's `subtitles` filter (libass). The CPU/CUDA commands below target **x86_64 Linux and WSL**.
+
+**Installation order:** create the environment → prepare CPU or GPU → install the app → follow the selected ASR backend's instructions.
+
+| ASR backend | Additional installation after the shared setup | Model example |
+| --- | --- | --- |
+| [WhisperX](#asr-whisperx) — default | None; included. | `turbo` |
+| [Faster-Whisper](#asr-faster-whisper) | None; included through WhisperX. | `turbo` or `large-v3` |
+| [Parakeet](#asr-parakeet) | Install `multisubs[parakeet]`. | `nvidia/parakeet-tdt-0.6b-v3` |
+| [Qwen](#asr-qwen) | Install `multisubs[qwen]`. | `Qwen/Qwen3-ASR-1.7B-hf` |
+
+<a id="asr-shared-setup"></a>
+
+#### Create the environment
 
 ```bash
 git clone https://github.com/denilson-santos/multicuts.git
 cd multicuts
 python3.10 -m venv .venv
 source .venv/bin/activate
+```
+
+#### Prepare CPU or GPU
+
+The current app installation includes **WhisperX and its PyTorch dependencies for every backend choice**. If a compatible PyTorch build is already installed, reuse it. Otherwise, choose one build below before installing the app.
+
+<details>
+<summary><strong>🖥️ Choose a CPU or NVIDIA GPU environment</strong></summary>
+
+**CPU PyTorch** — install this build when preparing an environment without NVIDIA GPU execution:
+
+```bash
+python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+  'torch==2.8.0+cpu' 'torchaudio==2.8.0+cpu' 'torchvision==0.23.0+cpu'
+```
+
+**NVIDIA GPU** — install the driver for your GPU and operating system from the [official NVIDIA driver selector](https://www.nvidia.com/en-us/drivers/). For GeForce on Windows, choose Game Ready or Studio. **On WSL, install the driver on Windows**; for native Linux, install the driver for your Linux distribution. See the [NVIDIA WSL guide](https://docs.nvidia.com/cuda/archive/12.8.1/wsl-user-guide/index.html) and [CUDA 12.8 driver compatibility tables](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-toolkit-release-notes/index.html#cuda-driver).
+
+Then install the CUDA PyTorch build in the activated virtual environment:
+
+```bash
+python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
+  'torch==2.8.0+cu128' 'torchaudio==2.8.0+cu128' 'torchvision==0.23.0+cu128'
+```
+
+`torch`, `torchaudio`, and `torchvision` are Python packages; `+cu128` selects CUDA 12.8 builds. On Linux/WSL, CUDA PyTorch also installs NVIDIA runtime libraries such as cuBLAS and cuDNN through pip. The GPU driver is installed separately on the host. **A full CUDA Toolkit or apt installation is unnecessary for this pip setup.**
+
+Check the GPU and driver version with:
+
+```bash
+nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+```
+
+The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23.0**. The explicit `+cpu` / `+cu128` versions let pip select the requested build even when another variant with the same base version is installed. See the [official PyTorch installation matrix](https://pytorch.org/get-started/previous-versions/#v280) for other builds and platforms.
+
+</details>
+
+#### Install the app
+
+```bash
 python -m pip install --editable .
 ```
 
-Installation includes the pinned `multisubs[whisperx]` 4.4.0 release wheel and its transcription dependencies.
+This installs the pinned `multisubs[whisperx]` **4.4.1** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+
+<a id="asr-backends"></a>
+
+#### Follow your ASR backend's instructions
+
+Complete the [shared setup](#asr-shared-setup), then open **only the profile you need**. Run the example commands after completing the AI configuration in step 2 below.
+
+<a id="asr-whisperx"></a>
+
+<details>
+<summary><strong>🗣️ WhisperX — default, already installed</strong></summary>
+
+**Dependencies:** WhisperX, PyTorch, torchaudio, torchvision, and Faster-Whisper. All are included in the base installation; no additional extra is needed.
+
+**CPU/GPU:** uses the PyTorch build prepared above. The CUDA build supplies the NVIDIA runtime libraries for GPU execution.
+
+```bash
+multicuts video.mp4 --output-dir out --lang pt \
+  --asr-backend whisperx --asr-model turbo
+```
+
+</details>
+
+<a id="asr-faster-whisper"></a>
+
+<details>
+<summary><strong>⚡ Faster-Whisper — already installed</strong></summary>
+
+**Dependencies:** Faster-Whisper and CTranslate2, already brought in by the base WhisperX installation. The engine itself does not require PyTorch.
+
+**CPU:** needs no cuBLAS or cuDNN when running on CPU. **NVIDIA GPU:** requires cuBLAS for CUDA 12 and cuDNN 9. Reuse the libraries supplied by the shared CUDA PyTorch setup. If those libraries are missing, install them in the same virtual environment:
+
+```bash
+python -m pip install \
+  'nvidia-cublas-cu12==12.8.4.1' 'nvidia-cudnn-cu12==9.10.2.21'
+```
+
+For this backend on Linux/WSL, `multicuts` loads the installed libraries automatically. **No `LD_LIBRARY_PATH` export, shell configuration, or apt installation is required.** Other applications have their own library-loading requirements.
+
+CTranslate2 detects CUDA independently of PyTorch: a CPU PyTorch build does not force this backend to use CPU.
+
+```bash
+multicuts video.mp4 --output-dir out --lang pt \
+  --asr-backend faster-whisper --asr-model turbo
+```
+
+For other platforms, see the [Faster-Whisper GPU requirements](https://github.com/SYSTRAN/faster-whisper#gpu). An optional Ubuntu system-library setup is available under [Reference](#system-cuda-libraries).
+
+</details>
+
+<a id="asr-parakeet"></a>
+
+<details>
+<summary><strong>🦜 Parakeet — install the NeMo ASR extra</strong></summary>
+
+**Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
+
+```bash
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
+```
+
+**CPU/GPU:** uses PyTorch to select the device. A compatible CUDA PyTorch installation supplies its GPU runtime dependencies.
+
+```bash
+multicuts video.mp4 --output-dir out --lang pt \
+  --asr-backend parakeet --asr-model nvidia/parakeet-tdt-0.6b-v3
+```
+
+</details>
+
+<a id="asr-qwen"></a>
+
+<details>
+<summary><strong>🧠 Qwen — install the Transformers / Accelerate extra</strong></summary>
+
+**Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
+
+```bash
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
+```
+
+**CPU/GPU:** uses PyTorch to select the device. A compatible CUDA PyTorch installation supplies its GPU runtime dependencies.
+
+```bash
+multicuts video.mp4 --output-dir out --lang pt \
+  --asr-backend qwen --asr-model Qwen/Qwen3-ASR-1.7B-hf
+```
+
+</details>
+
+Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
+
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v4.4.1/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -218,14 +366,7 @@ Settings take precedence in this order: **CLI flags → process environment → 
 
 `--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
 
-The installation includes WhisperX dependencies. Other ASR backends require their matching optional `multisubs` dependencies and a compatible model. For example:
-
-```bash
-multicuts video.mp4 --output-dir out --lang pt \
-  --asr-backend faster-whisper --asr-model large-v3
-```
-
-Parakeet uses `--asr-model nvidia/parakeet-tdt-0.6b-v3`; Qwen uses `--asr-model Qwen/Qwen3-ASR-1.7B-hf`. The `turbo` default remains the same when switching backends, so select a compatible model explicitly. Logs and the manifest record the selected ASR backend and model.
+See the [ASR backend profiles](#asr-backends) for installation commands and compatible model examples. Logs and the manifest record the selected ASR backend and model.
 
 Transcription caches include the ASR backend, so changing it cannot reuse another backend's transcript. Caches from the earlier identity are recomputed once; completed runs remain available. AI responses can still be reused when the normalized transcript is identical.
 
@@ -246,7 +387,38 @@ Long sources are split into overlapping transcript blocks. `--block-chars` and `
 
 Cache reuse depends on the source, transcription settings, AI backend, model, effort, prompt version, and transcript content. Only normalized transcripts and validated AI responses are cached.
 
-Subtitles are generated after the final crop so they fit the clip frame. Complete word timings are required: clips are never retranscribed and timestamps are never invented. `multisubs` splits supplied timed cues when they exceed the final layout.
+Subtitles are generated after the final crop so they fit the clip frame. Complete word timings are required: clips are never retranscribed and timestamps are never invented. Words with zero duration are accepted and preserved in the transcript cache. For display, they are grouped with an adjacent timed word using observed outer bounds; if every selected word is a point, the group uses the observed segment interval. These words share the group's animation instead of receiving individual timing. `multisubs` splits supplied timed cues when they exceed the final layout.
+
+</details>
+
+<a id="system-cuda-libraries"></a>
+
+<details>
+<summary><strong>🧰 Optional: Ubuntu system CUDA libraries</strong></summary>
+
+Choose this alternative if you want Ubuntu to manage the libraries for system-wide availability. **It is optional when the [Faster-Whisper pip setup](#asr-faster-whisper) is working.** For **Ubuntu 22.04 x86_64**, including Ubuntu 22.04 on WSL 2, the NVIDIA repository supplies the following matching versions:
+
+```bash
+wget -O /tmp/multicuts-cuda-keyring.deb \
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i /tmp/multicuts-cuda-keyring.deb
+sudo apt-get update
+sudo apt-get install --no-install-recommends \
+  'libcublas-12-8=12.8.4.1-1' 'libcudnn9-cuda-12=9.10.2.21-1'
+sudo ldconfig
+```
+
+These commands require sudo access and install the runtime libraries plus small CUDA configuration packages. A full CUDA Toolkit installation is unnecessary for transcription. The packages register the CUDA library paths with the system loader, and `ldconfig` refreshes its cache. **No `LD_LIBRARY_PATH` export or shell configuration is required**, including for subsequent `multicuts` commands or other applications using the same libraries.
+
+**On WSL, keep the NVIDIA driver installed on Windows.** Use the specific library packages above; NVIDIA's `cuda`, `cuda-12-*`, and `cuda-drivers` meta-packages can attempt to install a Linux driver. For other Ubuntu releases or architectures, select the matching repository in the [NVIDIA CUDA installation guide](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) and [cuDNN installation guide](https://docs.nvidia.com/deeplearning/cudnn/installation/latest/linux.html#ubuntu-and-debian-network-installation).
+
+**After the optional apt installation**, check system library discovery in a fresh process without `LD_LIBRARY_PATH`:
+
+```bash
+env -u LD_LIBRARY_PATH python -c 'import ctypes; handles = [ctypes.CDLL(name) for name in ("libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9")]; print("CUDA runtime libraries found by the system loader")'
+```
+
+This check validates system library discovery only; it can fail in a working pip-only `multicuts` setup. Keep the CUDA PyTorch build for WhisperX, Parakeet, or Qwen when using system libraries, since the backends still require its Python dependencies.
 
 </details>
 

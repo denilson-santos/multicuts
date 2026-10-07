@@ -200,23 +200,65 @@ def clip_transcript(transcript: Transcript, start: float, end: float) -> ClipTra
         source_ranges.append((index, segment.start, segment.end))
     words: list[ClipTranscriptWord] = []
     for index, word in enumerate(transcript.words):
+        if word.start is None or word.end is None:
+            continue
+        is_point = word.start == word.end
         if (
-            word.start is None
-            or word.end is None
-            or word.start >= end
-            or word.end <= start
+            is_point
+            and word.source_segment_index is not None
+            and not any(
+                segment_id == word.source_segment_index
+                for segment_id, _, _ in source_ranges
+            )
+        ):
+            continue
+        # Preserve a trailing point at the cut's end only when the provider
+        # assigns it to a retained segment ending at that same observed boundary.
+        trailing_point = (
+            is_point
+            and word.start == end
+            and any(
+                segment_id == word.source_segment_index and right == end
+                for segment_id, _, right in source_ranges
+            )
+        )
+        if (word.start >= end and not trailing_point) or (
+            word.end < start if is_point else word.end <= start
         ):
             continue
         local_start = max(0.0, word.start - start)
         local_end = min(duration, word.end - start)
-        if local_end <= local_start:
-            continue
-        matches = [
-            (min(word.end, right) - max(word.start, left), segment_id)
-            for segment_id, left, right in source_ranges
-            if min(word.end, right) > max(word.start, left)
-        ]
-        parent = max(matches)[1] if matches else None
+        if word.source_segment_index is not None:
+            parent = next(
+                (
+                    segment_id
+                    for segment_id, left, right in source_ranges
+                    if segment_id == word.source_segment_index
+                    and left <= word.end
+                    and word.start <= right
+                ),
+                None,
+            )
+        elif is_point:
+            # A shared boundary belongs to the following segment; retain a
+            # trailing point at a segment's end when no following one contains it.
+            parents = [
+                segment_id
+                for segment_id, left, right in source_ranges
+                if left <= word.start < right
+            ] or [
+                segment_id
+                for segment_id, left, right in source_ranges
+                if left <= word.start <= right
+            ]
+            parent = parents[0] if parents else None
+        else:
+            matches = [
+                (min(word.end, right) - max(word.start, left), segment_id)
+                for segment_id, left, right in source_ranges
+                if min(word.end, right) > max(word.start, left)
+            ]
+            parent = max(matches)[1] if matches else None
         words.append(
             ClipTranscriptWord(
                 word.text, local_start, local_end, word.confidence, index, parent

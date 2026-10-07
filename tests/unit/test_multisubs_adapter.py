@@ -1,9 +1,11 @@
 """Hermetic transcription and subtitle contracts for MultisubsAdapter."""
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from importlib import metadata
 from pathlib import Path
 from types import ModuleType
@@ -12,6 +14,11 @@ import pytest
 
 from multicuts.adapters import multisubs
 from multicuts.adapters.multisubs import MultisubsAdapter
+from multicuts.cache import (
+    load_transcript,
+    save_transcript,
+    transcript_content_fingerprint,
+)
 from multicuts.errors import RenderingError, TranscriptionError
 from multicuts.models import (
     ClipTranscript,
@@ -59,6 +66,15 @@ def _install_provider(
     if generate is not None:
         provider.__dict__["generate_transcriptions"] = generate
     monkeypatch.setitem(sys.modules, "multisubs", provider)
+
+    def missing_distribution(name: str) -> metadata.Distribution:
+        raise metadata.PackageNotFoundError(name)
+
+    def missing_library(_name: str, *, mode: int) -> None:
+        raise OSError("Native libraries are unavailable in this hermetic test")
+
+    monkeypatch.setattr(metadata, "distribution", missing_distribution)
+    monkeypatch.setattr(multisubs.ctypes, "CDLL", missing_library)
 
 
 def _write_artifacts(
@@ -123,14 +139,66 @@ def test_normalizes_public_json_without_losing_timing_or_text(
         TranscriptSegment("世界!", 1.2, 2.0),
     )
     assert transcript.words == (
-        Word("Olá", 0.125, 0.475, 0.97),
-        Word("mundo.", 0.5, 1.0),
-        Word("世界!", None, None),
+        Word("Olá", 0.125, 0.475, 0.97, source_segment_index=0),
+        Word("mundo.", 0.5, 1.0, source_segment_index=0),
+        Word("世界!", None, None, source_segment_index=1),
     )
     assert (transcript.provider, transcript.provider_version) == (
         "multisubs",
         "4.2.0",
     )
+
+
+def test_point_word_normalization_and_cache_preserve_asr_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
+    payload["transcription"]["segments"][0]["words"][0] = {
+        "word": "Olá",
+        "start": 0.125,
+        "end": 0.125,
+        "score": 0.99609375,
+    }
+    transcript = _transcribe_json(json.dumps(payload), tmp_path, monkeypatch)
+    assert transcript.words[0] == Word("Olá", 0.125, 0.125, 0.99609375, 0)
+    cache_path = tmp_path / "cache.json"
+    save_transcript(cache_path, transcript, "test-key")
+    restored = load_transcript(cache_path, "test-key")
+    assert restored is not None
+    assert restored == transcript
+    assert transcript_content_fingerprint(restored) == transcript_content_fingerprint(
+        transcript
+    )
+
+
+def test_transcript_cache_accepts_legacy_words_without_segment_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _transcribe_json(TRANSCRIPT_FIXTURE.read_text(), tmp_path, monkeypatch)
+    cache_path = tmp_path / "cache.json"
+    save_transcript(cache_path, transcript, "test-key")
+    payload = json.loads(cache_path.read_text())
+    for word in payload["transcript"]["words"]:
+        del word["source_segment_index"]
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    restored = load_transcript(cache_path, "test-key")
+    assert restored is not None
+    assert restored.words == tuple(
+        replace(word, source_segment_index=None) for word in transcript.words
+    )
+
+
+@pytest.mark.parametrize("parent", [-1, 2, True, "0"])
+def test_transcript_cache_rejects_invalid_word_segment_indexes(
+    parent: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _transcribe_json(TRANSCRIPT_FIXTURE.read_text(), tmp_path, monkeypatch)
+    cache_path = tmp_path / "cache.json"
+    save_transcript(cache_path, transcript, "test-key")
+    payload = json.loads(cache_path.read_text())
+    payload["transcript"]["words"][0]["source_segment_index"] = parent
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_transcript(cache_path, "test-key") is None
 
 
 def test_missing_segment_timing_remains_absent(
@@ -159,6 +227,7 @@ def test_missing_segment_timing_remains_absent(
         ("segment_interval", "segment 0"),
         ("partial_segment_interval", "segment 0 timing"),
         ("word_interval", "word 0 timing"),
+        ("reversed_word_interval", "word 0"),
         ("word_text", "word 0 text"),
         ("word_score", "word 0 score"),
     ],
@@ -189,6 +258,8 @@ def test_rejects_invalid_consumed_json_fields(
             del segment["end"]
         elif case == "word_interval":
             del word["end"]
+        elif case == "reversed_word_interval":
+            word["end"] = 0.0
         elif case == "word_text":
             word["word"] = ""
         elif case == "word_score":
@@ -322,6 +393,258 @@ def test_provider_failure_is_chained_without_leaking_provider_message(
         )
     assert caught.value.__cause__ is failure
     assert "private video path" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (
+            RuntimeError("Library libcublas.so.12 is not found or cannot be loaded"),
+            "NVIDIA cuBLAS (CUDA 12)",
+        ),
+        (
+            OSError("libcudnn_ops.so.9: cannot open shared object file"),
+            "NVIDIA cuDNN 9",
+        ),
+        (
+            RuntimeError("Could not load cudnn64_9.dll"),
+            "NVIDIA cuDNN 9",
+        ),
+        (
+            ModuleNotFoundError("No module named 'private dependency'"),
+            "matching optional extra from the pinned multisubs wheel",
+        ),
+    ],
+)
+@pytest.mark.parametrize("chaining", ["cause", "context"])
+def test_known_setup_failures_are_actionable_without_leaking_provider_details(
+    failure: Exception,
+    expected: str,
+    chaining: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrapper = RuntimeError("private video path; token=private-token")
+    if chaining == "cause":
+        wrapper.__cause__ = failure
+    else:
+        wrapper.__context__ = failure
+
+    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> None:
+        raise wrapper
+
+    _install_provider(monkeypatch, generate)
+    with pytest.raises(TranscriptionError) as caught:
+        MultisubsAdapter().transcribe(
+            tmp_path / "source.mp4",
+            language="pt",
+            backend="faster-whisper",
+            model="turbo",
+            workspace=tmp_path / "run",
+        )
+    assert expected in str(caught.value)
+    assert "see README installation" in str(caught.value)
+    assert "private" not in str(caught.value)
+    assert caught.value.__cause__ is wrapper
+
+
+@pytest.mark.parametrize("library_path", [None, "/custom/cuda"])
+def test_faster_whisper_loads_registered_cuda_wheels_before_one_asr_call(
+    library_path: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    def generate(
+        _source: Path, output: Path, **_kwargs: object
+    ) -> tuple[str, str, str]:
+        events.append("ASR")
+        return _write_artifacts(output)
+
+    _install_provider(monkeypatch, generate)
+    monkeypatch.setattr(multisubs.sys, "platform", "linux")
+    if library_path is None:
+        monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    else:
+        monkeypatch.setenv("LD_LIBRARY_PATH", library_path)
+    libraries = (
+        ("cublas", "libcublasLt.so.12"),
+        ("cublas", "libcublas.so.12"),
+        ("cudnn", "libcudnn.so.9"),
+    )
+    root = tmp_path / "site-packages"
+    for folder, library in libraries:
+        path = root / "nvidia" / folder / "lib" / library
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    distribution = metadata.PathDistribution(root / "runtime.dist-info")
+    monkeypatch.setattr(metadata, "distribution", lambda _name: distribution)
+
+    def load(name: str, *, mode: int) -> object:
+        assert mode == multisubs.ctypes.RTLD_GLOBAL
+        events.append(name)
+        if not Path(name).is_absolute():
+            raise OSError("Not visible through system library lookup")
+        return object()
+
+    monkeypatch.setattr(multisubs.ctypes, "CDLL", load)
+    transcript = MultisubsAdapter().transcribe(
+        tmp_path / "source.mp4",
+        language="pt",
+        backend="faster-whisper",
+        model="turbo",
+        workspace=tmp_path / "work",
+    )
+    assert transcript.words
+    assert events == [
+        value
+        for folder, library in libraries
+        for value in (library, str(root / "nvidia" / folder / "lib" / library))
+    ] + ["ASR"]
+    assert os.environ.get("LD_LIBRARY_PATH") == library_path
+
+
+def test_faster_whisper_keeps_available_system_cuda_libraries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded: list[str] = []
+
+    def generate(
+        _source: Path, output: Path, **_kwargs: object
+    ) -> tuple[str, str, str]:
+        return _write_artifacts(output)
+
+    _install_provider(monkeypatch, generate)
+    monkeypatch.setattr(multisubs.sys, "platform", "linux")
+
+    def load(name: str, *, mode: int) -> object:
+        loaded.append(name)
+        return object()
+
+    def unexpected_lookup(_name: str) -> metadata.Distribution:
+        raise AssertionError("Available system libraries must retain precedence")
+
+    monkeypatch.setattr(multisubs.ctypes, "CDLL", load)
+    monkeypatch.setattr(metadata, "distribution", unexpected_lookup)
+    MultisubsAdapter().transcribe(
+        tmp_path / "source.mp4",
+        language="pt",
+        backend="faster-whisper",
+        model="turbo",
+        workspace=tmp_path / "work",
+    )
+    assert loaded == ["libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9"]
+
+
+@pytest.mark.parametrize(
+    ("backend", "platform"),
+    [
+        ("whisperx", "linux"),
+        ("parakeet", "linux"),
+        ("qwen", "linux"),
+        ("faster-whisper", "darwin"),
+        ("faster-whisper", "win32"),
+    ],
+)
+def test_cuda_preloading_is_scoped_to_faster_whisper_on_linux(
+    backend: str,
+    platform: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def generate(
+        _source: Path, output: Path, **_kwargs: object
+    ) -> tuple[str, str, str]:
+        return _write_artifacts(output)
+
+    _install_provider(monkeypatch, generate)
+    monkeypatch.setattr(multisubs.sys, "platform", platform)
+
+    def unexpected_load(_name: str, *, mode: int) -> None:
+        raise AssertionError("CUDA libraries must not be loaded for this runtime")
+
+    monkeypatch.setattr(multisubs.ctypes, "CDLL", unexpected_load)
+    assert (
+        MultisubsAdapter()
+        .transcribe(
+            tmp_path / "source.mp4",
+            language="pt",
+            backend=backend,
+            model="default",
+            workspace=tmp_path / "work",
+        )
+        .words
+    )
+
+
+@pytest.mark.parametrize("wheel_state", ["missing", "empty", "broken"])
+def test_optional_cuda_libraries_do_not_prevent_cpu_transcription(
+    wheel_state: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls: list[str] = []
+
+    def generate(
+        _source: Path, output: Path, **_kwargs: object
+    ) -> tuple[str, str, str]:
+        calls.append("ASR")
+        return _write_artifacts(output)
+
+    _install_provider(monkeypatch, generate)
+    monkeypatch.setattr(multisubs.sys, "platform", "linux")
+    if wheel_state != "missing":
+        root = tmp_path / "site-packages"
+        distribution = metadata.PathDistribution(root / "runtime.dist-info")
+        monkeypatch.setattr(metadata, "distribution", lambda _name: distribution)
+        if wheel_state == "broken":
+            for folder, library in (
+                ("cublas", "libcublasLt.so.12"),
+                ("cublas", "libcublas.so.12"),
+                ("cudnn", "libcudnn.so.9"),
+            ):
+                path = root / "nvidia" / folder / "lib" / library
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+    def load(_name: str, *, mode: int) -> None:
+        raise OSError("private path; token=private-token")
+
+    monkeypatch.setattr(multisubs.ctypes, "CDLL", load)
+    with caplog.at_level("DEBUG", logger="multicuts.adapters.multisubs"):
+        transcript = MultisubsAdapter().transcribe(
+            tmp_path / "source.mp4",
+            language="pt",
+            backend="faster-whisper",
+            model="turbo",
+            workspace=tmp_path / "work",
+        )
+    assert transcript.words
+    assert calls == ["ASR"]
+    assert "private" not in caplog.text
+
+
+def test_unknown_cyclic_provider_failure_keeps_the_safe_generic_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failure = RuntimeError("private provider failure")
+    failure.__cause__ = failure
+
+    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> None:
+        raise failure
+
+    _install_provider(monkeypatch, generate)
+    with pytest.raises(TranscriptionError, match="could not transcribe") as caught:
+        MultisubsAdapter().transcribe(
+            tmp_path / "source.mp4",
+            language=None,
+            model="turbo",
+            workspace=tmp_path / "run",
+        )
+    assert "private" not in str(caught.value)
+    assert caught.value.__cause__ is failure
 
 
 def test_missing_public_api_is_actionable(
@@ -481,6 +804,86 @@ def _clip(*, complete: bool = True) -> ClipTranscript:
         provider_version="4.4.0",
         word_timing_complete=complete,
     )
+
+
+@pytest.mark.parametrize(
+    "text,tokens,intervals,expected",
+    [
+        (
+            "Olá de novo.",
+            ("Olá", "de", "novo."),
+            ((0.2, 0.2), (0.8, 1.2), (1.3, 1.8)),
+            [(0.2, 1.2, "Olá de"), (1.3, 1.8, "novo.")],
+        ),
+        (
+            "Olá de novo.",
+            ("Olá", "de", "novo."),
+            ((0.2, 0.7), (0.8, 0.8), (1.0, 1.8)),
+            [(0.2, 0.8, "Olá de"), (1.0, 1.8, "novo.")],
+        ),
+        (
+            "Olá de novo.",
+            ("Olá", "de", "novo."),
+            ((0.2, 0.7), (0.8, 1.2), (1.8, 1.8)),
+            [(0.2, 0.7, "Olá"), (0.8, 1.8, "de novo.")],
+        ),
+        (
+            "Olá de novo.",
+            ("Olá", "de", "novo."),
+            ((0.2, 0.2), (0.8, 0.8), (1.8, 1.8)),
+            [(0.2, 1.8, "Olá de novo.")],
+        ),
+        (
+            "Olá de novo.",
+            ("Olá", "de", "novo."),
+            ((0.7, 0.7), (0.7, 0.7), (0.7, 0.7)),
+            [(0.2, 1.8, "Olá de novo.")],
+        ),
+        (
+            "a b a  b",
+            ("a", "b", "a", "b"),
+            ((0.2, 0.5), (0.5, 0.7), (0.8, 1.2), (1.8, 1.8)),
+            [(0.2, 0.5, "a"), (0.5, 0.7, "b"), (0.8, 1.8, "a  b")],
+        ),
+        (
+            "你好世界!",
+            ("你好", "世界", "!"),
+            ((0.2, 0.2), (0.7, 0.7), (0.8, 1.8)),
+            [(0.2, 1.8, "你好世界!")],
+        ),
+    ],
+)
+def test_subtitle_groups_preserve_point_word_text_and_observed_bounds(
+    text: str,
+    tokens: tuple[str, ...],
+    intervals: tuple[tuple[float, float], ...],
+    expected: list[tuple[float, float, str]],
+) -> None:
+    words = tuple(
+        ClipTranscriptWord(token, start, end, 0.9, index, 0)
+        for index, (token, (start, end)) in enumerate(
+            zip(tokens, intervals, strict=True)
+        )
+    )
+    clip = replace(
+        _clip(),
+        text=text,
+        segments=(ClipTranscriptSegment(text, 0.2, 1.8, 0),),
+        words=words,
+    )
+    cues = multisubs._timed_cues(clip)["cues"]
+    assert cues == [
+        {
+            "start": 0.2,
+            "end": 1.8,
+            "text": text,
+            "words": [
+                {"start": start, "end": end, "text": token}
+                for start, end, token in expected
+            ],
+        }
+    ]
+    assert clip.words == words
 
 
 def test_public_cli_receives_clip_local_json_and_template(

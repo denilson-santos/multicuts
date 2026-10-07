@@ -1,5 +1,7 @@
 """Source-derived clip transcript behavior for the active subtitle path."""
 
+import pytest
+
 from multicuts.models import ClipTranscript, Transcript, TranscriptSegment, Word
 from multicuts.render import clip_transcript
 
@@ -29,6 +31,109 @@ def test_clip_timeline_uses_observed_word_times_without_retranscription() -> Non
     assert [word.start for word in local.words] == [1.0, 2.0]
     assert [word.source_segment_index for word in local.words] == [1, 1]
     assert local.word_animation_safe
+
+
+def test_clip_timeline_retains_point_words_at_start_and_inside_but_excludes_end() -> (
+    None
+):
+    transcript = Transcript(
+        None,
+        "pt",
+        10.0,
+        "Antes. Não agora mesmo. Depois.",
+        (
+            TranscriptSegment("Antes.", 0.0, 5.0),
+            TranscriptSegment("Não agora mesmo.", 5.0, 9.0),
+            TranscriptSegment("Depois.", 9.0, 10.0),
+        ),
+        (
+            Word("Antes.", 4.9, 4.9, source_segment_index=0),
+            Word("Não", 5.0, 5.0, 0.9, 1),
+            Word("agora", 6.0, 7.0, 0.8, 1),
+            Word("mesmo.", 7.5, 7.5, 0.7, 1),
+            Word("Depois.", 9.0, 9.0, source_segment_index=2),
+        ),
+        "multisubs",
+        "4.4.0",
+    )
+    local = clip_transcript(transcript, 5.0, 9.0)
+    assert [(word.text, word.start, word.end) for word in local.words] == [
+        ("Não", 0.0, 0.0),
+        ("agora", 1.0, 2.0),
+        ("mesmo.", 2.5, 2.5),
+    ]
+    assert [word.confidence for word in local.words] == [0.9, 0.8, 0.7]
+    assert [word.source_index for word in local.words] == [1, 2, 3]
+    assert [word.source_segment_index for word in local.words] == [1, 1, 1]
+    assert local.word_animation_safe
+
+
+@pytest.mark.parametrize("source_parent, expected", [(0, 0), (1, 1), (None, 1)])
+def test_point_word_at_shared_boundary_preserves_observed_segment_parent(
+    source_parent: int | None, expected: int
+) -> None:
+    transcript = Transcript(
+        None,
+        "pt",
+        3.0,
+        "Antes né depois.",
+        (
+            TranscriptSegment("Antes né", 0.0, 1.0),
+            TranscriptSegment("depois.", 1.0, 3.0),
+        ),
+        (
+            Word("Antes", 0.2, 0.8, source_segment_index=0),
+            Word("né", 1.0, 1.0, source_segment_index=source_parent),
+            Word("depois.", 1.0, 2.0, source_segment_index=1),
+        ),
+        "multisubs",
+        "4.4.0",
+    )
+    local = clip_transcript(transcript, 0.0, 3.0)
+    assert local.words[1].source_segment_index == expected
+    assert local.words[1].start == local.words[1].end == 1.0
+
+
+def test_point_word_at_last_segment_end_keeps_legacy_parent() -> None:
+    transcript = Transcript(
+        None,
+        "pt",
+        3.0,
+        "Agora sim.",
+        (TranscriptSegment("Agora sim.", 0.0, 2.0),),
+        (Word("Agora", 0.2, 1.0), Word("sim.", 2.0, 2.0)),
+        "multisubs",
+        "4.4.0",
+    )
+    local = clip_transcript(transcript, 0.0, 3.0)
+    assert local.words[1].source_segment_index == 0
+    assert local.word_animation_safe
+
+
+def test_trailing_point_belongs_to_the_clip_ending_at_its_observed_segment() -> None:
+    transcript = Transcript(
+        None,
+        "pt",
+        3.0,
+        "Antes né depois.",
+        (
+            TranscriptSegment("Antes né", 0.0, 1.0),
+            TranscriptSegment("depois.", 1.0, 3.0),
+        ),
+        (
+            Word("Antes", 0.2, 0.8, source_segment_index=0),
+            Word("né", 1.0, 1.0, source_segment_index=0),
+            Word("depois.", 1.0, 2.0, source_segment_index=1),
+        ),
+        "multisubs",
+        "4.4.0",
+    )
+    earlier = clip_transcript(transcript, 0.0, 1.0)
+    later = clip_transcript(transcript, 1.0, 3.0)
+    assert [word.text for word in earlier.words] == ["Antes", "né"]
+    assert earlier.words[-1].start == earlier.words[-1].end == earlier.duration
+    assert [word.text for word in later.words] == ["depois."]
+    assert earlier.word_animation_safe and later.word_animation_safe
 
 
 def test_subtitles_use_clip_local_timing_and_publish_complete_set(

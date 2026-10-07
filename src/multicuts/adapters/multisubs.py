@@ -1,8 +1,10 @@
 """Transcription and subtitles through supported multisubs boundaries."""
 
+import ctypes
 import importlib
 import importlib.metadata
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -20,6 +22,42 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _preload_cuda_libraries(backend: str) -> tuple[ctypes.CDLL, ...]:
+    """Make installed NVIDIA libraries visible to Faster-Whisper on Linux."""
+    if backend != "faster-whisper" or sys.platform != "linux":
+        return ()
+    handles: list[ctypes.CDLL] = []
+    # cuBLAS depends on cuBLASLt; load it before the ASR runtime requests cuBLAS.
+    for package, folder, library in (
+        ("nvidia-cublas-cu12", "cublas", "libcublasLt.so.12"),
+        ("nvidia-cublas-cu12", "cublas", "libcublas.so.12"),
+        ("nvidia-cudnn-cu12", "cudnn", "libcudnn.so.9"),
+    ):
+        try:
+            handles.append(ctypes.CDLL(library, mode=ctypes.RTLD_GLOBAL))
+            continue
+        except OSError:
+            pass
+        try:
+            distribution = importlib.metadata.distribution(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        path = Path(str(distribution.locate_file(f"nvidia/{folder}/lib/{library}")))
+        if not path.is_file():
+            continue
+        try:
+            handles.append(ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL))
+        except OSError:
+            logger.debug(
+                "Could not preload CUDA library %s; ASR will validate it", library
+            )
+        else:
+            logger.debug("Loaded CUDA library %s from the Python environment", library)
+    return tuple(handles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +121,49 @@ def _reject_json_constant(_value: str) -> NoReturn:
     raise ValueError("non-finite JSON number")
 
 
+def _transcription_failure_message(error: Exception) -> str:
+    """Identify known setup failures without publishing provider exception text."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    missing_dependency = False
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).lower()
+        if any(
+            marker in message
+            for marker in (
+                "not found",
+                "cannot be loaded",
+                "cannot open shared object",
+                "could not load",
+            )
+        ):
+            if "libcublas.so" in message or "cublas64_" in message:
+                return (
+                    "multisubs could not load NVIDIA cuBLAS (CUDA 12); install its "
+                    "compatible runtime libraries in the Python environment and "
+                    "check the NVIDIA driver; see README installation"
+                )
+            if "libcudnn" in message or "cudnn64_" in message:
+                return (
+                    "multisubs could not load NVIDIA cuDNN 9; install its runtime "
+                    "libraries in the Python environment and check their version "
+                    "and the NVIDIA driver; see README installation"
+                )
+        missing_dependency |= isinstance(current, ModuleNotFoundError)
+        current = current.__cause__ or current.__context__
+    if missing_dependency:
+        return (
+            "multisubs could not import the selected ASR runtime dependencies; "
+            "install its matching optional extra from the pinned multisubs wheel; "
+            "see README installation"
+        )
+    return (
+        "multisubs could not transcribe the source; check its audio, language, "
+        "ASR backend dependencies, and model compatibility"
+    )
+
+
 def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
     try:
         with artifact.json_path.open(encoding="utf-8") as artifact_file:
@@ -143,6 +224,7 @@ def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
                         word_start,
                         word_end,
                         confidence,
+                        source_segment_index=index,
                     )
                 )
             except ValueError as exc:
@@ -203,6 +285,46 @@ def _source_text_for_words(segment_text: str, words: list[ClipTranscriptWord]) -
     return " ".join(tokens)
 
 
+def _subtitle_word_groups(
+    words: list[ClipTranscriptWord], text: str, cue_start: float, cue_end: float
+) -> list[dict[str, object]]:
+    """Group observed point words because the public cue API requires duration.
+
+    Original word timestamps stay in the transcript. Each rendering group uses
+    its observed outer word bounds, or the observed segment bounds when every
+    word is a point; no individual word receives fabricated timing.
+    """
+    groups: list[tuple[int, int]] = []
+    pending_start = 0
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for index, word in enumerate(words):
+        token = word.text.strip()
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        spans.append((cursor, cursor + len(token)))
+        cursor += len(token)
+        if word.start is None or word.end is None:
+            raise RenderingError("Clip subtitle word timing is incomplete")
+        if word.end > word.start:
+            groups.append((pending_start, index + 1))
+            pending_start = index + 1
+        elif groups:
+            first, _ = groups[-1]
+            groups[-1] = (first, index + 1)
+            pending_start = index + 1
+    if not groups:
+        return [{"start": cue_start, "end": cue_end, "text": text}]
+    return [
+        {
+            "start": words[first].start,
+            "end": words[stop - 1].end,
+            "text": text[spans[first][0] : spans[stop - 1][1]],
+        }
+        for first, stop in groups
+    ]
+
+
 def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
     if not clip.word_animation_safe:
         raise RenderingError(
@@ -241,15 +363,15 @@ def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
         last_end = words[-1].end
         if first_start is None or last_end is None:
             raise RenderingError("Clip subtitle word timing is incomplete")
+        cue_start = min(segment.start, first_start)
+        cue_end = max(segment.end, last_end)
+        text = _source_text_for_words(segment.text, words)
         cues.append(
             {
-                "start": min(segment.start, first_start),
-                "end": max(segment.end, last_end),
-                "text": _source_text_for_words(segment.text, words),
-                "words": [
-                    {"start": word.start, "end": word.end, "text": word.text.strip()}
-                    for word in words
-                ],
+                "start": cue_start,
+                "end": cue_end,
+                "text": text,
+                "words": _subtitle_word_groups(words, text, cue_start, cue_end),
             }
         )
     if not cues or len(assigned) != len(clip.words):
@@ -443,6 +565,8 @@ class MultisubsAdapter:
 
         model_options = {} if model == "default" else {"model_name": model}
         try:
+            # Retain native handles for the lifetime of the public ASR call.
+            _cuda_handles = _preload_cuda_libraries(backend)
             generated = generate(
                 video_path,
                 actual_output_dir,
@@ -452,10 +576,7 @@ class MultisubsAdapter:
                 **model_options,
             )
         except Exception as exc:
-            raise TranscriptionError(
-                "multisubs could not transcribe the source; check its audio, "
-                "language, ASR backend dependencies, and model compatibility"
-            ) from exc
+            raise TranscriptionError(_transcription_failure_message(exc)) from exc
 
         if (
             not isinstance(generated, tuple)
