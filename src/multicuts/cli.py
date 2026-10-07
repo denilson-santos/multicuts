@@ -178,7 +178,10 @@ def _float(option: float | None, name: str, default: float) -> float:
 
 
 def _boolean(option: bool | None, name: str, default: bool) -> bool:
-    raw = _value(option, name, default)
+    return _parse_boolean(_value(option, name, default), name)
+
+
+def _parse_boolean(raw: object, name: str) -> bool:
     if type(raw) is bool:
         return raw
     if isinstance(raw, str):
@@ -187,6 +190,17 @@ def _boolean(option: bool | None, name: str, default: bool) -> bool:
         if raw.casefold() in ("false", "no", "0", "off"):
             return False
     raise ConfigurationError(f"{name} must be a boolean")
+
+
+def _subtitle_override(
+    option: bool | None, general_option: bool | None, name: str
+) -> bool | None:
+    if option is not None:
+        return option
+    if general_option is not None:
+        return None
+    raw = setting(name)
+    return None if raw is None else _parse_boolean(raw, name)
 
 
 app = typer.Typer(
@@ -259,16 +273,42 @@ def run_command(
     ] = None,
     short_aspect_ratio: Annotated[
         str | None,
-        typer.Option("--short-aspect-ratio", help="original, 9:16, or 16:9."),
+        typer.Option(
+            "--short-aspect-ratio",
+            help=(
+                "Primary short version: original, 9:16, 16:9, or 1:1. "
+                "Square outputs have no variants."
+            ),
+        ),
     ] = None,
     long_aspect_ratio: Annotated[
-        str | None, typer.Option("--long-aspect-ratio", help="original, 9:16, or 16:9.")
+        str | None,
+        typer.Option(
+            "--long-aspect-ratio",
+            help=(
+                "Primary long version: original, 9:16, 16:9, or 1:1. "
+                "Square outputs have no variants."
+            ),
+        ),
     ] = None,
     vertical_width: Annotated[int | None, typer.Option("--vertical-width")] = None,
     vertical_height: Annotated[int | None, typer.Option("--vertical-height")] = None,
     horizontal_width: Annotated[int | None, typer.Option("--horizontal-width")] = None,
     horizontal_height: Annotated[
         int | None, typer.Option("--horizontal-height")
+    ] = None,
+    square_size: Annotated[
+        int | None, typer.Option("--square-size", help="Square output side in pixels.")
+    ] = None,
+    variants: Annotated[
+        bool | None,
+        typer.Option(
+            "--variants/--no-variants",
+            help=(
+                "Render additional social formats; "
+                "--no-variants keeps only the primary version."
+            ),
+        ),
     ] = None,
     subtitle_template: Annotated[
         str | None, typer.Option("--subtitle-template")
@@ -277,7 +317,24 @@ def run_command(
         Path | None, typer.Option("--subtitle-template-dir")
     ] = None,
     subtitles: Annotated[
-        bool | None, typer.Option("--subtitles/--no-subtitles")
+        bool | None,
+        typer.Option(
+            "--subtitles/--no-subtitles", help="Default subtitles for both classes."
+        ),
+    ] = None,
+    short_subtitles: Annotated[
+        bool | None,
+        typer.Option(
+            "--short-subtitles/--no-short-subtitles",
+            help="Override subtitles for all short versions.",
+        ),
+    ] = None,
+    long_subtitles: Annotated[
+        bool | None,
+        typer.Option(
+            "--long-subtitles/--no-long-subtitles",
+            help="Override subtitles for all long versions.",
+        ),
     ] = None,
     block_chars: Annotated[int | None, typer.Option("--block-chars")] = None,
     block_overlap_chars: Annotated[
@@ -325,7 +382,15 @@ def run_command(
         vertical_height=_integer(vertical_height, "VERTICAL_HEIGHT", 1920),
         horizontal_width=_integer(horizontal_width, "HORIZONTAL_WIDTH", 1920),
         horizontal_height=_integer(horizontal_height, "HORIZONTAL_HEIGHT", 1080),
-        subtitles_enabled=_boolean(subtitles, "SUBTITLES_ENABLED", True),
+        square_size=_integer(square_size, "SQUARE_SIZE", 1080),
+        render_variants=_boolean(variants, "RENDER_VARIANTS", True),
+        subtitles_enabled=True if subtitles is None else subtitles,
+        short_subtitles_enabled=_subtitle_override(
+            short_subtitles, subtitles, "SHORT_SUBTITLES_ENABLED"
+        ),
+        long_subtitles_enabled=_subtitle_override(
+            long_subtitles, subtitles, "LONG_SUBTITLES_ENABLED"
+        ),
         subtitle_template=str(
             _value(subtitle_template, "SUBTITLE_TEMPLATE", "yellow-pop")
         ),

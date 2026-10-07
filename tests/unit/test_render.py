@@ -6,6 +6,136 @@ from multicuts.models import ClipTranscript, Transcript, TranscriptSegment, Word
 from multicuts.render import clip_transcript
 
 
+@pytest.mark.parametrize(
+    "failure", ["geometry", "duration", "audio", "ffmpeg", "exists"]
+)
+def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
+    failure, tmp_path, monkeypatch
+) -> None:
+    import subprocess
+    from dataclasses import replace
+    from pathlib import Path
+
+    from multicuts.app_config import AppConfig
+    from multicuts.errors import RenderingError
+    from multicuts.models import MediaInfo
+    from multicuts.render import render_short_horizontal
+
+    vertical_media = MediaInfo(5.0, 180, 320, 180, 320, 0, 1)
+    horizontal_media = MediaInfo(5.0, 640, 360, 640, 360, 0, 1)
+    raw, foreground = tmp_path / "raw.mp4", tmp_path / "foreground.mp4"
+    raw.write_bytes(b"raw")
+    foreground.write_bytes(b"subtitled")
+    output = tmp_path / "clips" / "horizontal.mp4"
+    work = tmp_path / "work"
+    config = AppConfig(
+        "source.mp4",
+        tmp_path,
+        "codex",
+        "test",
+        horizontal_width=640,
+        horizontal_height=360,
+    )
+    if failure == "geometry":
+        horizontal_media = replace(horizontal_media, presentation_width=638)
+    elif failure == "duration":
+        horizontal_media = replace(horizontal_media, duration=6.0)
+    elif failure == "audio":
+        horizontal_media = replace(horizontal_media, audio_stream_index=None)
+    elif failure == "exists":
+        output.parent.mkdir()
+        output.write_bytes(b"completed")
+
+    def run(command, **kwargs):
+        temporary = Path(command[-1])
+        temporary.write_bytes(b"encoded")
+        return subprocess.CompletedProcess(command, 1 if failure == "ffmpeg" else 0)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr(
+        "multicuts.render.inspect_media_path",
+        lambda path: vertical_media if path == foreground else horizontal_media,
+    )
+    with pytest.raises(RenderingError):
+        render_short_horizontal(
+            raw, foreground, vertical_media, config, output=output, work=work
+        )
+    if failure == "exists":
+        assert output.read_bytes() == b"completed"
+    else:
+        assert not output.exists()
+    assert not list(work.glob("*.mp4"))
+    assert raw.read_bytes() == b"raw" and foreground.read_bytes() == b"subtitled"
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+def test_disabled_class_subtitles_skip_provider_and_word_timing_requirements(
+    clip_class: str, tmp_path, monkeypatch
+) -> None:
+    from multicuts.app_config import AppConfig
+    from multicuts.clips import JudgedClip, Proposal
+    from multicuts.models import MediaInfo
+    from multicuts.render import render_final
+
+    duration = 5.0 if clip_class == "short" else 181.0
+    width, height = (360, 640) if clip_class == "short" else (640, 360)
+    media = MediaInfo(duration, width, height, width, height, 0, 1)
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    transcript = Transcript(
+        None,
+        "en",
+        duration,
+        "Hello world.",
+        (TranscriptSegment("Hello world.", 0.0, duration),),
+        (),
+        "multisubs",
+        "4.3.0",
+    )
+    clip = JudgedClip(
+        Proposal(
+            "id",
+            clip_class,
+            "u0",
+            "u0",
+            0.0,
+            duration,
+            "Hello world.",
+            "Title",
+            "Reason",
+        ),
+        {},
+        80.0,
+        True,
+        "Good",
+        "u0",
+        "u0",
+    )
+    config = AppConfig(
+        "source.mp4",
+        tmp_path,
+        "codex",
+        "test",
+        short_subtitles_enabled=clip_class != "short",
+        long_subtitles_enabled=clip_class != "long",
+    )
+    monkeypatch.setattr(
+        "multicuts.render.MultisubsAdapter",
+        lambda: pytest.fail("Disabled subtitles must not initialize the provider"),
+    )
+    final, sidecars, template = render_final(
+        raw,
+        media,
+        transcript,
+        clip,
+        config,
+        output=tmp_path / "clips" / "final.mp4",
+        work=tmp_path / "work",
+    )
+    assert final.read_bytes() == b"raw"
+    assert sidecars == () and template is None
+
+
 def test_clip_timeline_uses_observed_word_times_without_retranscription() -> None:
     transcript = Transcript(
         language_requested=None,
@@ -136,8 +266,9 @@ def test_trailing_point_belongs_to_the_clip_ending_at_its_observed_segment() -> 
     assert earlier.word_animation_safe and later.word_animation_safe
 
 
+@pytest.mark.parametrize("general_subtitles", [False, True])
 def test_subtitles_use_clip_local_timing_and_publish_complete_set(
-    tmp_path, monkeypatch
+    general_subtitles: bool, tmp_path, monkeypatch
 ) -> None:
     from pathlib import Path
 
@@ -170,7 +301,14 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
         "u0",
         "u0",
     )
-    config = AppConfig("source.mp4", tmp_path, "codex", "test-model")
+    config = AppConfig(
+        "source.mp4",
+        tmp_path,
+        "codex",
+        "test-model",
+        subtitles_enabled=general_subtitles,
+        short_subtitles_enabled=True if not general_subtitles else None,
+    )
 
     class FakeProvider:
         def version(self) -> str:

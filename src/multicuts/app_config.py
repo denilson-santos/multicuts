@@ -46,6 +46,10 @@ class AppConfig:
     llm_effort: str | None = None
     editorial_context: str | None = None
     asr_backend: str = "whisperx"
+    render_variants: bool = True
+    square_size: int = 1080
+    short_subtitles_enabled: bool | None = None
+    long_subtitles_enabled: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str) or not self.source.strip():
@@ -108,8 +112,8 @@ class AppConfig:
                 "Transcription model and subtitle template must not be empty"
             )
         for name in ("short_aspect_ratio", "long_aspect_ratio"):
-            if getattr(self, name) not in ("original", "9:16", "16:9"):
-                raise ConfigurationError(f"{name} must be original, 9:16, or 16:9")
+            if getattr(self, name) not in ("original", "9:16", "16:9", "1:1"):
+                raise ConfigurationError(f"{name} must be original, 9:16, 16:9, or 1:1")
         if (
             type(self.vertical_width) is not int
             or type(self.vertical_height) is not int
@@ -137,6 +141,12 @@ class AppConfig:
         if type(self.block_chars) is not int or self.block_chars < 1000:
             raise ConfigurationError("BLOCK_CHARS must be at least 1000")
         if (
+            type(self.square_size) is not int
+            or self.square_size <= 0
+            or self.square_size % 2
+        ):
+            raise ConfigurationError("Square size must be a positive, even integer")
+        if (
             type(self.block_overlap_chars) is not int
             or not 0 <= self.block_overlap_chars < self.block_chars
         ):
@@ -153,6 +163,22 @@ class AppConfig:
             "keep_intermediates",
             "force_recompute",
             "verbose",
+            "render_variants",
         ):
             if type(getattr(self, name)) is not bool:
                 raise ConfigurationError(f"{name} must be boolean")
+        for name in ("short_subtitles_enabled", "long_subtitles_enabled"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not bool:
+                raise ConfigurationError(f"{name} must be boolean or unset")
+
+    def subtitles_for(self, clip_class: str) -> bool:
+        """Use a class override when set, otherwise inherit the general setting."""
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Subtitle class must be short or long")
+        override = (
+            self.short_subtitles_enabled
+            if clip_class == "short"
+            else self.long_subtitles_enabled
+        )
+        return self.subtitles_enabled if override is None else override

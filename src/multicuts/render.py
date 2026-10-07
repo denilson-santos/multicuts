@@ -82,6 +82,8 @@ def _geometry(
         return ratio, config.vertical_width, config.vertical_height
     if ratio == "16:9":
         return ratio, config.horizontal_width, config.horizontal_height
+    if ratio == "1:1":
+        return ratio, config.square_size, config.square_size
     return ratio, _even(media.presentation_width), _even(media.presentation_height)
 
 
@@ -92,52 +94,34 @@ def _inspect(path: Path) -> MediaInfo:
         raise RenderingError("Could not validate rendered clip") from exc
 
 
-def render_raw(
-    source: AcquiredSource,
-    media: MediaInfo,
-    clip: JudgedClip,
+def _encode_and_publish(
+    command: list[str],
     config: AppConfig,
     *,
+    media: MediaInfo,
+    duration: float,
+    width: int,
+    height: int,
     output: Path,
     work: Path,
-) -> tuple[Path, MediaInfo, str]:
-    """Encode into private space and publish only a validated MP4."""
-    proposal = clip.proposal
-    ratio, width, height = _geometry(config, proposal.clip_class, media)
-    temporary = work / f"raw-{proposal.id}.mp4"
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nostdin",
-        "-autorotate",
-        "1",
-        "-i",
-        str(source.local_path),
-        "-ss",
-        f"{proposal.start:.6f}",
-        "-t",
-        f"{proposal.end - proposal.start:.6f}",
-        "-map",
-        f"0:{media.video_stream_index}",
-        "-vf",
-        _crop_filter(media, ratio, width, height),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "18",
-        "-pix_fmt",
-        "yuv420p",
-    ]
+) -> tuple[Path, MediaInfo]:
+    temporary = work / f"encode-{output.stem}.mp4"
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+    )
     if media.audio_stream_index is None:
         command.append("-an")
     else:
-        command.extend(
-            ["-map", f"0:{media.audio_stream_index}", "-c:a", "aac", "-b:a", "128k"]
-        )
+        command.extend(["-c:a", "aac", "-b:a", "128k"])
     command.extend(
         [
             "-map_metadata",
@@ -161,20 +145,113 @@ def render_raw(
         if (
             (actual.presentation_width, actual.presentation_height) != (width, height)
             or actual.has_audio != media.has_audio
-            or not isclose(
-                actual.duration, proposal.end - proposal.start, rel_tol=0, abs_tol=0.25
-            )
+            or not isclose(actual.duration, duration, rel_tol=0, abs_tol=0.25)
         ):
             raise RenderingError(
                 "Rendered clip geometry, audio, or duration differs from request"
             )
         publish_without_overwrite(temporary, output)
-        return output, actual, ratio
+        return output, actual
     except OSError as exc:
         raise RenderingError("Could not render or publish clip") from exc
     finally:
         if not config.keep_intermediates:
             temporary.unlink(missing_ok=True)
+
+
+def render_raw(
+    source: AcquiredSource,
+    media: MediaInfo,
+    clip: JudgedClip,
+    config: AppConfig,
+    *,
+    output: Path,
+    work: Path,
+) -> tuple[Path, MediaInfo, str]:
+    """Encode into private space and publish only a validated MP4."""
+    proposal = clip.proposal
+    ratio, width, height = _geometry(config, proposal.clip_class, media)
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-autorotate",
+        "1",
+        "-i",
+        str(source.local_path),
+        "-ss",
+        f"{proposal.start:.6f}",
+        "-t",
+        f"{proposal.end - proposal.start:.6f}",
+        "-map",
+        f"0:{media.video_stream_index}",
+        "-vf",
+        _crop_filter(media, ratio, width, height),
+    ]
+    if media.audio_stream_index is not None:
+        command.extend(["-map", f"0:{media.audio_stream_index}"])
+    path, actual = _encode_and_publish(
+        command,
+        config,
+        media=media,
+        duration=proposal.end - proposal.start,
+        width=width,
+        height=height,
+        output=output,
+        work=work,
+    )
+    return path, actual, ratio
+
+
+def render_short_horizontal(
+    raw_vertical: Path,
+    final_vertical: Path,
+    vertical_media: MediaInfo,
+    config: AppConfig,
+    *,
+    output: Path,
+    work: Path,
+) -> tuple[Path, MediaInfo]:
+    """Keep the complete subtitled short centered over its blurred video."""
+    foreground = _inspect(final_vertical)
+    width, height = config.horizontal_width, config.horizontal_height
+    filters = (
+        f"[0:{vertical_media.video_stream_index}]"
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
+        f"[1:{foreground.video_stream_index}]scale=-2:{height}:flags=lanczos,"
+        "setsar=1[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[video]"
+    )
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        str(raw_vertical),
+        "-i",
+        str(final_vertical),
+        "-filter_complex",
+        filters,
+        "-map",
+        "[video]",
+    ]
+    if foreground.audio_stream_index is not None:
+        command.extend(["-map", f"1:{foreground.audio_stream_index}"])
+    return _encode_and_publish(
+        command,
+        config,
+        media=foreground,
+        duration=vertical_media.duration,
+        width=width,
+        height=height,
+        output=output,
+        work=work,
+    )
 
 
 def clip_transcript(transcript: Transcript, start: float, end: float) -> ClipTranscript:
@@ -288,6 +365,31 @@ def clip_transcript(transcript: Transcript, start: float, end: float) -> ClipTra
     )
 
 
+def publish_subtitle_sidecars(
+    paths: tuple[Path, ...], output: Path
+) -> tuple[Path, ...]:
+    """Publish captions beside a video, including a privately prepared foreground."""
+    published: list[Path] = []
+    try:
+        for path in paths:
+            target = output.parent / "subtitles" / f"{output.stem}{path.suffix}"
+            if path.suffix == ".json":
+                target = output.parent / "subtitles" / f"{output.stem}.cues.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            publish_without_overwrite(path, target)
+            published.append(target)
+    except BaseException as exc:
+        for path in reversed(published):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if isinstance(exc, OSError):
+            raise RenderingError("Could not publish subtitle sidecars") from exc
+        raise
+    return tuple(published)
+
+
 def render_final(
     raw_path: Path,
     raw_media: MediaInfo,
@@ -304,7 +406,7 @@ def render_final(
         output.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise RenderingError("Could not prepare final clip directory") from exc
-    if not config.subtitles_enabled:
+    if not config.subtitles_for(clip.proposal.clip_class):
         publish_without_overwrite(raw_path, output)
         return output, (), None
     provider = subtitle_provider or MultisubsAdapter()
@@ -333,15 +435,10 @@ def render_final(
         )
     ):
         raise RenderingError("Subtitled clip does not match validated raw clip")
-    sidecars: list[Path] = []
+    sidecars = publish_subtitle_sidecars(
+        (artifacts.cues_json_path, artifacts.srt_path, artifacts.ass_path), output
+    )
     try:
-        for path in (artifacts.cues_json_path, artifacts.srt_path, artifacts.ass_path):
-            target = output.parent / "subtitles" / f"{output.stem}{path.suffix}"
-            if path.suffix == ".json":
-                target = output.parent / "subtitles" / f"{output.stem}.cues.json"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            publish_without_overwrite(path, target)
-            sidecars.append(target)
         publish_without_overwrite(artifacts.video_path, output)
     except BaseException as exc:
         for path in reversed(sidecars):
@@ -352,4 +449,4 @@ def render_final(
         if isinstance(exc, OSError):
             raise RenderingError("Could not publish subtitle sidecars") from exc
         raise
-    return output, tuple(sidecars), artifacts.template_resolved
+    return output, sidecars, artifacts.template_resolved
