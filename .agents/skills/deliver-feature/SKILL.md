@@ -158,13 +158,18 @@ Request approval again if the content, commit plan, remote, base branch, or pull
 
 ## Clean up after merge
 
-When the user reports that a pull request was merged, first confirm through GitHub that its state is `MERGED`, record its exact head and base branches, and check that the working tree is clean. If any check fails, stop and explain the problem. Ask the user to confirm cleanup of that specific head branch. The merge report alone is not approval to clean up.
+When the user reports that a pull request was merged, first confirm through GitHub that its state is `MERGED`, record its exact head branch and commit, base branch, and repository default branch, and check that the working tree is clean. If any check fails, stop and explain the problem.
+
+Before asking for cleanup, refresh the remote-tracking refs and inspect all local branches, their pull request status, and `git worktree list`. Include other obsolete local branches when their tips are ancestors of the remote base (`git merge-base --is-ancestor <branch> <remote>/<base>`). A local-only branch without a pull request can qualify: a previous push is unnecessary when all its commits are already on the base. Exclude the base and default branches, branches checked out in another worktree, and branches with open or closed-unmerged pull requests. Retain and report branches whose eligibility cannot be confirmed.
+
+Present the exact cleanup list, including the merged pull request's head and any qualifying additional local branches, record their current tips, and ask for one explicit confirmation covering that list. Explain any retained branches. The merge report alone is not approval to clean up.
 
 After explicit confirmation:
 
 1. Recheck that the working tree is clean. Stop if it changed; do not stash or discard changes to perform cleanup.
 2. Switch to the base branch, fetch the remote with pruning, and update the local base by fast-forward only.
-3. Delete the local head branch with `git branch -d`. Never use force deletion.
-4. Verify that the repository's automatic branch deletion removed the remote head branch. If it remains, report it instead of deleting it without additional authorization.
+3. Recheck the recorded tips and cleanup eligibility. Delete only the approved local branches with `git branch -d`. Retain and report any branch that changed, no longer qualifies, or cannot be deleted safely. Never use force deletion.
+4. Verify that the repository's automatic branch deletion removed the remote pull request head branch. If it remains, report it instead of deleting it without additional authorization.
+5. Confirm the final working-tree state and report any remaining local branches and why they were retained.
 
-Do not delete an open, closed-unmerged, unidentified, or unpushed branch. Cleanup confirmation does not authorize deleting any branch other than the verified head branch of that pull request.
+Do not delete branches with unmerged work or unverified status. Cleanup confirmation authorizes only the exact local branches listed, not other branches or remote deletion.
