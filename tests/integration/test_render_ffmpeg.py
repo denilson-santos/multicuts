@@ -150,6 +150,8 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         media = inspect_media_path(video)
         assert not media.has_audio
         assert media.duration == pytest.approx(2.0, abs=0.25)
+        # Allow encoder delay, but reject losing a complete source frame.
+        assert media.duration >= 2.0 - 0.5 / 25
         frame = subprocess.run(
             [
                 "ffmpeg",
