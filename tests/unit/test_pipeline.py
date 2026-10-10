@@ -552,6 +552,174 @@ def test_class_subtitle_controls_apply_to_every_version(
                 assert metadata["render"]["subtitle_source_video"] is None
 
 
+@pytest.mark.parametrize("enabled", ["short", "long"])
+def test_disabled_clip_class_is_not_reviewed_or_published(
+    enabled: str, tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        subtitles_enabled=False,
+        short_clips_enabled=enabled == "short",
+        long_clips_enabled=enabled == "long",
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(tmp_path, asr, ai, config=config)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert asr.calls == 1 and ai.calls == 2
+    assert manifest["analysis"]["proposed"] == manifest["analysis"]["selected"] == 1
+    assert {clip["class"] for clip in manifest["clips"]} == {enabled}
+    assert len(result.clip_paths) == 1
+    assert len(list((result.manifest_path.parent / "clips").glob("*.mp4"))) == 3
+
+
+@pytest.mark.parametrize("short_variants", [False, True])
+@pytest.mark.parametrize("long_variants", [False, True])
+def test_each_class_controls_its_variants(
+    short_variants: bool, long_variants: bool, tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        subtitles_enabled=False,
+        render_variants=False,
+        short_variants_enabled=short_variants,
+        long_variants_enabled=long_variants,
+    )
+    result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    manifest = json.loads(result.manifest_path.read_text())
+    counts = {clip["class"]: len(clip["variants"]) for clip in manifest["clips"]}
+    assert counts == {
+        "short": 3 if short_variants else 1,
+        "long": 3 if long_variants else 1,
+    }
+
+
+@pytest.mark.parametrize("primary_ratio", ["9:16", "16:9", "original"])
+@pytest.mark.parametrize("primary_subtitles", [False, True])
+@pytest.mark.parametrize("variant_subtitles", [None, False, True])
+def test_primary_and_variant_subtitles_are_independent_and_persisted(
+    primary_ratio: str,
+    primary_subtitles: bool,
+    variant_subtitles: bool | None,
+    tmp_path: Path,
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        short_aspect_ratio=primary_ratio,
+        long_aspect_ratio=primary_ratio,
+        short_subtitles_enabled=primary_subtitles,
+        long_subtitles_enabled=primary_subtitles,
+        short_variant_subtitles_enabled=variant_subtitles,
+        long_variant_subtitles_enabled=variant_subtitles,
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == 1 and ai.calls == 3
+    root = result.manifest_path.parent
+    assert not (root / ".work").exists()
+    manifest = json.loads(result.manifest_path.read_text())
+    for clip in manifest["clips"]:
+        for version in clip["variants"]:
+            metadata = json.loads((root / version["metadata"]).read_text())
+            is_variant = version["aspect_ratio"] != primary_ratio
+            expected = (
+                variant_subtitles
+                if is_variant and variant_subtitles is not None
+                else primary_subtitles
+            )
+            assert metadata["render"]["is_variant"] is is_variant
+            assert metadata["render"]["subtitles_enabled"] is expected
+            assert (root / version["video"]).read_bytes() == (
+                b"subtitled" if expected else b"raw"
+            )
+            assert len(metadata["subtitle_files"]) == (3 if expected else 0)
+            assert all((root / path).is_file() for path in metadata["subtitle_files"])
+            if not expected:
+                assert metadata["render"]["subtitle_provider"] is None
+                assert metadata["render"]["subtitle_template"] is None
+                assert metadata["render"]["subtitle_source_video"] is None
+            if (
+                clip["class"] == "short"
+                and version["aspect_ratio"] == "16:9"
+                and variant_subtitles is not None
+                and primary_subtitles != variant_subtitles
+                and primary_ratio in ("9:16", "16:9")
+            ):
+                assert metadata["render"]["subtitle_source_video"] is None
+
+
+@pytest.mark.parametrize("primary_subtitles", [False, True])
+@pytest.mark.parametrize("unused_variant_subtitles", [False, True])
+def test_horizontal_only_short_foreground_uses_primary_subtitles(
+    primary_subtitles: bool, unused_variant_subtitles: bool, tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        short_clips_enabled=True,
+        long_clips_enabled=False,
+        short_aspect_ratio="16:9",
+        short_variants_enabled=False,
+        short_subtitles_enabled=primary_subtitles,
+        short_variant_subtitles_enabled=unused_variant_subtitles,
+    )
+    result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    (video,) = result.clip_paths
+    metadata = json.loads(video.with_suffix(".json").read_text())
+    assert metadata["render"]["is_variant"] is False
+    assert metadata["render"]["subtitles_enabled"] is primary_subtitles
+    assert video.read_bytes() == (b"subtitled" if primary_subtitles else b"raw")
+    assert len(list(video.parent.glob("*.mp4"))) == 1
+    assert all(
+        (result.manifest_path.parent / path).is_file()
+        for path in metadata["subtitle_files"]
+    )
+
+
+def test_reenabling_class_reuses_proposals_and_transcription(tmp_path: Path) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        long_clips_enabled=False,
+        subtitles_enabled=False,
+    )
+    _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    asr, ai = FakeTranscriber(), FakeBackend()
+    second = _run(
+        tmp_path,
+        asr,
+        ai,
+        config=replace(
+            config,
+            long_clips_enabled=True,
+            short_variant_subtitles_enabled=True,
+            long_variants_enabled=False,
+        ),
+    )
+    assert asr.calls == 0 and ai.calls == 1
+    assert len(second.clip_paths) == 2
+    asr, ai = FakeTranscriber(), FakeBackend()
+    _run(
+        tmp_path,
+        asr,
+        ai,
+        config=replace(config, short_clips_enabled=False, long_clips_enabled=True),
+    )
+    assert asr.calls == ai.calls == 0
+
+
 def test_changing_class_subtitles_reuses_transcription_and_ai(tmp_path: Path) -> None:
     config = AppConfig(
         "source.mp4", tmp_path / "out", "codex", "test-model", subtitles_enabled=False

@@ -242,7 +242,9 @@ This example uses Portuguese audio. Set `--lang` to your source language when kn
 
 Horizontal shorts show the complete vertical short in the center, with an enlarged, blurred copy of its video filling the background. Neither layer is mirrored. Subtitles stay inside the central short; the background has no captions. Long clips and 1:1 versions use a centered crop, with subtitle layout generated for that version's geometry.
 
-Use `--no-variants` (or `RENDER_VARIANTS=false`) to publish only the primary version of each cut. A primary `1:1` output, or `original` when the source geometry is square, always produces one version. A square source still gets all three social formats when the primary output is 9:16 or 16:9. Nonsquare original primary output produces four versions when variants are enabled. Square outputs default to 1080×1080; set `--square-size` or `SQUARE_SIZE` to change both sides together.
+Use `--no-variants` (or `RENDER_VARIANTS=false`) to publish only the primary version of each cut. Override this independently with `--short-variants` / `--no-short-variants` and `--long-variants` / `--no-long-variants`, or `SHORT_VARIANTS_ENABLED` and `LONG_VARIANTS_ENABLED`. Unset class settings inherit the shared switch. A primary `1:1` output, or `original` when the source geometry is square, always produces one version. A square source still gets all three social formats when the primary output is 9:16 or 16:9. Nonsquare original primary output produces four versions when variants are enabled. Square outputs default to 1080×1080; set `--square-size` or `SQUARE_SIZE` to change both sides together.
+
+Both clip classes are enabled by default. `--short-clips` / `--no-short-clips` and `--long-clips` / `--no-long-clips`, or `SHORT_CLIPS_ENABLED` and `LONG_CLIPS_ENABLED`, choose which classes to review and publish. Disabling a class also disables its variants, even if its variant switch is enabled. At least one class must remain enabled. Shared proposal discovery still covers both classes and reuses its cache; disabled classes skip editorial judgment, selection, and rendering.
 
 Long clips preferably span 3–15 minutes, with no hard duration ceiling. The number of clips follows the content and editorial decisions, with redundant overlaps suppressed.
 
@@ -271,7 +273,16 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
   --short-subtitles --no-long-subtitles
 ```
 
-Subtitle settings apply to every version of the chosen class and default to enabled. Use `--short-subtitles` / `--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles` / `--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, for separate control. The shared `SUBTITLES_ENABLED` environment setting has been removed. CLI settings override process environment, which overrides `.env`; `--subtitles` / `--no-subtitles` are shortcuts for both classes, with class-specific CLI flags taking precedence. For example, `--no-subtitles --short-subtitles` enables subtitles only for shorts even if environment settings enable long subtitles.
+Primary subtitles default to enabled. Use `--short-subtitles` / `--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles` / `--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, for separate control. Variants inherit their class setting unless overridden with `--short-variant-subtitles` / `--no-short-variant-subtitles` or `SHORT_VARIANT_SUBTITLES_ENABLED`, and `--long-variant-subtitles` / `--no-long-variant-subtitles` or `LONG_VARIANT_SUBTITLES_ENABLED`. These variant settings apply only to additional formats, while the aspect-ratio options choose the primary version. A private foreground follows the subtitle decision of the horizontal output that consumes it.
+
+CLI settings override process environment, which overrides `.env`, then defaults. Within each source, the more specific setting wins: variant subtitles over class subtitles, or class variants over the shared variant switch. `--subtitles` / `--no-subtitles` remain CLI shortcuts for both classes and their variants. More specific CLI flags take precedence regardless of argument order. For example, `--no-subtitles --short-variant-subtitles` captions only short variants, while `--no-variants --long-variants` adds formats only for longs. The shared `SUBTITLES_ENABLED` environment setting remains removed.
+
+**Publish only the primary short cuts**
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts \
+  --no-long-clips --no-short-variants
+```
 
 **Override the AI configuration for one run**
 
@@ -296,11 +307,17 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
-| `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes; class-specific CLI flags take precedence. |
-| `--short-subtitles` / `--no-short-subtitles` | Override subtitles for all short versions; environment: `SHORT_SUBTITLES_ENABLED`. |
-| `--long-subtitles` / `--no-long-subtitles` | Override subtitles for all long versions; environment: `LONG_SUBTITLES_ENABLED`. |
+| `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |
+| `--short-subtitles` / `--no-short-subtitles` | Set primary short subtitles and the default for short variants; environment: `SHORT_SUBTITLES_ENABLED`. |
+| `--long-subtitles` / `--no-long-subtitles` | Set primary long subtitles and the default for long variants; environment: `LONG_SUBTITLES_ENABLED`. |
+| `--short-variant-subtitles` / `--no-short-variant-subtitles` | Override captions only for additional short formats; environment: `SHORT_VARIANT_SUBTITLES_ENABLED`. |
+| `--long-variant-subtitles` / `--no-long-variant-subtitles` | Override captions only for additional long formats; environment: `LONG_VARIANT_SUBTITLES_ENABLED`. |
 | `--short-aspect-ratio` / `--long-aspect-ratio` | Choose the primary version (`9:16`, `16:9`, `1:1`, or `original`) for each class. Square outputs have no variants. |
-| `--variants` / `--no-variants` | Enable additional social formats (default) or publish only the primary version; environment: `RENDER_VARIANTS`. |
+| `--variants` / `--no-variants` | Set the shared default for additional formats; environment: `RENDER_VARIANTS`. |
+| `--short-variants` / `--no-short-variants` | Override additional formats for shorts; environment: `SHORT_VARIANTS_ENABLED`. |
+| `--long-variants` / `--no-long-variants` | Override additional formats for longs; environment: `LONG_VARIANTS_ENABLED`. |
+| `--short-clips` / `--no-short-clips` | Enable or disable shorts and all their variants; environment: `SHORT_CLIPS_ENABLED`. |
+| `--long-clips` / `--no-long-clips` | Enable or disable longs and all their variants; environment: `LONG_CLIPS_ENABLED`. |
 | `--square-size` | Set the square output side in pixels (positive and even; default: `1080`); environment: `SQUARE_SIZE`. |
 | `--force-recompute` | Bypass cached transcription and AI analysis. |
 | `--keep-intermediates` | Retain intermediate files for inspection. |
@@ -308,7 +325,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls.
+Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ### Optional editorial context
 
@@ -345,7 +362,7 @@ cuts/
 ```
 
 - **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions have `-vertical`, `-horizontal`, or `-square` suffixes.
-- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. Horizontal short subtitle sidecars describe the vertical foreground. When its vertical version is also published, the horizontal version references those sidecars and records that video in `render.subtitle_source_video`; otherwise it has its own sidecars and the source-video field is null.
+- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. Horizontal short subtitle sidecars describe the vertical foreground. When its vertical version is published with matching enabled subtitles, the horizontal version references those sidecars and records that video in `render.subtitle_source_video`; otherwise it has its own sidecars and the source-video field is null. `render.is_variant` distinguishes additional formats from the primary output.
 - **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
 
 Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.

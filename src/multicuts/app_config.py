@@ -50,6 +50,12 @@ class AppConfig:
     square_size: int = 1080
     short_subtitles_enabled: bool | None = None
     long_subtitles_enabled: bool | None = None
+    short_clips_enabled: bool = True
+    long_clips_enabled: bool = True
+    short_variants_enabled: bool | None = None
+    long_variants_enabled: bool | None = None
+    short_variant_subtitles_enabled: bool | None = None
+    long_variant_subtitles_enabled: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str) or not self.source.strip():
@@ -164,16 +170,48 @@ class AppConfig:
             "force_recompute",
             "verbose",
             "render_variants",
+            "short_clips_enabled",
+            "long_clips_enabled",
         ):
             if type(getattr(self, name)) is not bool:
                 raise ConfigurationError(f"{name} must be boolean")
-        for name in ("short_subtitles_enabled", "long_subtitles_enabled"):
+        if not self.short_clips_enabled and not self.long_clips_enabled:
+            raise ConfigurationError("Enable at least one clip class: short or long")
+        for name in (
+            "short_subtitles_enabled",
+            "long_subtitles_enabled",
+            "short_variants_enabled",
+            "long_variants_enabled",
+            "short_variant_subtitles_enabled",
+            "long_variant_subtitles_enabled",
+        ):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
                 raise ConfigurationError(f"{name} must be boolean or unset")
 
-    def subtitles_for(self, clip_class: str) -> bool:
-        """Use a class override when set, otherwise inherit the general setting."""
+    def clips_for(self, clip_class: str) -> bool:
+        """Return whether a class and all its output versions are enabled."""
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Clip class must be short or long")
+        return (
+            self.short_clips_enabled
+            if clip_class == "short"
+            else self.long_clips_enabled
+        )
+
+    def variants_for(self, clip_class: str) -> bool:
+        """Inherit the shared variant switch unless the class overrides it."""
+        if not self.clips_for(clip_class):
+            return False
+        override = (
+            self.short_variants_enabled
+            if clip_class == "short"
+            else self.long_variants_enabled
+        )
+        return self.render_variants if override is None else override
+
+    def subtitles_for(self, clip_class: str, *, variant: bool = False) -> bool:
+        """Variants inherit their class subtitles unless explicitly overridden."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Subtitle class must be short or long")
         override = (
@@ -181,4 +219,13 @@ class AppConfig:
             if clip_class == "short"
             else self.long_subtitles_enabled
         )
-        return self.subtitles_enabled if override is None else override
+        enabled = self.subtitles_enabled if override is None else override
+        if variant:
+            variant_override = (
+                self.short_variant_subtitles_enabled
+                if clip_class == "short"
+                else self.long_variant_subtitles_enabled
+            )
+            if variant_override is not None:
+                return variant_override
+        return enabled

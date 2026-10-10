@@ -29,6 +29,175 @@ def _args() -> list[str]:
     ]
 
 
+@pytest.fixture(autouse=True)
+def _clear_new_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "SHORT_CLIPS_ENABLED",
+        "LONG_CLIPS_ENABLED",
+        "SHORT_VARIANTS_ENABLED",
+        "LONG_VARIANTS_ENABLED",
+        "SHORT_VARIANT_SUBTITLES_ENABLED",
+        "LONG_VARIANT_SUBTITLES_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_clip_class_switches_resolve_environment_and_cli(
+    clip_class: str, configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    name = f"{clip_class.upper()}_CLIPS_ENABLED"
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text(f"{name}=false\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv(name, "false")
+    disabled = parse_run_config(_args())
+    assert disabled.clips_for(clip_class) is False
+    assert disabled.variants_for(clip_class) is False
+    enabled = parse_run_config(_args() + [f"--{clip_class}-clips"])
+    assert enabled.clips_for(clip_class) is True
+    other = "long" if clip_class == "short" else "short"
+    assert enabled.clips_for(other) is True
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_class_variants_respect_shared_shortcut_and_specific_cli(
+    clip_class: str, configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RENDER_VARIANTS", raising=False)
+    name = f"{clip_class.upper()}_VARIANTS_ENABLED"
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text(f"{name}=false\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv(name, "false")
+    assert parse_run_config(_args()).variants_for(clip_class) is False
+    assert parse_run_config(_args() + ["--variants"]).variants_for(clip_class) is True
+    for flags in (
+        ["--no-variants", f"--{clip_class}-variants"],
+        [f"--{clip_class}-variants", "--no-variants"],
+    ):
+        config = parse_run_config(_args() + flags)
+        assert config.variants_for(clip_class) is True
+        assert (
+            config.variants_for("long" if clip_class == "short" else "short") is False
+        )
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_variant_subtitles_inherit_and_respect_cli_precedence(
+    clip_class: str, configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    parent = f"{clip_class.upper()}_SUBTITLES_ENABLED"
+    child = f"{clip_class.upper()}_VARIANT_SUBTITLES_ENABLED"
+    monkeypatch.delenv(parent, raising=False)
+    if configured_in == "dotenv":
+        (tmp_path / ".env").write_text(
+            f"{parent}=false\n{child}=true\n", encoding="utf-8"
+        )
+    else:
+        monkeypatch.setenv(parent, "false")
+        monkeypatch.setenv(child, "true")
+    config = parse_run_config(_args())
+    assert config.subtitles_for(clip_class) is False
+    assert config.subtitles_for(clip_class, variant=True) is True
+    for flag in ("--no-subtitles", f"--no-{clip_class}-subtitles"):
+        config = parse_run_config(_args() + [flag])
+        assert config.subtitles_for(clip_class, variant=True) is False
+    for flags in (
+        [f"--no-{clip_class}-subtitles", f"--{clip_class}-variant-subtitles"],
+        [f"--{clip_class}-variant-subtitles", f"--no-{clip_class}-subtitles"],
+    ):
+        config = parse_run_config(_args() + flags)
+        assert config.subtitles_for(clip_class) is False
+        assert config.subtitles_for(clip_class, variant=True) is True
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("family", ["variants", "subtitles"])
+def test_process_parent_switch_overrides_dotenv_child(
+    clip_class: str, family: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    parent = (
+        "RENDER_VARIANTS"
+        if family == "variants"
+        else f"{clip_class.upper()}_SUBTITLES_ENABLED"
+    )
+    child = (
+        f"{clip_class.upper()}_VARIANTS_ENABLED"
+        if family == "variants"
+        else f"{clip_class.upper()}_VARIANT_SUBTITLES_ENABLED"
+    )
+    (tmp_path / ".env").write_text(f"{child}=true\n", encoding="utf-8")
+    monkeypatch.setenv(parent, "false")
+    config = parse_run_config(_args())
+    effective = (
+        config.variants_for(clip_class)
+        if family == "variants"
+        else config.subtitles_for(clip_class, variant=True)
+    )
+    assert effective is False
+    monkeypatch.setenv(child, "true")
+    config = parse_run_config(_args())
+    effective = (
+        config.variants_for(clip_class)
+        if family == "variants"
+        else config.subtitles_for(clip_class, variant=True)
+    )
+    assert effective is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SHORT_CLIPS_ENABLED",
+        "LONG_CLIPS_ENABLED",
+        "SHORT_VARIANTS_ENABLED",
+        "LONG_VARIANTS_ENABLED",
+        "SHORT_VARIANT_SUBTITLES_ENABLED",
+        "LONG_VARIANT_SUBTITLES_ENABLED",
+    ],
+)
+def test_new_output_switches_reject_invalid_booleans(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(name, "sometimes")
+    with pytest.raises(ConfigurationError, match=f"{name} must be a boolean"):
+        parse_run_config(_args())
+    with pytest.raises(ConfigurationError, match=f"{name.lower()} must be boolean"):
+        replace(
+            AppConfig("source.mp4", tmp_path, "codex", "test"),
+            **{name.lower(): "false"},
+        )
+
+
+def test_disabling_both_clip_classes_fails_before_running_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert (
+        main(
+            _args() + ["--no-short-clips", "--no-long-clips"],
+            pipeline=lambda _: pytest.fail(
+                "Disabled classes must fail before pipeline work"
+            ),
+        )
+        == 2
+    )
+    monkeypatch.setenv("SHORT_CLIPS_ENABLED", "false")
+    monkeypatch.setenv("LONG_CLIPS_ENABLED", "false")
+    with pytest.raises(ConfigurationError, match="at least one clip class"):
+        parse_run_config(_args())
+    assert parse_run_config(_args() + ["--short-clips"]).clips_for("short") is True
+
+
 def test_cli_defaults_seek_both_classes_without_a_clip_quota(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -51,6 +220,10 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(
     assert config.long_aspect_ratio == "16:9"
     assert config.render_variants is True
     assert config.square_size == 1080
+    for clip_class in ("short", "long"):
+        assert config.clips_for(clip_class) is True
+        assert config.variants_for(clip_class) is True
+        assert config.subtitles_for(clip_class, variant=True) is True
     assert config.subtitles_for("short") is True
     assert config.subtitles_for("long") is True
     assert config.language is None

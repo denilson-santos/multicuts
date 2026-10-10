@@ -192,12 +192,21 @@ def _parse_boolean(raw: object, name: str) -> bool:
     raise ConfigurationError(f"{name} must be a boolean")
 
 
-def _subtitle_override(
-    option: bool | None, general_option: bool | None, name: str
+def _boolean_override(
+    option: bool | None,
+    name: str,
+    *,
+    parent_options: tuple[bool | None, ...] = (),
+    parent_env_names: tuple[str, ...] = (),
 ) -> bool | None:
     if option is not None:
         return option
-    if general_option is not None:
+    if any(parent is not None for parent in parent_options):
+        return None
+    # Source precedence also applies across inherited settings.
+    if name not in os.environ and any(
+        parent_name in os.environ for parent_name in parent_env_names
+    ):
         return None
     raw = setting(name)
     return None if raw is None else _parse_boolean(raw, name)
@@ -214,7 +223,12 @@ app = typer.Typer(
 )
 
 
-@app.command()
+@app.command(
+    epilog=(
+        "Examples: --no-long-clips --no-short-variants publishes primary shorts; "
+        "--no-subtitles --short-variant-subtitles captions only short variants."
+    )
+)
 def run_command(
     ctx: typer.Context,
     source: Annotated[
@@ -230,32 +244,49 @@ def run_command(
     llm_backend: Annotated[
         str | None,
         typer.Option(
-            "--llm-backend", help="openai, anthropic, gemini, codex, claude, or agy."
+            "--llm-backend",
+            help="openai, anthropic, gemini, codex, claude, or agy.",
+            rich_help_panel="Analysis",
         ),
     ] = None,
     llm_model: Annotated[
         str | None,
-        typer.Option("--llm-model", help="Model identifier for the selected backend."),
+        typer.Option(
+            "--llm-model",
+            help="Model identifier for the selected backend.",
+            rich_help_panel="Analysis",
+        ),
     ] = None,
     llm_effort: Annotated[
         str | None,
         typer.Option(
-            "--llm-effort", help="Reasoning level; auto uses provider default."
+            "--llm-effort",
+            help="Reasoning level; auto uses provider default.",
+            rich_help_panel="Analysis",
         ),
     ] = None,
     context: Annotated[
         str | None,
         typer.Option(
-            "--context", help="Describe the video's subject and scope to guide clips."
+            "--context",
+            help="Describe the video's subject and scope to guide clips.",
+            rich_help_panel="Analysis",
         ),
     ] = None,
     lang: Annotated[
-        str | None, typer.Option("--lang", help="Transcription language code or auto.")
+        str | None,
+        typer.Option(
+            "--lang",
+            help="Transcription language code or auto.",
+            rich_help_panel="Analysis",
+        ),
     ] = None,
     asr_model: Annotated[
         str | None,
         typer.Option(
-            "--asr-model", help="multisubs transcription model (default: turbo)."
+            "--asr-model",
+            help="multisubs transcription model (default: turbo).",
+            rich_help_panel="Analysis",
         ),
     ] = None,
     asr_backend: Annotated[
@@ -263,12 +294,31 @@ def run_command(
         typer.Option(
             "--asr-backend",
             help="whisperx, faster-whisper, parakeet, or qwen (default: whisperx).",
+            rich_help_panel="Analysis",
         ),
     ] = None,
     overlap_threshold: Annotated[
         float | None,
         typer.Option(
-            "--overlap-threshold", help="Same-class overlap suppression ratio."
+            "--overlap-threshold",
+            help="Same-class overlap suppression ratio.",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    short_clips: Annotated[
+        bool | None,
+        typer.Option(
+            "--short-clips/--no-short-clips",
+            help="Enable short cuts and their variants (default: on).",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    long_clips: Annotated[
+        bool | None,
+        typer.Option(
+            "--long-clips/--no-long-clips",
+            help="Enable long cuts and their variants (default: on).",
+            rich_help_panel="Clips",
         ),
     ] = None,
     short_aspect_ratio: Annotated[
@@ -276,80 +326,193 @@ def run_command(
         typer.Option(
             "--short-aspect-ratio",
             help=(
-                "Primary short version: original, 9:16, 16:9, or 1:1. "
-                "Square outputs have no variants."
+                "Primary short format: original, 9:16, 16:9, or 1:1 (default: 9:16)."
             ),
+            rich_help_panel="Clips",
         ),
     ] = None,
     long_aspect_ratio: Annotated[
         str | None,
         typer.Option(
             "--long-aspect-ratio",
-            help=(
-                "Primary long version: original, 9:16, 16:9, or 1:1. "
-                "Square outputs have no variants."
-            ),
+            help=("Primary long format: original, 9:16, 16:9, or 1:1 (default: 16:9)."),
+            rich_help_panel="Clips",
         ),
     ] = None,
-    vertical_width: Annotated[int | None, typer.Option("--vertical-width")] = None,
-    vertical_height: Annotated[int | None, typer.Option("--vertical-height")] = None,
-    horizontal_width: Annotated[int | None, typer.Option("--horizontal-width")] = None,
+    vertical_width: Annotated[
+        int | None,
+        typer.Option(
+            "--vertical-width",
+            help="9:16 width in pixels (default: 1080).",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    vertical_height: Annotated[
+        int | None,
+        typer.Option(
+            "--vertical-height",
+            help="9:16 height in pixels (default: 1920).",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    horizontal_width: Annotated[
+        int | None,
+        typer.Option(
+            "--horizontal-width",
+            help="16:9 width in pixels (default: 1920).",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
     horizontal_height: Annotated[
-        int | None, typer.Option("--horizontal-height")
+        int | None,
+        typer.Option(
+            "--horizontal-height",
+            help="16:9 height in pixels (default: 1080).",
+            rich_help_panel="Clips",
+        ),
     ] = None,
     square_size: Annotated[
-        int | None, typer.Option("--square-size", help="Square output side in pixels.")
+        int | None,
+        typer.Option(
+            "--square-size",
+            help="1:1 side in pixels; positive and even (default: 1080).",
+            rich_help_panel="Clips",
+        ),
     ] = None,
     variants: Annotated[
         bool | None,
         typer.Option(
             "--variants/--no-variants",
             help=(
-                "Render additional social formats; "
-                "--no-variants keeps only the primary version."
+                "Add 9:16, 16:9, and 1:1 versions (default: on). "
+                "--no-variants publishes only the primary format. "
+                "Square primary output always has no variants, including "
+                "original square sources."
+                " Class-specific variant flags take precedence."
             ),
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    short_variants: Annotated[
+        bool | None,
+        typer.Option(
+            "--short-variants/--no-short-variants",
+            help="Additional short formats; inherits --variants by default.",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    long_variants: Annotated[
+        bool | None,
+        typer.Option(
+            "--long-variants/--no-long-variants",
+            help="Additional long formats; inherits --variants by default.",
+            rich_help_panel="Clips",
         ),
     ] = None,
     subtitle_template: Annotated[
-        str | None, typer.Option("--subtitle-template")
+        str | None,
+        typer.Option(
+            "--subtitle-template",
+            help="Subtitle style (default: yellow-pop).",
+            rich_help_panel="Subtitles",
+        ),
     ] = None,
     subtitle_template_dir: Annotated[
-        Path | None, typer.Option("--subtitle-template-dir")
+        Path | None,
+        typer.Option(
+            "--subtitle-template-dir",
+            help="Custom subtitle template directory.",
+            rich_help_panel="Subtitles",
+        ),
     ] = None,
     subtitles: Annotated[
         bool | None,
         typer.Option(
-            "--subtitles/--no-subtitles", help="Default subtitles for both classes."
+            "--subtitles/--no-subtitles",
+            help=(
+                "Enable/disable subtitles for both classes and variants (default: on). "
+                "Class-specific CLI flags win regardless of order; "
+                "CLI flags override environment settings."
+            ),
+            rich_help_panel="Subtitles",
         ),
     ] = None,
     short_subtitles: Annotated[
         bool | None,
         typer.Option(
             "--short-subtitles/--no-short-subtitles",
-            help="Override subtitles for all short versions.",
+            help=(
+                "Short subtitles and the default for short variants. "
+                "Overrides the shared CLI shortcut."
+            ),
+            rich_help_panel="Subtitles",
         ),
     ] = None,
     long_subtitles: Annotated[
         bool | None,
         typer.Option(
             "--long-subtitles/--no-long-subtitles",
-            help="Override subtitles for all long versions.",
+            help=(
+                "Long subtitles and the default for long variants. "
+                "Overrides the shared CLI shortcut."
+            ),
+            rich_help_panel="Subtitles",
         ),
     ] = None,
-    block_chars: Annotated[int | None, typer.Option("--block-chars")] = None,
+    short_variant_subtitles: Annotated[
+        bool | None,
+        typer.Option(
+            "--short-variant-subtitles/--no-short-variant-subtitles",
+            help="Short variant subtitles; inherits short subtitles by default.",
+            rich_help_panel="Subtitles",
+        ),
+    ] = None,
+    long_variant_subtitles: Annotated[
+        bool | None,
+        typer.Option(
+            "--long-variant-subtitles/--no-long-variant-subtitles",
+            help="Long variant subtitles; inherits long subtitles by default.",
+            rich_help_panel="Subtitles",
+        ),
+    ] = None,
+    block_chars: Annotated[
+        int | None,
+        typer.Option(
+            "--block-chars",
+            help="Transcript characters per AI block (default: 24000).",
+            rich_help_panel="Analysis",
+        ),
+    ] = None,
     block_overlap_chars: Annotated[
-        int | None, typer.Option("--block-overlap-chars")
+        int | None,
+        typer.Option(
+            "--block-overlap-chars",
+            help="Shared characters between AI blocks (default: 4000).",
+            rich_help_panel="Analysis",
+        ),
     ] = None,
     keep_intermediates: Annotated[
-        bool | None, typer.Option("--keep-intermediates/--discard-intermediates")
+        bool | None,
+        typer.Option(
+            "--keep-intermediates/--discard-intermediates",
+            help="Keep private render files for inspection (default: discard).",
+            rich_help_panel="Execution",
+        ),
     ] = None,
     force_recompute: Annotated[
-        bool | None, typer.Option("--force-recompute/--reuse-cache")
+        bool | None,
+        typer.Option(
+            "--force-recompute/--reuse-cache",
+            help="Recompute transcription and AI analysis (default: reuse cache).",
+            rich_help_panel="Execution",
+        ),
     ] = None,
     verbose: Annotated[
         bool | None,
         typer.Option(
-            "--verbose/--quiet", help="Show debug details and dependency output."
+            "--verbose/--quiet",
+            help="Show debug details and dependency output.",
+            rich_help_panel="Execution",
         ),
     ] = None,
 ) -> None:
@@ -383,13 +546,39 @@ def run_command(
         horizontal_width=_integer(horizontal_width, "HORIZONTAL_WIDTH", 1920),
         horizontal_height=_integer(horizontal_height, "HORIZONTAL_HEIGHT", 1080),
         square_size=_integer(square_size, "SQUARE_SIZE", 1080),
+        short_clips_enabled=_boolean(short_clips, "SHORT_CLIPS_ENABLED", True),
+        long_clips_enabled=_boolean(long_clips, "LONG_CLIPS_ENABLED", True),
         render_variants=_boolean(variants, "RENDER_VARIANTS", True),
-        subtitles_enabled=True if subtitles is None else subtitles,
-        short_subtitles_enabled=_subtitle_override(
-            short_subtitles, subtitles, "SHORT_SUBTITLES_ENABLED"
+        short_variants_enabled=_boolean_override(
+            short_variants,
+            "SHORT_VARIANTS_ENABLED",
+            parent_options=(variants,),
+            parent_env_names=("RENDER_VARIANTS",),
         ),
-        long_subtitles_enabled=_subtitle_override(
-            long_subtitles, subtitles, "LONG_SUBTITLES_ENABLED"
+        long_variants_enabled=_boolean_override(
+            long_variants,
+            "LONG_VARIANTS_ENABLED",
+            parent_options=(variants,),
+            parent_env_names=("RENDER_VARIANTS",),
+        ),
+        subtitles_enabled=True if subtitles is None else subtitles,
+        short_subtitles_enabled=_boolean_override(
+            short_subtitles, "SHORT_SUBTITLES_ENABLED", parent_options=(subtitles,)
+        ),
+        long_subtitles_enabled=_boolean_override(
+            long_subtitles, "LONG_SUBTITLES_ENABLED", parent_options=(subtitles,)
+        ),
+        short_variant_subtitles_enabled=_boolean_override(
+            short_variant_subtitles,
+            "SHORT_VARIANT_SUBTITLES_ENABLED",
+            parent_options=(short_subtitles, subtitles),
+            parent_env_names=("SHORT_SUBTITLES_ENABLED",),
+        ),
+        long_variant_subtitles_enabled=_boolean_override(
+            long_variant_subtitles,
+            "LONG_VARIANT_SUBTITLES_ENABLED",
+            parent_options=(long_subtitles, subtitles),
+            parent_env_names=("LONG_SUBTITLES_ENABLED",),
         ),
         subtitle_template=str(
             _value(subtitle_template, "SUBTITLE_TEMPLATE", "yellow-pop")

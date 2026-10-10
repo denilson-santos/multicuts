@@ -1,18 +1,186 @@
 """Real FFmpeg contract for the active semantic render path."""
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.clips import JudgedClip, Proposal
 from multicuts.media import inspect_media_path
 from multicuts.models import AcquiredSource, Transcript, TranscriptSegment, Word
+from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw, render_short_horizontal
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("primary_ratio", ["9:16", "16:9"])
+@pytest.mark.parametrize("primary_subtitles", [False, True])
+def test_pipeline_renders_different_primary_and_variant_subtitles(
+    primary_ratio: str, primary_subtitles: bool, tmp_path: Path
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=640x360:r=25:d=3",
+            "-c:v",
+            "mpeg4",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source = AcquiredSource(source_path, "sha256-v1:subtitle-controls")
+    provider_version = MultisubsAdapter().version()
+
+    class Transcriber:
+        calls = 0
+
+        def version(self) -> str:
+            return provider_version
+
+        def transcribe(
+            self,
+            video_path: Path,
+            *,
+            language: str | None,
+            backend: str,
+            model: str,
+            workspace: Path,
+        ) -> Transcript:
+            self.calls += 1
+            return Transcript(
+                language,
+                "en",
+                3.0,
+                "A complete idea.",
+                (TranscriptSegment("A complete idea.", 0.5, 2.5),),
+                (
+                    Word("A", 0.6, 1.0),
+                    Word("complete", 1.1, 1.8),
+                    Word("idea.", 1.9, 2.4),
+                ),
+                "multisubs",
+                provider_version,
+            )
+
+    class Backend:
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Find every" in prompt:
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": "u0",
+                            "end_id": "u0",
+                            "title": "Complete idea",
+                            "rationale": "One clear point",
+                        }
+                    ]
+                }
+            return {
+                "start_id": "u0",
+                "end_id": "u0",
+                "approved": True,
+                "dimensions": dict.fromkeys(
+                    (
+                        "hook",
+                        "standalone_context",
+                        "development",
+                        "payoff",
+                        "interest_novelty",
+                    ),
+                    80,
+                ),
+                "reason": "Complete point",
+            }
+
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        "codex",
+        "test",
+        long_clips_enabled=False,
+        short_aspect_ratio=primary_ratio,
+        short_subtitles_enabled=primary_subtitles,
+        short_variant_subtitles_enabled=not primary_subtitles,
+        vertical_width=360,
+        vertical_height=640,
+        horizontal_width=640,
+        horizontal_height=360,
+        square_size=360,
+    )
+    transcriber = Transcriber()
+    result = run_pipeline(
+        config,
+        acquire=lambda _source, _work: source,
+        probe=lambda acquired: inspect_media_path(acquired.local_path),
+        transcriber=transcriber,
+        backend=Backend(),
+    )
+    assert transcriber.calls == 1
+    root = result.manifest_path.parent
+    assert not (root / ".work").exists()
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["analysis"]["clip_classes"] == ["short"]
+    (clip,) = manifest["clips"]
+    assert len(clip["variants"]) == 3
+    for version in clip["variants"]:
+        metadata = json.loads((root / version["metadata"]).read_text())
+        is_variant = version["aspect_ratio"] != primary_ratio
+        expected = not primary_subtitles if is_variant else primary_subtitles
+        assert metadata["render"]["is_variant"] is is_variant
+        assert metadata["render"]["subtitles_enabled"] is expected
+        assert len(metadata["subtitle_files"]) == (3 if expected else 0)
+        assert all((root / path).is_file() for path in metadata["subtitle_files"])
+        video = root / version["video"]
+        media = inspect_media_path(video)
+        assert not media.has_audio
+        assert media.duration == pytest.approx(2.0, abs=0.25)
+        frame = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-i",
+                str(video),
+                "-ss",
+                "0.7",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert len(frame) == media.presentation_width * media.presentation_height * 3
+        # Bright text pixels distinguish burned captions from the blue source.
+        bright = sum(
+            red > 120 and green > 120
+            for red, green, _blue in zip(
+                frame[0::3], frame[1::3], frame[2::3], strict=True
+            )
+        )
+        assert (bright > 5) is expected
 
 
 @pytest.mark.parametrize("aspect_ratio", ["9:16", "1:1", "original"])
