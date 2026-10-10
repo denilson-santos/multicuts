@@ -106,8 +106,11 @@ def _encode_and_publish(
     work: Path,
 ) -> tuple[Path, MediaInfo]:
     temporary = work / f"encode-{output.stem}.mp4"
+    # Cuts between source frames must retain their full duration for subtitle cues.
     command.extend(
         [
+            "-vsync",
+            "cfr",
             "-c:v",
             "libx264",
             "-preset",

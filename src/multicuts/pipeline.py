@@ -218,6 +218,7 @@ def _clip_metadata(
     run_root: Path,
     layout: str = "center_crop",
     subtitle_source_video: Path | None = None,
+    is_variant: bool = False,
 ) -> dict[str, object]:
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
@@ -249,6 +250,7 @@ def _clip_metadata(
             "editorial_context": config.editorial_context,
         },
         "render": {
+            "is_variant": is_variant,
             "layout": layout,
             "aspect_ratio": ratio,
             "width": width,
@@ -285,7 +287,7 @@ def run_pipeline(
         ..., tuple[Path, MediaInfo]
     ] = render_short_horizontal,
 ) -> RunResult:
-    """Analyze both classes and publish every approved nonredundant cut."""
+    """Review enabled classes and publish every approved nonredundant cut."""
     started = perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -300,6 +302,13 @@ def run_pipeline(
         raise ArtifactError("Could not create a unique run workspace") from exc
     try:
         logger.info("Run %s started; output: %s", run_id, root)
+        logger.info(
+            "Output classes: short=%s, long=%s; variants: short=%s, long=%s",
+            config.short_clips_enabled,
+            config.long_clips_enabled,
+            config.variants_for("short"),
+            config.variants_for("long"),
+        )
         logger.info("[1/6] Acquiring source and checking media")
         source = acquire(config.source, work / "acquisition")
         media = probe(source)
@@ -372,7 +381,8 @@ def run_pipeline(
                     raise ScoringError(
                         "AI proposed a clip beyond source media duration"
                     )
-                proposals.setdefault(proposal.id, proposal)
+                if config.clips_for(proposal.clip_class):
+                    proposals.setdefault(proposal.id, proposal)
         logger.info(
             "Found %d unique candidates: %d short, %d long",
             len(proposals),
@@ -470,6 +480,7 @@ def run_pipeline(
             stem = f"{rank:03d}-{clip.proposal.clip_class}-{clip.proposal.id}"
             is_short = clip.proposal.clip_class == "short"
             ratio_field = "short_aspect_ratio" if is_short else "long_aspect_ratio"
+            subtitle_field = f"{clip.proposal.clip_class}_subtitles_enabled"
             primary_ratio = getattr(config, ratio_field)
             # The horizontal short consumes the completed vertical version so its
             # captions stay inside the foreground, never in the blurred background.
@@ -479,7 +490,7 @@ def run_pipeline(
             )
             published_ratios = (
                 (primary_ratio,)
-                if not config.render_variants or square_output
+                if not config.variants_for(clip.proposal.clip_class) or square_output
                 else tuple(
                     dict.fromkeys(
                         ("9:16", primary_ratio, "16:9", "1:1")
@@ -495,7 +506,7 @@ def run_pipeline(
             )
             variants: list[dict[str, object]] = []
             vertical: (
-                tuple[Path, MediaInfo, Path, tuple[Path, ...], str | None] | None
+                tuple[Path, MediaInfo, Path, tuple[Path, ...], str | None, bool] | None
             ) = None
             primary_video = root / "clips" / f"{stem}.mp4"
             for ratio in ratios:
@@ -511,7 +522,19 @@ def run_pipeline(
                 publish_variant = ratio in published_ratios
                 if not publish_variant:
                     final_path = variant_work / "foreground.mp4"
-                variant_config = replace(config, **{ratio_field: ratio})
+                # A private vertical foreground follows the horizontal output's
+                # caption decision, even when variants are disabled.
+                is_variant = (ratio if publish_variant else "16:9") != primary_ratio
+                subtitles_enabled = config.subtitles_for(
+                    clip.proposal.clip_class, variant=is_variant
+                )
+                variant_config = replace(
+                    config,
+                    **{
+                        ratio_field: ratio,
+                        subtitle_field: subtitles_enabled,
+                    },
+                )
                 if publish_variant:
                     logger.info(
                         "Rendering clip %d/%d version: %s", rank, len(selected), label
@@ -529,17 +552,43 @@ def run_pipeline(
                         raise ArtifactError(
                             "Horizontal short requires a vertical version"
                         )
-                    raw, vertical_media, vertical_final, sidecars, template = vertical
+                    (
+                        raw,
+                        vertical_media,
+                        vertical_final,
+                        sidecars,
+                        template,
+                        vertical_subtitles,
+                    ) = vertical
+                    reuse_vertical = (
+                        "9:16" in published_ratios
+                        and vertical_subtitles == subtitles_enabled
+                    )
+                    foreground = vertical_final
+                    if vertical_subtitles != subtitles_enabled:
+                        if subtitles_enabled:
+                            foreground_work = variant_work / "foreground"
+                            foreground, sidecars, template = final_renderer(
+                                raw,
+                                vertical_media,
+                                transcript,
+                                clip,
+                                variant_config,
+                                output=foreground_work / "foreground.mp4",
+                                work=foreground_work,
+                            )
+                        else:
+                            foreground, sidecars, template = raw, (), None
                     final, rendered_media = horizontal_renderer(
                         raw,
-                        vertical_final,
+                        foreground,
                         vertical_media,
                         variant_config,
                         output=final_path,
                         work=variant_work,
                     )
                     layout = "vertical_center_blur"
-                    if "9:16" in published_ratios:
+                    if reuse_vertical:
                         subtitle_source = vertical_final
                     else:
                         sidecars = publish_subtitle_sidecars(sidecars, final)
@@ -574,7 +623,14 @@ def run_pipeline(
                         work=variant_work,
                     )
                     if is_short and ratio == "9:16":
-                        vertical = raw, rendered_media, final, sidecars, template
+                        vertical = (
+                            raw,
+                            rendered_media,
+                            final,
+                            sidecars,
+                            template,
+                            subtitles_enabled,
+                        )
                 if final != final_path or not final.is_file():
                     raise ArtifactError(
                         "Final renderer did not publish the expected clip"
@@ -595,6 +651,7 @@ def run_pipeline(
                     run_root=root,
                     layout=layout,
                     subtitle_source_video=subtitle_source,
+                    is_variant=is_variant,
                 )
                 metadata_path = final.with_suffix(".json")
                 _publish_json(metadata_path, metadata, work)
@@ -653,6 +710,9 @@ def run_pipeline(
                 "score_version": SCORE_VERSION,
                 "score_weights": DIMENSION_WEIGHTS,
                 "overlap_threshold": config.overlap_threshold,
+                "clip_classes": [
+                    name for name in ("short", "long") if config.clips_for(name)
+                ],
                 "timed_units": len(units),
                 "proposed": len(proposals),
                 "boundary_adjusted": boundary_adjusted,
