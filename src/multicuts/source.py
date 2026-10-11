@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from multicuts.errors import AcquisitionError
 from multicuts.local_source import acquire_local_source
-from multicuts.models import AcquiredSource
+from multicuts.models import AcquiredSource, TimeRange
 
 _SUPPORTED_YOUTUBE_HOSTS = frozenset(
     {
@@ -27,9 +27,17 @@ _MAX_VIDEO_ID_LENGTH = 128
 class SourceProvider(Protocol):
     """The narrow boundary implemented by remote source providers."""
 
-    def acquire(self, source: str, workspace: Path) -> AcquiredSource:
+    def acquire(
+        self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+    ) -> AcquiredSource:
         """Acquire one source into the caller-controlled workspace."""
         ...
+
+
+class SourceAcquirer(Protocol):
+    def __call__(
+        self, source: str, workspace: Path, /, *, time_range: TimeRange | None = None
+    ) -> AcquiredSource: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +151,7 @@ def acquire_source(
     workspace: Path,
     *,
     youtube_provider: SourceProvider | None = None,
+    time_range: TimeRange | None = None,
 ) -> AcquiredSource:
     """Route one source to local acquisition or the YouTube adapter."""
     if not isinstance(workspace, Path):
@@ -158,7 +167,7 @@ def acquire_source(
         provider = (
             youtube_provider if youtube_provider is not None else YoutubeAdapter()
         )
-        return provider.acquire(source, workspace)
+        return provider.acquire(source, workspace, time_range=time_range)
 
     try:
         parsed = urlsplit(source)

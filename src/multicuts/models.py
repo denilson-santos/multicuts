@@ -66,6 +66,8 @@ class AcquiredSource:
     provider_id: str | None = None
     title: str | None = None
     original_url: str | None = None
+    acquired_range: TimeRange | None = None
+    original_duration: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.local_path, Path):
@@ -88,6 +90,27 @@ class AcquiredSource:
             self.provider_id is None or self.title is None or self.original_url is None
         ):
             raise ValueError("YouTube sources require ID, title, and original URL")
+        if (self.acquired_range is None) != (self.original_duration is None):
+            raise ValueError(
+                "partial sources require both a range and original duration"
+            )
+        if self.acquired_range is not None:
+            if self.source_kind != "youtube" or not isinstance(
+                self.acquired_range, TimeRange
+            ):
+                raise ValueError("only YouTube sources can carry an acquired range")
+            if (
+                isinstance(self.original_duration, bool)
+                or not isinstance(self.original_duration, (int, float))
+                or not isfinite(self.original_duration)
+                or self.original_duration < self.acquired_range.end
+            ):
+                raise ValueError("acquired range must be within the original duration")
+
+    @property
+    def timeline_offset(self) -> float:
+        """Original source time represented by zero in the acquired media."""
+        return 0.0 if self.acquired_range is None else self.acquired_range.start
 
 
 @dataclass(frozen=True, slots=True)

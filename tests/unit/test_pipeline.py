@@ -18,15 +18,17 @@ from multicuts.clips import (
     parse_proposals,
     select_clips,
 )
-from multicuts.errors import ConfigurationError, ScoringError
+from multicuts.errors import AcquisitionError, ConfigurationError, ScoringError
 from multicuts.models import (
     AcquiredSource,
     MediaInfo,
     TimeRange,
     Transcript,
     TranscriptSegment,
+    Word,
 )
 from multicuts.pipeline import run_pipeline
+from multicuts.render import clip_transcript
 
 
 class FakeTranscriber:
@@ -359,6 +361,201 @@ def test_invalid_direct_cut_fails_before_asr(tmp_path: Path, kwargs: dict) -> No
     assert asr.calls == ai.calls == 0
 
 
+@pytest.mark.parametrize("mode", ["custom", "automatic"])
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
+    mode: str, subtitles: bool, tmp_path: Path
+) -> None:
+    interval = TimeRange(600.25, 720.5)
+    acquisition_ranges: list[TimeRange | None] = []
+    rendered: list[tuple[float, float]] = []
+    transcripts: list[Transcript] = []
+
+    def acquire(
+        source: str, workspace: Path, *, time_range: TimeRange | None = None
+    ) -> AcquiredSource:
+        assert source == "https://youtu.be/abc123"
+        assert time_range is not None
+        acquisition_ranges.append(time_range)
+        workspace.mkdir(parents=True)
+        path = workspace / "part.mp4"
+        path.write_bytes(b"part")
+        return AcquiredSource(
+            path,
+            f"range-{time_range.start}-{time_range.end}",
+            "youtube",
+            "abc123",
+            "Source title",
+            source,
+            time_range,
+            1800.0,
+        )
+
+    class Transcriber(FakeTranscriber):
+        def transcribe(
+            self,
+            video_path: Path,
+            *,
+            language: str | None,
+            backend: str,
+            model: str,
+            workspace: Path,
+        ) -> Transcript:
+            self.calls += 1
+            assert video_path.name == "part.mp4"
+            return Transcript(
+                language,
+                "en",
+                120.25,
+                "First point. Second point.",
+                (
+                    TranscriptSegment("First point.", 0.5, 30),
+                    TranscriptSegment("Second point.", 40, 110),
+                ),
+                (
+                    Word("First", 0.5, 1, source_segment_index=0),
+                    Word("point.", 1, 1, source_segment_index=0),
+                    Word("Second point.", 40, 41.5, source_segment_index=1),
+                ),
+                "multisubs",
+                self.version(),
+            )
+
+    class Backend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Find every" in prompt:
+                self.calls += 1
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": "u0",
+                            "end_id": "u1",
+                            "title": "Scoped idea",
+                            "rationale": "Complete point",
+                        }
+                    ]
+                }
+            return super().complete(prompt, schema)
+
+    media = replace(_media(), duration=120.25)
+
+    def raw_renderer(source, _media, clip, config, *, output, work):
+        assert source.acquired_range is not None
+        assert clip.proposal.start >= source.acquired_range.start
+        assert clip.proposal.end <= source.acquired_range.end
+        rendered.append((clip.proposal.start, clip.proposal.end))
+        output.parent.mkdir(parents=True)
+        output.write_bytes(b"raw")
+        return (
+            output,
+            replace(media, duration=clip.proposal.end - clip.proposal.start),
+            "original",
+        )
+
+    def final_renderer(raw, _media, transcript, clip, config, *, output, work):
+        if transcript is not None:
+            transcripts.append(transcript)
+            local = clip_transcript(transcript, clip.proposal.start, clip.proposal.end)
+            assert local.words[1].start == local.words[1].end
+            assert local.words[1].source_segment_index == 0
+        output.parent.mkdir(exist_ok=True)
+        shutil.copyfile(raw, output)
+        return output, (), None
+
+    config = AppConfig(
+        "https://youtu.be/abc123",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        clip_range=interval if mode == "custom" else None,
+        search_range=interval if mode == "automatic" else None,
+        subtitles_enabled=subtitles,
+        render_variants=False,
+        short_aspect_ratio="original",
+    )
+    asr, ai = Transcriber(), Backend()
+
+    def run(current: AppConfig):
+        return run_pipeline(
+            current,
+            acquire=acquire,
+            probe=lambda _: media,
+            transcriber=asr,
+            backend=ai,
+            raw_renderer=raw_renderer,
+            final_renderer=final_renderer,
+        )
+
+    first = run(config)
+    repeated = run(config)
+    expected = (600.25, 720.5) if mode == "custom" else (600.75, 710.25)
+    assert rendered == [expected, expected]
+    needs_asr = subtitles or mode == "automatic"
+    assert asr.calls == int(needs_asr)
+    assert ai.calls == (2 if mode == "automatic" else 0)
+    manifest = json.loads(repeated.manifest_path.read_text())
+    assert manifest["source"]["original_duration"] == 1800
+    assert manifest["source"]["acquired_duration"] == 120.25
+    assert manifest["source"]["acquired_range"] == {"start": 600.25, "end": 720.5}
+    if needs_asr:
+        assert manifest["transcription"]["cache_hit"]
+        assert all(
+            t.duration == 1800 and t.words[0].start == 600.75 for t in transcripts
+        )
+        (cached,) = (config.output_dir / ".cache" / "transcripts").glob("*.json")
+        content = json.loads(cached.read_text())["transcript"]
+        assert content["duration"] == 120.25
+        assert content["words"][0]["start"] == 0.5
+    else:
+        assert manifest["transcription"] is None
+    assert first.manifest_path != repeated.manifest_path
+    changed = TimeRange(730.25, 850.5)
+    run(
+        replace(
+            config, **{f"{'clip' if mode == 'custom' else 'search'}_range": changed}
+        )
+    )
+    assert asr.calls == 2 * int(needs_asr)
+    assert ai.calls == (4 if mode == "automatic" else 0)
+    assert acquisition_ranges == [interval, interval, changed]
+
+
+@pytest.mark.parametrize(
+    ("download_range", "duration"),
+    [
+        (None, 1800),
+        (TimeRange(0, 120), 120),
+        (TimeRange(600, 720), 1800),
+    ],
+)
+def test_partial_youtube_rejects_whole_or_mismatched_media_before_asr(
+    download_range: TimeRange | None, duration: float, tmp_path: Path
+) -> None:
+    source = AcquiredSource(
+        tmp_path / "part.mp4",
+        "partial",
+        "youtube",
+        "abc123",
+        "Title",
+        "https://youtu.be/abc123",
+        download_range,
+        1800 if download_range is not None else None,
+    )
+    config = AppConfig(
+        source.original_url or "", tmp_path / "out", clip_range=TimeRange(600, 720)
+    )
+    asr = FakeTranscriber()
+    with pytest.raises(AcquisitionError, match="interval"):
+        run_pipeline(
+            config,
+            acquire=lambda _source, _work, *, time_range=None: source,
+            probe=lambda _: replace(_media(), duration=duration),
+            transcriber=asr,
+        )
+    assert asr.calls == 0
+
+
 def _run(
     tmp_path: Path,
     transcriber: FakeTranscriber,
@@ -378,7 +575,9 @@ def _run(
     )
     source_info = source_media or _media()
 
-    def acquire(_source: str, _workspace: Path) -> AcquiredSource:
+    def acquire(
+        _source: str, _workspace: Path, *, time_range: TimeRange | None = None
+    ) -> AcquiredSource:
         return AcquiredSource(source_file, "sha256-v1:source")
 
     def raw_renderer(

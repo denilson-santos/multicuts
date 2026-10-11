@@ -3,12 +3,13 @@
 import json
 import re
 from hashlib import sha256
-from math import isfinite
+from math import isclose, isfinite
 from pathlib import Path
 from typing import Protocol, cast
 
-from multicuts.errors import AcquisitionError
-from multicuts.models import AcquiredSource
+from multicuts.errors import AcquisitionError, ConfigurationError, MediaError
+from multicuts.media import check_media_tools
+from multicuts.models import AcquiredSource, TimeRange
 from multicuts.source import parse_youtube_url
 
 try:
@@ -74,7 +75,7 @@ def _workspace_path(workspace: Path) -> Path:
     return resolved
 
 
-def _options(workspace: Path) -> dict[str, object]:
+def _options(workspace: Path, time_range: TimeRange | None) -> dict[str, object]:
     temporary = workspace / ".tmp"
     try:
         temporary.mkdir(exist_ok=True)
@@ -87,7 +88,7 @@ def _options(workspace: Path) -> dict[str, object]:
         workspace
     ):
         raise AcquisitionError("YouTube temporary workspace escapes its root")
-    return {
+    options: dict[str, object] = {
         "format": "bestvideo*+bestaudio/best",
         "outtmpl": str(workspace / "%(id)s.%(ext)s"),
         "paths": {"home": str(workspace), "temp": str(temporary)},
@@ -98,6 +99,54 @@ def _options(workspace: Path) -> dict[str, object]:
         "no_warnings": True,
         "restrictfilenames": True,
     }
+    if time_range is not None:
+
+        def download_ranges(
+            info: object, _downloader: object
+        ) -> list[dict[str, float]]:
+            _range_duration(_raw_mapping(info), time_range)
+            return [{"start_time": time_range.start, "end_time": time_range.end}]
+
+        options["download_ranges"] = download_ranges
+        options["force_keyframes_at_cuts"] = True
+    return options
+
+
+def _range_duration(info: dict[str, object], time_range: TimeRange) -> float:
+    duration = info.get("duration")
+    if (
+        info.get("is_live")
+        or info.get("live_status") in ("is_live", "is_upcoming", "post_live")
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not isfinite(duration)
+        or duration <= 0
+    ):
+        raise AcquisitionError(
+            "YouTube interval downloads require a completed video with known duration"
+        )
+    if time_range.end > duration:
+        raise ConfigurationError("Requested interval exceeds source media duration")
+    return float(duration)
+
+
+def _validate_downloaded_range(info: dict[str, object], time_range: TimeRange) -> None:
+    downloads = info.get("requested_downloads")
+    if not isinstance(downloads, list) or len(downloads) != 1:
+        raise AcquisitionError("YouTube did not return the requested single interval")
+    section = _raw_mapping(downloads[0])
+    for name, expected in (
+        ("section_start", time_range.start),
+        ("section_end", time_range.end),
+    ):
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            or not isclose(value, expected, rel_tol=0, abs_tol=0.000001)
+        ):
+            raise AcquisitionError("YouTube returned an unexpected download interval")
 
 
 def _raw_mapping(value: object) -> dict[str, object]:
@@ -203,6 +252,7 @@ def _fingerprint(
     info: dict[str, object],
     media_path: Path,
     source_id: str,
+    time_range: TimeRange | None = None,
 ) -> str:
     identity = {
         "provider": YOUTUBE_PROVIDER,
@@ -216,6 +266,11 @@ def _fingerprint(
         "vcodec": _safe_text(info.get("vcodec"), limit=80),
         "acodec": _safe_text(info.get("acodec"), limit=80),
     }
+    if time_range is not None:
+        identity["acquired_range"] = {
+            "start": float(time_range.start),
+            "end": float(time_range.end),
+        }
     canonical = json.dumps(
         identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
@@ -229,6 +284,7 @@ def _normalize_result(
     downloader: _Downloader,
     workspace: Path,
     source: str,
+    time_range: TimeRange | None = None,
 ) -> AcquiredSource:
     info = _raw_mapping(info_value)
     if info.get("_type") in {"playlist", "multi_video"} or "entries" in info:
@@ -238,6 +294,10 @@ def _normalize_result(
     if source_id is None or title is None:
         raise AcquisitionError("YouTube returned incomplete source metadata")
     _validate_optional_metadata(info)
+    original_duration = None
+    if time_range is not None:
+        original_duration = _range_duration(info, time_range)
+        _validate_downloaded_range(info, time_range)
     reference = parse_youtube_url(source)
     if reference is None:
         raise AcquisitionError("YouTube source URL is invalid")
@@ -248,6 +308,7 @@ def _normalize_result(
             info=info,
             media_path=media_path,
             source_id=source_id,
+            time_range=time_range,
         )
         return AcquiredSource(
             local_path=media_path,
@@ -256,6 +317,8 @@ def _normalize_result(
             provider_id=source_id,
             title=title,
             original_url=original_url,
+            acquired_range=time_range,
+            original_duration=original_duration,
         )
     except ValueError as exc:
         raise AcquisitionError("YouTube source metadata is invalid") from exc
@@ -264,7 +327,9 @@ def _normalize_result(
 class YoutubeAdapter:
     """Acquire one supported YouTube URL with yt-dlp's Python API."""
 
-    def acquire(self, source: str, workspace: Path) -> AcquiredSource:
+    def acquire(
+        self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+    ) -> AcquiredSource:
         reference = parse_youtube_url(source)
         if reference is None:
             raise AcquisitionError("Source is not a supported YouTube URL")
@@ -272,14 +337,18 @@ class YoutubeAdapter:
             raise AcquisitionError(
                 "yt-dlp is unavailable; install the YouTube acquisition dependency"
             )
+        if time_range is not None:
+            check_media_tools()
         resolved_workspace = _workspace_path(workspace)
-        options = _options(resolved_workspace)
+        options = _options(resolved_workspace, time_range)
         try:
             downloader_factory = cast(_DownloaderFactory, YoutubeDL)
             with downloader_factory(options) as downloader:
                 info = downloader.extract_info(source, download=True)
-                return _normalize_result(info, downloader, resolved_workspace, source)
-        except AcquisitionError:
+                return _normalize_result(
+                    info, downloader, resolved_workspace, source, time_range
+                )
+        except (AcquisitionError, ConfigurationError, MediaError):
             raise
         except Exception:
             # Provider exceptions frequently include signed URLs or cookies.
@@ -289,9 +358,11 @@ class YoutubeAdapter:
             ) from None
 
 
-def acquire_youtube_source(source: str, workspace: Path) -> AcquiredSource:
+def acquire_youtube_source(
+    source: str, workspace: Path, *, time_range: TimeRange | None = None
+) -> AcquiredSource:
     """Functional adapter entry point for callers that prefer a function."""
-    return YoutubeAdapter().acquire(source, workspace)
+    return YoutubeAdapter().acquire(source, workspace, time_range=time_range)
 
 
 YouTubeAdapter = YoutubeAdapter

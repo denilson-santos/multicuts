@@ -25,7 +25,7 @@ The AI backend never receives video or audio. Prompts explicitly treat source tr
 For `AppConfig.clip_range` or `full_video`, the pipeline validates the requested
 media interval and its enabled duration class after probing, then constructs a
 `DirectClip`. It bypasses semantic units and AI entirely. `DirectClip` carries the
-probed source duration so subtitle slicing can retain leading/trailing silence
+original source duration so subtitle slicing can retain leading/trailing silence
 beyond ASR coverage without changing any observed segment or word timestamps.
 The existing renderer accepts either a judged or direct clip. Source transcription
 is loaded only when a published output needs captions; otherwise renderers receive
@@ -34,8 +34,27 @@ no transcript. Output JSON distinguishes selection modes and unscored clips.
 For `AppConfig.search_range`, the pipeline validates source bounds after probing
 and filters semantic units by full containment before building proposal blocks
 or judgment boundary options. IDs and timestamps remain on the source timeline.
-Only scoped transcript text reaches the AI. The transcript cache stays scoped to
-the full source; AI cache keys continue to include their scoped prompt evidence.
+Only scoped transcript text reaches the AI. Local sources retain their full-source
+transcript cache; YouTube range requests cache only the acquired interval. AI cache
+keys continue to include their scoped prompt evidence.
+
+The source boundary accepts an optional `TimeRange`. Local acquisition ignores it;
+the YouTube adapter uses yt-dlp's public `download_ranges` callback and
+`force_keyframes_at_cuts` option. FFmpeg/ffprobe are checked before partial
+acquisition. The callback validates a completed video and its original duration
+before media transfer. Provider section metadata must match the requested interval;
+the pipeline also checks acquired duration within 0.25 seconds before ASR. There
+is no full-download fallback. Remote formats can require headers and neighboring
+fragments; accurate boundaries reencode the requested media during acquisition.
+
+`AcquiredSource` carries the optional acquired interval and original duration;
+`MediaInfo` describes the actual local file. Partial fingerprints include the
+requested interval as well as provider and media identity. The transcript cache
+stores file-local timings. After loading or generating a transcript, the pipeline
+adds the source offset to observed segment/word timestamps and restores the
+original source duration without changing timing provenance. AI and artifacts use
+these original times; FFmpeg rendering subtracts the offset for local seeking.
+Unrestricted YouTube and full-video cuts retain full acquisition.
 
 - `source.py`, `local_source.py`, and `adapters/youtube.py`: acquisition and source fingerprinting.
 - `media.py`: FFmpeg/ffprobe availability and normalized media geometry.
@@ -70,7 +89,7 @@ The output root has two distinct parts:
 
 The transcript key includes media fingerprint, ASR backend/model, requested language, and provider/stage/schema versions. Its stage version is 2: older keys are recomputed once, and each backend uses a separate transcript cache. Word records preserve optional source segment indexes; cached words without this field remain readable and use interval-based association when building a clip. The AI key includes the complete normalized transcript fingerprint, AI backend/model/effort, prompt/schema, and task. Identical normalized transcripts can reuse AI responses even if ASR settings change. Adding word segment provenance changes the normalized fingerprint, so existing AI responses may be recomputed once while valid transcript caches still avoid ASR. Editorial context is part of each prompt, so changing it invalidates AI responses while reusing ASR. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
 
-The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
+The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Source provenance includes `original_duration`, `acquired_duration`, and `acquired_range` (null for full-source acquisition). Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
 
 Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent selected cuts and their primary videos. The primary version keeps the existing filename; companion versions use `-vertical`, `-horizontal`, and `-square`. Manifest schema 4 and clip schema 2 identify the selection mode. Direct cuts have no score or transcript boundary IDs; skipped transcription is null in the manifest. Existing automatic analysis and cache schemas retain their meaning.
 

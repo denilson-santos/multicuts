@@ -230,7 +230,7 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
     transcriber = Transcriber()
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work: source,
+        acquire=lambda _source, _work, *, time_range=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
         transcriber=transcriber,
         backend=Backend(),

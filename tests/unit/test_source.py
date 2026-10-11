@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from multicuts.errors import AcquisitionError
-from multicuts.models import AcquiredSource
+from multicuts.models import AcquiredSource, TimeRange
 from multicuts.source import (
     acquire_source,
     is_supported_youtube_url,
@@ -51,7 +51,9 @@ def test_local_source_routing_does_not_invoke_remote_provider(tmp_path: Path) ->
     source_path.write_bytes(b"local media")
 
     class FailingProvider:
-        def acquire(self, source: str, workspace: Path) -> AcquiredSource:
+        def acquire(
+            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+        ) -> AcquiredSource:
             del source, workspace
             raise AssertionError("remote provider must not run for local paths")
 
@@ -79,7 +81,9 @@ def test_youtube_source_routing_uses_provider_boundary(tmp_path: Path) -> None:
     )
 
     class FakeProvider:
-        def acquire(self, source: str, workspace: Path) -> AcquiredSource:
+        def acquire(
+            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+        ) -> AcquiredSource:
             calls.append((source, workspace))
             return expected
 
@@ -97,6 +101,34 @@ def test_youtube_source_routing_uses_provider_boundary(tmp_path: Path) -> None:
 def test_unsupported_remote_source_fails_before_provider_call(tmp_path: Path) -> None:
     with pytest.raises(AcquisitionError, match="Unsupported source URL"):
         acquire_source("https://example.com/video", tmp_path)
+
+
+def test_youtube_routing_forwards_the_requested_interval(tmp_path: Path) -> None:
+    interval = TimeRange(600, 720)
+
+    class Provider:
+        def acquire(
+            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+        ) -> AcquiredSource:
+            assert time_range == interval
+            return AcquiredSource(
+                workspace / "part.mp4",
+                "partial",
+                "youtube",
+                "abc123",
+                "A title",
+                "https://youtu.be/abc123",
+                time_range,
+                1800,
+            )
+
+    acquired = acquire_source(
+        "https://youtu.be/abc123",
+        tmp_path,
+        time_range=interval,
+        youtube_provider=Provider(),
+    )
+    assert acquired.acquired_range == interval
 
 
 def test_acquisition_workspace_is_explicit_and_contained(tmp_path: Path) -> None:

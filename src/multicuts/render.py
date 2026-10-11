@@ -173,6 +173,11 @@ def render_raw(
 ) -> tuple[Path, MediaInfo, str]:
     """Encode into private space and publish only a validated MP4."""
     proposal = clip.proposal
+    local_start = proposal.start - source.timeline_offset
+    if local_start < 0 or (
+        source.acquired_range is not None and proposal.end > source.acquired_range.end
+    ):
+        raise RenderingError("Clip interval exceeds the acquired source interval")
     ratio, width, height = _geometry(config, proposal.clip_class, media)
     command = [
         "ffmpeg",
@@ -185,7 +190,7 @@ def render_raw(
         "-i",
         str(source.local_path),
         "-ss",
-        f"{proposal.start:.6f}",
+        f"{local_start:.6f}",
         "-t",
         f"{proposal.end - proposal.start:.6f}",
         "-map",

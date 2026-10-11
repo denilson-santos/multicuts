@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
+from math import isclose
 from pathlib import Path
 from time import perf_counter
 from typing import Protocol
@@ -49,6 +50,7 @@ from multicuts.clips import (
     timed_units,
 )
 from multicuts.errors import (
+    AcquisitionError,
     ArtifactError,
     ConfigurationError,
     ScoringError,
@@ -63,7 +65,7 @@ from multicuts.render import (
     render_raw,
     render_short_horizontal,
 )
-from multicuts.source import acquire_source
+from multicuts.source import SourceAcquirer, acquire_source
 
 logger = logging.getLogger(__name__)
 
@@ -287,9 +289,37 @@ def _clip_metadata(
     }
 
 
+def _source_timeline(transcript: Transcript, source: AcquiredSource) -> Transcript:
+    """Restore absolute source times after transcribing a downloaded interval."""
+    if source.acquired_range is None:
+        return transcript
+    assert source.original_duration is not None
+    offset = source.timeline_offset
+    return replace(
+        transcript,
+        duration=source.original_duration,
+        segments=tuple(
+            replace(
+                segment,
+                start=None if segment.start is None else segment.start + offset,
+                end=None if segment.end is None else segment.end + offset,
+            )
+            for segment in transcript.segments
+        ),
+        words=tuple(
+            replace(
+                word,
+                start=None if word.start is None else word.start + offset,
+                end=None if word.end is None else word.end + offset,
+            )
+            for word in transcript.words
+        ),
+    )
+
+
 def _direct_clip(
     source: AcquiredSource,
-    media: MediaInfo,
+    source_duration: float,
     interval: TimeRange,
     transcript: Transcript | None,
 ) -> DirectClip:
@@ -303,21 +333,24 @@ def _direct_clip(
             start=interval.start,
             end=interval.end,
             text=clip_transcript(
-                transcript, interval.start, interval.end, source_duration=media.duration
+                transcript,
+                interval.start,
+                interval.end,
+                source_duration=source_duration,
             ).text
             if transcript is not None
             else "",
             title=(source.title or source.local_path.stem)[:120],
             rationale="Exact source interval selected by the user.",
         ),
-        source_duration=media.duration,
+        source_duration=source_duration,
     )
 
 
 def run_pipeline(
     config: AppConfig,
     *,
-    acquire: Callable[[str, Path], AcquiredSource] = acquire_source,
+    acquire: SourceAcquirer = acquire_source,
     probe: Callable[[AcquiredSource], MediaInfo] = probe_media,
     transcriber: Transcriber | None = None,
     backend: JsonBackend | None = None,
@@ -352,16 +385,50 @@ def run_pipeline(
             config.variants_for("long"),
         )
         logger.info("[1/6] Acquiring source and checking media")
-        source = acquire(config.source, work / "acquisition")
+        requested_range = config.clip_range or config.search_range
+        source = acquire(
+            config.source, work / "acquisition", time_range=requested_range
+        )
+        if (
+            (source.source_kind == "youtube" and requested_range is not None)
+            or source.acquired_range is not None
+        ) and source.acquired_range != requested_range:
+            raise AcquisitionError(
+                "Source acquisition did not preserve the requested interval"
+            )
         media = probe(source)
-        if config.search_range is not None and config.search_range.end > media.duration:
+        source_duration = (
+            source.original_duration
+            if source.original_duration is not None
+            else media.duration
+        )
+        if source.acquired_range is not None:
+            if not isclose(
+                media.duration,
+                source.acquired_range.end - source.acquired_range.start,
+                rel_tol=0,
+                abs_tol=0.25,
+            ):
+                raise AcquisitionError(
+                    "Downloaded media duration differs from the requested interval"
+                )
+            logger.info(
+                "Downloaded source interval %.2f-%.2fs (original duration %.1fs)",
+                source.acquired_range.start,
+                source.acquired_range.end,
+                source_duration,
+            )
+        if (
+            config.search_range is not None
+            and config.search_range.end > source_duration
+        ):
             raise ConfigurationError("--search-range exceeds source media duration")
         direct_range = (
-            TimeRange(0.0, media.duration) if config.full_video else config.clip_range
+            TimeRange(0.0, source_duration) if config.full_video else config.clip_range
         )
         needs_transcript = True
         if direct_range is not None:
-            if direct_range.end > media.duration:
+            if direct_range.end > source_duration:
                 raise ConfigurationError("--clip-range exceeds source media duration")
             clip_class = (
                 "short" if direct_range.end - direct_range.start <= 180 else "long"
@@ -399,6 +466,7 @@ def run_pipeline(
             transcription_started = perf_counter()
             provider = transcriber or MultisubsAdapter()
             transcript, transcript_hit = _transcribe(config, source, provider, work)
+            transcript = _source_timeline(transcript, source)
             logger.info(
                 "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
                 len(transcript.segments),
@@ -415,7 +483,9 @@ def run_pipeline(
         boundary_adjusted = 0
         selected: tuple[JudgedClip | DirectClip, ...]
         if direct_range is not None:
-            selected = (_direct_clip(source, media, direct_range, transcript),)
+            selected = (
+                _direct_clip(source, source_duration, direct_range, transcript),
+            )
             logger.info(
                 "[3/6] Using %s interval %.2f-%.2fs",
                 config.selection_mode,
@@ -487,7 +557,7 @@ def run_pipeline(
                     cache_stats=cache_stats,
                 )
                 for proposal in parse_proposals(response, block, source.fingerprint):
-                    if proposal.end > media.duration + 0.001:
+                    if proposal.end > source_duration + 0.001:
                         raise ScoringError(
                             "AI proposed a clip beyond source media duration"
                         )
@@ -526,7 +596,7 @@ def run_pipeline(
                     cache_stats=cache_stats,
                 )
                 clip = parse_judgment(response, proposal, units, source.fingerprint)
-                if clip.proposal.end > media.duration + 0.001:
+                if clip.proposal.end > source_duration + 0.001:
                     raise ScoringError("AI revised a clip beyond source media duration")
                 logger.info(
                     "Candidate %d/%d: %s, score=%.2f, interval=%.2f-%.2fs",
@@ -807,6 +877,14 @@ def run_pipeline(
                 "kind": source.source_kind,
                 "fingerprint": source.fingerprint,
                 "youtube_id": source.provider_id,
+                "original_duration": source_duration,
+                "acquired_duration": media.duration,
+                "acquired_range": {
+                    "start": source.acquired_range.start,
+                    "end": source.acquired_range.end,
+                }
+                if source.acquired_range is not None
+                else None,
             },
             "transcription": {
                 "provider": transcript.provider,

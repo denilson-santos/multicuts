@@ -263,7 +263,9 @@ to complete observed transcript units inside the interval. Times refer to the
 original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
 seconds. Units crossing either edge are excluded; an interval without complete
 units produces zero clips. Bounds must be ordered and within the source duration.
-The full source transcript remains cached and reusable for other intervals.
+For local files, the full source transcript remains cached and reusable for
+other intervals. For YouTube sources, only the requested interval is acquired
+and transcribed.
 
 **Render one exact interval**
 
@@ -296,6 +298,18 @@ from the source filename or YouTube title; their metadata has no editorial score
 ```bash
 multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
 ```
+
+With `--search-range` or `--clip-range`, YouTube acquisition requests only that
+interval through yt-dlp and FFmpeg. Transcription, when needed, processes only
+the acquired interval. CLI times and clip metadata still refer to the original
+video. Repeating the same interval can reuse its transcript; different intervals
+have separate caches. Without a range, including `--clip-full`, the entire video
+is acquired. Local inputs retain their full-source transcription cache.
+
+Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
+duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
+Accurate interval boundaries require reencoding during acquisition; remote media
+headers and adjacent fragments may also be transferred.
 
 **Keep the source framing and disable subtitles**
 
@@ -391,6 +405,8 @@ Manifest schema 4 and clip metadata schema 2 record `selection_mode`
 and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
 editorially eligible counts. Their AI provenance fields are null. When ASR is
 skipped, manifest `transcription` is null and clip `transcript_text` is empty.
+Manifest source provenance includes `original_duration`, `acquired_duration`,
+and `acquired_range` (null for full-source acquisition).
 
 Pass `--output-dir` on every invocation. Each run gets a unique directory:
 
@@ -422,6 +438,7 @@ Reruns create fresh output files and preserve completed runs. Cached transcripts
 | Nothing, or only subtitles/framing | Reused | Reused |
 | AI model, reasoning effort, or editorial context | Reused | Recomputed |
 | ASR backend or model | Separate cache | Depends on transcript content |
+| YouTube acquisition interval | Separate cache | Recomputed |
 | `--force-recompute` enabled | Recomputed | Recomputed |
 
 YouTube acquisition may download the source again before its media fingerprint is known.

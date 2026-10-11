@@ -9,6 +9,7 @@ from multicuts.models import (
     ClipTranscriptSegment,
     ClipTranscriptWord,
     MediaInfo,
+    TimeRange,
     Transcript,
     TranscriptSegment,
     Word,
@@ -46,6 +47,23 @@ def test_acquired_source_model_rejects_remote_metadata_on_local_source() -> None
             Path("/workspace/video.mp4"),
             "sha256-v1:abc123",
             title="Should not be fabricated",
+        )
+
+
+@pytest.mark.parametrize("duration", [None, 119, float("nan"), True])
+def test_partial_source_requires_valid_original_duration(
+    duration: float | None,
+) -> None:
+    with pytest.raises(ValueError):
+        AcquiredSource(
+            Path("part.mp4"),
+            "partial",
+            "youtube",
+            "abc123",
+            "Title",
+            "https://youtu.be/abc123",
+            TimeRange(60, 120),
+            duration,
         )
 
 
