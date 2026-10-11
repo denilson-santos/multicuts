@@ -19,6 +19,7 @@ from multicuts.app_config import AppConfig
 from multicuts.media import inspect_media_path
 from multicuts.models import TimeRange, Transcript, TranscriptSegment, Word
 from multicuts.pipeline import run_pipeline
+from multicuts.render import render_raw
 
 
 @pytest.mark.integration
@@ -39,12 +40,13 @@ def test_youtube_adapter_against_explicit_fixture_source(tmp_path: Path) -> None
 
 @pytest.mark.integration
 @pytest.mark.parametrize("subtitles", [False, True])
+@pytest.mark.parametrize("container", ["mp4", "webm"])
 def test_partial_download_with_real_ytdlp_and_ffmpeg(
-    subtitles: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    subtitles: bool, container: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
-    remote_file = tmp_path / "remote.mp4"
+    remote_file = tmp_path / f"remote.{container}"
     subprocess.run(
         [
             "ffmpeg",
@@ -61,17 +63,17 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             "-i",
             "sine=frequency=440:sample_rate=48000:d=24",
             "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            "18",
+            "libx264" if container == "mp4" else "libvpx-vp9",
+            *(
+                ["-preset", "ultrafast", "-crf", "18"]
+                if container == "mp4"
+                else ["-deadline", "realtime", "-cpu-used", "8"]
+            ),
             "-g",
             "25",
             "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
+            "aac" if container == "mp4" else "libopus",
+            *(["-movflags", "+faststart"] if container == "mp4" else []),
             "-shortest",
             str(remote_file),
         ],
@@ -89,7 +91,7 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             requests.append(start)
             self.send_response(206 if match else 200)
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Type", f"video/{container}")
             self.send_header("Content-Length", str(end - start + 1))
             if match:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{length}")
@@ -113,22 +115,22 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    media_url = f"http://127.0.0.1:{server.server_port}/remote.mp4"
+    media_url = f"http://127.0.0.1:{server.server_port}/remote.{container}"
 
     class FixtureDownloader(YoutubeDL):
         def extract_info(self, url, download=True, *args, **kwargs):
             # Only extraction is controlled; the public download/range API is real.
             return self.process_ie_result(
                 {  # pyright: ignore[reportArgumentType]
-                    # Public format/extractor fields are missing from yt-dlp stubs.
+                    # Stubs omit extractor fields and restrict duration to integers.
                     "id": "abc123",
                     "title": "Fixture source",
                     "url": media_url,
-                    "duration": int(original_media.duration),
-                    "ext": "mp4",
+                    "duration": original_media.duration,  # pyright: ignore[reportArgumentType]
+                    "ext": container,
                     "protocol": "http",
-                    "vcodec": "h264",
-                    "acodec": "aac",
+                    "vcodec": "h264" if container == "mp4" else "vp9",
+                    "acodec": "aac" if container == "mp4" else "opus",
                     "format_id": "fixture",
                     "extractor": "generic",
                     "extractor_key": "Generic",
@@ -139,6 +141,8 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
 
     monkeypatch.setattr(youtube_module, "YoutubeDL", FixtureDownloader)
     provider_version = MultisubsAdapter().version() if subtitles else "unused"
+    transcription_inputs: list[Path] = []
+    rendering_inputs: list[Path] = []
 
     class Transcriber:
         calls = 0
@@ -157,13 +161,13 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             workspace: Path,
         ) -> Transcript:
             self.calls += 1
-            assert inspect_media_path(video_path).duration == pytest.approx(
-                2.5, abs=0.25
-            )
+            transcription_inputs.append(video_path)
+            actual_duration = inspect_media_path(video_path).duration
+            assert 2.5 <= actual_duration < 4
             return Transcript(
                 language,
                 "en",
-                2.5,
+                actual_duration,
                 "A complete idea.",
                 (TranscriptSegment("A complete idea.", 0.5, 2.4),),
                 (
@@ -176,6 +180,51 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             )
 
     interval = TimeRange(18.25, 20.75)
+
+    def render(source, media, clip, config, *, output, work):
+        rendering_inputs.append(source.local_path)
+        # Both stages use the same source with the downloaded video/audio streams.
+        assert source.acquired_range is not None
+        for mapping, encoding in (
+            ("0:v:0", ["-f", "framemd5"]),
+            ("0:a:0", ["-c:a", "pcm_s16le", "-f", "s16le"]),
+        ):
+            decoded = []
+            for path, start in (
+                (remote_file, interval.start),
+                (source.local_path, interval.start - source.timeline_offset),
+            ):
+                data = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-nostdin",
+                        "-ss",
+                        f"{start:.6f}",
+                        "-i",
+                        str(path),
+                        "-t",
+                        "2.5",
+                        "-map",
+                        mapping,
+                        *encoding,
+                        "pipe:1",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                if mapping == "0:v:0":
+                    data = "\n".join(
+                        line.split(",")[-1].strip()
+                        for line in data.decode().splitlines()
+                        if not line.startswith("#")
+                    ).encode()
+                decoded.append(data)
+            assert decoded[0] == decoded[1]
+        return render_raw(source, media, clip, config, output=output, work=work)
+
     transcriber = Transcriber()
     config = AppConfig(
         "https://youtu.be/abc123",
@@ -186,7 +235,7 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         short_aspect_ratio="original",
     )
     try:
-        result = run_pipeline(config, transcriber=transcriber)
+        result = run_pipeline(config, transcriber=transcriber, raw_renderer=render)
         (video,) = result.clip_paths
         media = inspect_media_path(video)
         assert media.duration == pytest.approx(2.5, abs=0.25)
@@ -199,7 +248,14 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
         manifest = json.loads(result.manifest_path.read_text())
         assert manifest["source"]["original_duration"] == original_media.duration
-        assert manifest["source"]["acquired_duration"] == pytest.approx(2.5, abs=0.25)
+        assert 2.5 <= manifest["source"]["acquired_duration"] < 4
+        actual_range = manifest["source"]["acquired_range"]
+        assert actual_range["start"] <= interval.start
+        assert actual_range["end"] >= interval.end
+        assert len(rendering_inputs) == 1
+        if subtitles:
+            assert transcription_inputs == rendering_inputs
+            assert manifest["transcription"]["source_range"] == actual_range
         assert transcriber.calls == int(subtitles)
     finally:
         server.shutdown()

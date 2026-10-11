@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,14 @@ def reset_fake_downloader(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeYoutubeDL.content = b"downloaded media"
     monkeypatch.setattr(youtube_module, "YoutubeDL", FakeYoutubeDL)
     monkeypatch.setattr(youtube_module, "check_media_tools", lambda: None)
+    monkeypatch.setattr(youtube_module, "inspect_media_path", lambda _: None)
+
+    def prepare(source, media, interval, workspace):
+        path = source.local_path.with_name("prepared.mp4")
+        path.write_bytes(source.local_path.read_bytes())
+        return replace(source, local_path=path), None
+
+    monkeypatch.setattr(youtube_module, "prepare_source_range", prepare)
 
 
 def test_adapter_downloads_one_source_into_controlled_workspace(tmp_path: Path) -> None:
@@ -105,7 +114,10 @@ def test_adapter_requests_one_exact_interval_and_preserves_original_identity(
     assert acquired.original_duration == 360.0
     assert acquired.timeline_offset == 100.25
     assert acquired.provider_id == "abc123"
-    assert FakeYoutubeDL.instances[0].options["force_keyframes_at_cuts"] is True
+    assert FakeYoutubeDL.instances[0].options["force_keyframes_at_cuts"] is False
+    assert FakeYoutubeDL.instances[0].options["external_downloader_args"] == {
+        "ffmpeg_o": ["-copyts", "-start_at_zero", "-avoid_negative_ts", "disabled"]
+    }
 
 
 def test_partial_fingerprint_separates_ranges_even_with_identical_media(

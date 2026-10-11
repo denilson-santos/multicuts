@@ -56,7 +56,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.media import extract_transcription_range, probe_media
+from multicuts.media import prepare_source_range, probe_media
 from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
 from multicuts.render import (
     clip_transcript,
@@ -169,29 +169,23 @@ def _transcribe(
     media: MediaInfo,
     transcriber: Transcriber,
     work: Path,
-    range_extractor: Callable[[AcquiredSource, MediaInfo, TimeRange, Path], Path],
+    original_source: AcquiredSource | None,
 ) -> tuple[Transcript, bool, TimeRange | None]:
     version = transcriber.version()
-    local_range = (
-        config.clip_range or config.search_range
-        if source.source_kind == "local"
-        else None
+    cache_sources = (
+        (original_source, source) if original_source is not None else (source,)
     )
-    cache_ranges = (None, local_range) if local_range is not None else (None,)
     source_duration = source.original_duration or media.duration
-    for cache_range in cache_ranges:
+    for cache_source in cache_sources:
         shared, key = transcript_paths(
             config.output_dir,
-            source,
+            cache_source,
             provider_version=version,
             backend=config.asr_backend,
             model=config.transcription_model,
             language=config.language,
-            time_range=cache_range,
         )
-        transcription_range = (
-            cache_range if source.source_kind == "local" else source.acquired_range
-        )
+        transcription_range = cache_source.acquired_range
         cached = None if config.force_recompute else load_transcript(shared, key)
         if cached is not None and (
             cached.provider == "multisubs"
@@ -220,18 +214,8 @@ def _transcribe(
         config.transcription_model,
         config.language or "auto",
     )
-    transcription_input = source.local_path
-    if local_range is not None:
-        logger.info(
-            "Extracting local transcription interval %.2f-%.2fs",
-            local_range.start,
-            local_range.end,
-        )
-        transcription_input = range_extractor(
-            source, media, local_range, work / "transcription-input"
-        )
     transcript = transcriber.transcribe(
-        transcription_input,
+        source.local_path,
         language=config.language,
         backend=config.asr_backend,
         model=config.transcription_model,
@@ -394,8 +378,8 @@ def run_pipeline(
     acquire: SourceAcquirer = acquire_source,
     probe: Callable[[AcquiredSource], MediaInfo] = probe_media,
     range_extractor: Callable[
-        [AcquiredSource, MediaInfo, TimeRange, Path], Path
-    ] = extract_transcription_range,
+        [AcquiredSource, MediaInfo, TimeRange, Path], tuple[AcquiredSource, MediaInfo]
+    ] = prepare_source_range,
     transcriber: Transcriber | None = None,
     backend: JsonBackend | None = None,
     raw_renderer: Callable[..., tuple[Path, MediaInfo, str]] = render_raw,
@@ -433,14 +417,22 @@ def run_pipeline(
         source = acquire(
             config.source, work / "acquisition", time_range=requested_range
         )
-        if (
-            (source.source_kind == "youtube" and requested_range is not None)
-            or source.acquired_range is not None
-        ) and source.acquired_range != requested_range:
+        if requested_range is None and source.acquired_range is not None:
+            raise AcquisitionError("Unexpected partial source acquisition")
+        if (source.source_kind == "youtube" and requested_range is not None) and (
+            source.acquired_range is None
+            or source.acquired_range.start > requested_range.start + 0.001
+            or source.acquired_range.end < requested_range.end - 0.001
+        ):
             raise AcquisitionError(
                 "Source acquisition did not preserve the requested interval"
             )
         media = probe(source)
+        original_source = (
+            source
+            if source.source_kind == "local" and requested_range is not None
+            else None
+        )
         source_duration = (
             source.original_duration
             if source.original_duration is not None
@@ -496,6 +488,15 @@ def run_pipeline(
                 and not square_output
                 and config.subtitles_for(clip_class, variant=True)
             )
+        if original_source is not None and requested_range is not None:
+            logger.info(
+                "Copying local source interval %.2f-%.2fs without reencoding",
+                requested_range.start,
+                requested_range.end,
+            )
+            source, media = range_extractor(
+                source, media, requested_range, work / "range-source"
+            )
         logger.info(
             "Source ready: %.1fs, %dx%d (%.1fs elapsed)",
             media.duration,
@@ -511,7 +512,7 @@ def run_pipeline(
             transcription_started = perf_counter()
             provider = transcriber or MultisubsAdapter()
             transcript, transcript_hit, transcription_range = _transcribe(
-                config, source, media, provider, work, range_extractor
+                config, source, media, provider, work, original_source
             )
             logger.info(
                 "Transcript ready: %d segments, %d words, language=%s (%.1fs)",

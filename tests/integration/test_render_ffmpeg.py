@@ -58,6 +58,8 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
     )
     source_media = inspect_media_path(source_path)
     provider_version = MultisubsAdapter().version() if subtitles else "unused"
+    transcription_inputs: list[Path] = []
+    rendering_inputs: list[Path] = []
 
     class Transcriber:
         calls = 0
@@ -76,14 +78,13 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
             workspace: Path,
         ) -> Transcript:
             self.calls += 1
+            transcription_inputs.append(video_path)
             factor = 1.0
             if interval is not None:
                 assert video_path != source_path
-                expected_duration = interval.end - interval.start
-                assert inspect_media_path(video_path).duration == pytest.approx(
-                    expected_duration, abs=0.25
-                )
-                factor = expected_duration / 2.5
+                actual_duration = inspect_media_path(video_path).duration
+                assert actual_duration >= interval.end - interval.start
+                factor = actual_duration / 2.5
             else:
                 assert video_path == source_path
             return Transcript(
@@ -114,8 +115,19 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
         render_variants=False,
         short_aspect_ratio="original",
     )
+
+    def render(source, media, clip, current, *, output, work):
+        rendering_inputs.append(source.local_path)
+        return render_raw(source, media, clip, current, output=output, work=work)
+
     transcriber = Transcriber()
-    result = run_pipeline(config, transcriber=transcriber, backend=Backend())
+    result = run_pipeline(
+        config, transcriber=transcriber, backend=Backend(), raw_renderer=render
+    )
+    assert len(rendering_inputs) == 1
+    assert (rendering_inputs[0] != source_path) == (interval is not None)
+    if subtitles:
+        assert transcription_inputs == rendering_inputs
     assert transcriber.calls == int(subtitles)
     (video,) = result.clip_paths
     actual = inspect_media_path(video)
@@ -130,11 +142,14 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
     assert metadata["viral_potential"] is None
     assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
     manifest = json.loads(result.manifest_path.read_text())
-    assert manifest["source"]["acquired_range"] is None
+    acquired_range = manifest["source"]["acquired_range"]
+    if interval is None:
+        assert acquired_range is None
+    else:
+        assert acquired_range["start"] <= interval.start
+        assert acquired_range["end"] >= interval.end
     if subtitles:
-        assert manifest["transcription"]["source_range"] == (
-            {"start": interval.start, "end": interval.end} if interval else None
-        )
+        assert manifest["transcription"]["source_range"] == acquired_range
     assert not (result.manifest_path.parent / ".work").exists()
 
 

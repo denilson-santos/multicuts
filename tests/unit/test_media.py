@@ -8,9 +8,9 @@ import pytest
 from multicuts.errors import MediaError
 from multicuts.media import (
     check_media_tools,
-    extract_transcription_range,
     inspect_media_path,
     normalize_media_probe,
+    prepare_source_range,
     probe_media,
     validate_media_for_transcription,
 )
@@ -39,7 +39,45 @@ def probe_payload() -> dict[str, object]:
     }
 
 
-def test_extract_transcription_range_preserves_source_and_maps_probed_streams(
+@pytest.mark.parametrize("value", ["invalid", "nan", True])
+def test_probe_rejects_invalid_media_start_time(
+    value: object, probe_payload: dict[str, object]
+) -> None:
+    probe_payload["format"] = {"duration": "12.5", "start_time": value}
+    with pytest.raises(MediaError, match="start time"):
+        normalize_media_probe(probe_payload)
+
+
+@pytest.mark.parametrize(("preskip", "delay"), [("3801", 0.0065), ("e001", 0.01)])
+def test_probe_normalizes_opus_header_delay(
+    preskip: str, delay: float, probe_payload: dict[str, object]
+) -> None:
+    streams = probe_payload["streams"]
+    assert isinstance(streams, list)
+    streams[1].update(
+        {
+            "codec_name": "opus",
+            "extradata": (
+                f"\n00000000: 4f70 7573 4865 6164 0102 {preskip} 80bb 0000"
+                "  OpusHead........\n"
+            ),
+        }
+    )
+    assert normalize_media_probe(probe_payload).audio_codec_delay == delay
+
+
+@pytest.mark.parametrize("header", [None, "invalid", "00000000: ffff 0000  ...."])
+def test_probe_rejects_missing_or_malformed_opus_header(
+    header: object, probe_payload: dict[str, object]
+) -> None:
+    streams = probe_payload["streams"]
+    assert isinstance(streams, list)
+    streams[1].update({"codec_name": "opus", "extradata": header})
+    with pytest.raises(MediaError, match="Opus codec delay"):
+        normalize_media_probe(probe_payload)
+
+
+def test_prepare_source_range_preserves_source_and_maps_probed_streams(
     probe_payload: dict[str, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original = tmp_path / "source video.mp4"
@@ -56,16 +94,29 @@ def test_extract_transcription_range_preserves_source_and_maps_probed_streams(
         commands.append(command)
         if command[0] == "ffmpeg" and "-version" not in command:
             Path(command[-1]).write_bytes(b"partial media")
-        return subprocess.CompletedProcess(command, 0, json.dumps(probe_payload), "")
+        payload = dict(probe_payload)
+        payload["format"] = {
+            "duration": "2.5",
+            "start_time": "6.25"
+            if len([c for c in commands if c[0] == "ffprobe" and "-version" not in c])
+            == 1
+            else "0",
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
 
     monkeypatch.setattr("multicuts.media.subprocess.run", run)
-    extracted = extract_transcription_range(
+    prepared, prepared_media = prepare_source_range(
         source, media, TimeRange(6.25, 8.75), tmp_path / "work"
     )
+    extracted = prepared.local_path
+    assert prepared.timeline_offset == 6.25
+    assert prepared_media.duration == 2.5
     assert extracted.is_relative_to(tmp_path / "work")
     assert extracted.read_bytes() == b"partial media"
     assert original.read_bytes() == b"original"
-    (command,) = [c for c in commands if c[0] == "ffmpeg" and "-version" not in c]
+    copies = [c for c in commands if c[0] == "ffmpeg" and "-version" not in c]
+    assert len(copies) == 2
+    command = copies[0]
     assert command[command.index("-ss") + 1] == "6.250000"
     assert command[command.index("-t") + 1] == "2.500000"
     assert command[command.index("-i") + 1] == str(original)
@@ -73,42 +124,65 @@ def test_extract_transcription_range_preserves_source_and_maps_probed_streams(
         "0:3",
         "0:5",
     ]
-    assert command[command.index("-c:a") + 1] == "flac"
-    assert command[command.index("-ar") + 1] == "16000"
-    assert command[command.index("-ac") + 1] == "1"
+    for copy in copies:
+        assert copy[copy.index("-c") + 1] == "copy"
+        assert "-copyts" in copy and "-start_at_zero" in copy
+        assert not {"-vf", "-crf", "-r", "-maxrate", "-ar", "-ac"}.intersection(copy)
 
 
-@pytest.mark.parametrize("failure", ["encode", "duration", "audio", "probe", "os"])
-def test_failed_transcription_range_is_removed_and_diagnostics_are_safe(
+@pytest.mark.parametrize(
+    "failure",
+    ["encode", "coverage", "audio", "probe", "os", "timeline", "geometry", "remux"],
+)
+def test_failed_source_range_is_removed_and_diagnostics_are_safe(
     failure: str,
     probe_payload: dict[str, object],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     media = normalize_media_probe(probe_payload)
-    probe_payload["format"] = {"duration": "2.5" if failure != "duration" else "12.5"}
+    probe_payload["format"] = {"duration": "2.5"}
     if failure == "audio":
         streams = probe_payload["streams"]
         assert isinstance(streams, list)
         probe_payload["streams"] = [streams[0]]
 
+    probes = 0
+    copies = 0
+
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal probes, copies
         if "-version" in command:
             return subprocess.CompletedProcess(command, 0, "", "")
         if command[0] == "ffmpeg":
+            copies += 1
             Path(command[-1]).write_bytes(b"incomplete")
             if failure == "os":
                 raise OSError("private source metadata")
             return subprocess.CompletedProcess(
-                command, int(failure == "encode"), "", "private source metadata"
+                command,
+                int(failure == "encode" or (failure == "remux" and copies == 2)),
+                "",
+                "private source metadata",
             )
+        probes += 1
+        probe_payload["format"] = {
+            "duration": "2.5",
+            "start_time": ("9" if failure == "coverage" else "6.25")
+            if probes == 1
+            else ("1" if failure == "timeline" else "0"),
+        }
+        if failure == "geometry" and probes == 2:
+            streams = probe_payload["streams"]
+            assert isinstance(streams, list)
+            streams[0]["width"] = 1280
         payload = "invalid" if failure == "probe" else json.dumps(probe_payload)
         return subprocess.CompletedProcess(command, 0, payload, "")
 
     monkeypatch.setattr("multicuts.media.subprocess.run", run)
     work = tmp_path / "work"
     with pytest.raises(MediaError) as caught:
-        extract_transcription_range(
+        prepare_source_range(
             AcquiredSource(tmp_path / "source.mp4", "source"),
             media,
             TimeRange(6.25, 8.75),
@@ -134,7 +208,7 @@ def test_invalid_transcription_range_fails_before_ffmpeg(
 
     monkeypatch.setattr("multicuts.media.subprocess.run", unexpected_run)
     with pytest.raises(MediaError):
-        extract_transcription_range(
+        prepare_source_range(
             AcquiredSource(tmp_path / "source.mp4", "source"),
             media,
             TimeRange(6, 14),

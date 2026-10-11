@@ -46,28 +46,31 @@ have subtitles disabled; otherwise reuse the shared source transcript once.
 Preserve exact requested media boundaries without inventing ASR timestamps.
 Direct titles use the source filename or YouTube title, truncated to 120 characters.
 
-For local range requests needing ASR, check a validated full-source cache first,
-then the exact interval cache, using the configured provider version, backend,
-model, and language. On a miss, extract one exact private video segment with
-FFmpeg because the public multisubs transcription API requires video geometry.
-Keep this input compact with low-frame-rate video, a constrained video bitrate,
-and mono 16 kHz FLAC audio; preserve requested audio bounds and original source
-times. Published media quality must come from the original source.
-Preserve the original and render final cuts directly from it. Validate the
-temporary segment before ASR and remove it with other intermediates unless
-retention is requested. Store file-local ASR timings and restore original times
-after reading or writing the cache. Never satisfy a full-source request with a
-partial transcript. Direct cuts without published captions skip extraction and
-ASR; unrestricted and full-video requests retain full-source transcription.
+Local and YouTube range requests prepare one private source segment by copying
+the selected video and audio streams without reencoding, scaling, frame-rate
+reduction, or bitrate overrides. Both fresh transcription and final rendering
+must use this shared segment. Preserve the original local file. Keyframe and
+codec packet padding may extend the acquired segment beyond the requested
+range; record its actual source offset and restrict discovery and final cuts to
+the user's bounds. Preserve presentation geometry, rotation, and audio sync.
 
-YouTube `--search-range` and `--clip-range` use partial acquisition through the
-public yt-dlp API with accurate FFmpeg boundaries. Validate FFmpeg/ffprobe before
-partial acquisition and reject live, unfinished, unknown-duration, or
-out-of-source intervals before downloading media. Reject provider interval or
-media-duration mismatches before ASR; never silently fall back to full download.
-Media headers and neighboring fragments may also be transferred. Preserve
-original source times in AI input and artifacts while rendering from file-local
-times. Unrestricted YouTube and `--clip-full` still acquire the full video.
+For local ranges, check a compatible complete transcript cache first, then the
+shared segment cache, using provider version, backend, model, and language.
+Fresh ASR transcribes the shared range source once. Store file-local ASR timings
+and restore original times after reading or writing the cache. Never satisfy a
+full-source request with a partial transcript. Direct cuts without published
+captions still prepare the range source but skip ASR. Validate the segment before
+processing and remove it with other intermediates unless retention is requested.
+Unrestricted and full-video requests continue using the complete source.
+
+YouTube ranges use yt-dlp's public download-ranges API without forced keyframe
+reencoding. Validate FFmpeg/ffprobe before partial acquisition and reject live,
+unfinished, unknown-duration, or out-of-source intervals before downloading.
+Validate provider section metadata and copied media coverage before ASR; never
+silently fall back to full download or lossy encoding. Media headers and
+neighboring fragments may also be transferred. Preserve original source times
+in AI input and artifacts while rendering from file-local times. Unrestricted
+YouTube and `--clip-full` still acquire the full video.
 
 Manifest schema 4 records `selection_mode` (`automatic`, `custom`, `full_video`)
 and the effective direct `clip_range` (null for automatic runs). Direct runs have
@@ -77,7 +80,8 @@ schema 2 records the same selection mode and uses null `viral_potential` and
 `transcript_unit_ids` for direct cuts, with empty transcript text when ASR is
 skipped. Automatic scoring meaning and composition remain unchanged.
 Manifest source provenance records original and acquired durations plus the
-acquired interval, using null for a full-source acquisition.
+actual acquired interval, including keyframe padding, using null for a
+full-source acquisition.
 `transcription.source_range` records the actual ASR source interval, or null for
 a full-source transcript, including a reused complete local cache.
 

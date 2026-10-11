@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from multicuts.errors import AcquisitionError, ConfigurationError, MediaError
-from multicuts.media import check_media_tools
+from multicuts.media import check_media_tools, inspect_media_path, prepare_source_range
 from multicuts.models import AcquiredSource, TimeRange
 from multicuts.source import parse_youtube_url
 
@@ -108,7 +108,10 @@ def _options(workspace: Path, time_range: TimeRange | None) -> dict[str, object]
             return [{"start_time": time_range.start, "end_time": time_range.end}]
 
         options["download_ranges"] = download_ranges
-        options["force_keyframes_at_cuts"] = True
+        options["force_keyframes_at_cuts"] = False
+        options["external_downloader_args"] = {
+            "ffmpeg_o": ["-copyts", "-start_at_zero", "-avoid_negative_ts", "disabled"]
+        }
     return options
 
 
@@ -345,9 +348,19 @@ class YoutubeAdapter:
             downloader_factory = cast(_DownloaderFactory, YoutubeDL)
             with downloader_factory(options) as downloader:
                 info = downloader.extract_info(source, download=True)
-                return _normalize_result(
+                acquired = _normalize_result(
                     info, downloader, resolved_workspace, source, time_range
                 )
+                if time_range is not None:
+                    prepared, _ = prepare_source_range(
+                        acquired,
+                        inspect_media_path(acquired.local_path),
+                        time_range,
+                        resolved_workspace / "range-source",
+                    )
+                    acquired.local_path.unlink()
+                    return prepared
+                return acquired
         except (AcquisitionError, ConfigurationError, MediaError):
             raise
         except Exception:

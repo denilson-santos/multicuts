@@ -377,8 +377,9 @@ def test_invalid_direct_cut_fails_before_asr(tmp_path: Path, kwargs: dict) -> No
 
 @pytest.mark.parametrize("mode", ["custom", "automatic"])
 @pytest.mark.parametrize("subtitles", [False, True])
+@pytest.mark.parametrize("padding", [0.0, 2.0])
 def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
-    mode: str, subtitles: bool, tmp_path: Path
+    mode: str, subtitles: bool, padding: float, tmp_path: Path
 ) -> None:
     interval = TimeRange(600.25, 720.5)
     acquisition_ranges: list[TimeRange | None] = []
@@ -401,7 +402,7 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
             "abc123",
             "Source title",
             source,
-            time_range,
+            TimeRange(time_range.start - padding, time_range.end + padding),
             1800.0,
         )
 
@@ -420,16 +421,21 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
             return Transcript(
                 language,
                 "en",
-                120.25,
+                120.25 + 2 * padding,
                 "First point. Second point.",
                 (
-                    TranscriptSegment("First point.", 0.5, 30),
-                    TranscriptSegment("Second point.", 40, 110),
+                    TranscriptSegment("First point.", 0.5 + padding, 30 + padding),
+                    TranscriptSegment("Second point.", 40 + padding, 110 + padding),
                 ),
                 (
-                    Word("First", 0.5, 1, source_segment_index=0),
-                    Word("point.", 1, 1, source_segment_index=0),
-                    Word("Second point.", 40, 41.5, source_segment_index=1),
+                    Word("First", 0.5 + padding, 1 + padding, source_segment_index=0),
+                    Word("point.", 1 + padding, 1 + padding, source_segment_index=0),
+                    Word(
+                        "Second point.",
+                        40 + padding,
+                        41.5 + padding,
+                        source_segment_index=1,
+                    ),
                 ),
                 "multisubs",
                 self.version(),
@@ -452,7 +458,7 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
                 }
             return super().complete(prompt, schema)
 
-    media = replace(_media(), duration=120.25)
+    media = replace(_media(), duration=120.25 + 2 * padding)
 
     def raw_renderer(source, _media, clip, config, *, output, work):
         assert source.acquired_range is not None
@@ -510,8 +516,11 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
     assert ai.calls == (2 if mode == "automatic" else 0)
     manifest = json.loads(repeated.manifest_path.read_text())
     assert manifest["source"]["original_duration"] == 1800
-    assert manifest["source"]["acquired_duration"] == 120.25
-    assert manifest["source"]["acquired_range"] == {"start": 600.25, "end": 720.5}
+    assert manifest["source"]["acquired_duration"] == 120.25 + 2 * padding
+    assert manifest["source"]["acquired_range"] == {
+        "start": 600.25 - padding,
+        "end": 720.5 + padding,
+    }
     if needs_asr:
         assert manifest["transcription"]["cache_hit"]
         assert all(
@@ -519,8 +528,8 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         )
         (cached,) = (config.output_dir / ".cache" / "transcripts").glob("*.json")
         content = json.loads(cached.read_text())["transcript"]
-        assert content["duration"] == 120.25
-        assert content["words"][0]["start"] == 0.5
+        assert content["duration"] == 120.25 + 2 * padding
+        assert content["words"][0]["start"] == 0.5 + padding
     else:
         assert manifest["transcription"] is None
     assert first.manifest_path != repeated.manifest_path
@@ -613,9 +622,12 @@ def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
     first, repeated = run(config), run(config)
     needs_asr = subtitles or mode == "automatic"
     assert asr.calls == int(needs_asr)
-    assert extracted == ([interval] if needs_asr else [])
+    assert extracted == [interval, interval]
     manifest = json.loads(repeated.manifest_path.read_text())
-    assert manifest["source"]["acquired_range"] is None
+    assert manifest["source"]["acquired_range"] == {
+        "start": interval.start,
+        "end": interval.end,
+    }
     if needs_asr:
         assert manifest["transcription"]["cache_hit"]
         assert manifest["transcription"]["source_range"] == {
@@ -640,7 +652,7 @@ def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
     )
     run(changed_config)
     assert asr.calls == 2 * int(needs_asr)
-    assert extracted == ([interval, changed] if needs_asr else [])
+    assert extracted == [interval, interval, changed]
     # A partial cache must never satisfy a request for the full source.
     full = replace(config, clip_range=None, search_range=None, full_video=True)
     full_result = run(full)
@@ -655,7 +667,7 @@ def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
         before = asr.calls
         reused = run(config)
         assert asr.calls == before
-        assert extracted == [interval, changed]
+        assert extracted == [interval, interval, changed, interval]
         assert (
             json.loads(reused.manifest_path.read_text())["transcription"][
                 "source_range"
@@ -663,7 +675,9 @@ def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
             is None
         )
     run(replace(config, force_recompute=True))
-    assert extracted == ([interval, changed, interval] if needs_asr else [])
+    assert extracted == [interval, interval, changed] + (
+        [interval] if subtitles else []
+    ) + [interval]
 
 
 @pytest.mark.parametrize("failure", ["malformed", "provider", "language"])
@@ -735,7 +749,13 @@ def _run(
         output: Path,
         work: Path,
     ):
-        assert _source.local_path == source_file
+        if _source.acquired_range is None:
+            assert _source.local_path == source_file
+        else:
+            assert _source.local_path != source_file
+            assert _source.local_path.is_file()
+            assert _source.acquired_range.start <= clip.proposal.start
+            assert _source.acquired_range.end >= clip.proposal.end
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"raw")
         ratio = (
@@ -820,9 +840,15 @@ def _run(
         if extraction_calls is not None:
             extraction_calls.append(interval)
         workspace.mkdir(parents=True)
-        path = workspace / "transcription.range"
+        path = workspace / "source.range"
         path.write_text(json.dumps([interval.start, interval.end]), encoding="utf-8")
-        return path
+        return replace(
+            source,
+            local_path=path,
+            acquired_range=interval,
+            original_duration=media.duration,
+            fingerprint=f"{source.fingerprint}:{float(interval.start)}-{float(interval.end)}:streamcopy",
+        ), replace(media, duration=interval.end - interval.start)
 
     return run_pipeline(
         current,

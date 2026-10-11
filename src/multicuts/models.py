@@ -95,10 +95,8 @@ class AcquiredSource:
                 "partial sources require both a range and original duration"
             )
         if self.acquired_range is not None:
-            if self.source_kind != "youtube" or not isinstance(
-                self.acquired_range, TimeRange
-            ):
-                raise ValueError("only YouTube sources can carry an acquired range")
+            if not isinstance(self.acquired_range, TimeRange):
+                raise ValueError("acquired range must be a time range")
             if (
                 isinstance(self.original_duration, bool)
                 or not isinstance(self.original_duration, (int, float))
@@ -125,6 +123,8 @@ class MediaInfo:
     video_stream_index: int
     audio_stream_index: int | None
     rotation_degrees: float = 0.0
+    start_time: float = 0.0
+    audio_codec_delay: float = 0.0
 
     def __post_init__(self) -> None:
         if not isfinite(self.duration) or self.duration <= 0:
@@ -145,6 +145,10 @@ class MediaInfo:
             raise ValueError("stream indexes must be non-negative")
         if not isfinite(self.rotation_degrees):
             raise ValueError("media rotation must be finite")
+        if not isfinite(self.start_time):
+            raise ValueError("media start time must be finite")
+        if not isfinite(self.audio_codec_delay) or self.audio_codec_delay < 0:
+            raise ValueError("audio codec delay must be finite and nonnegative")
 
     @property
     def has_audio(self) -> bool:

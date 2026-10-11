@@ -1,9 +1,12 @@
 """FFprobe boundary and normalized media geometry."""
 
 import json
+import os
 import subprocess
 import tempfile
-from math import isclose, isfinite
+from dataclasses import replace
+from hashlib import sha256
+from math import ceil, isclose, isfinite
 from pathlib import Path
 
 from multicuts.errors import MediaError
@@ -56,6 +59,7 @@ def inspect_media_path(path: Path) -> MediaInfo:
         "error",
         "-show_format",
         "-show_streams",
+        "-show_data",
         "-of",
         "json",
         str(path),
@@ -94,99 +98,132 @@ def validate_media_for_transcription(media: MediaInfo) -> None:
         raise MediaError("No usable audio stream found; source cannot be transcribed")
 
 
-def extract_transcription_range(
+def prepare_source_range(
     source: AcquiredSource,
     media: MediaInfo,
     interval: TimeRange,
     workspace: Path,
-) -> Path:
-    """Prepare an exact private interval for the video-only public ASR API."""
+) -> tuple[AcquiredSource, MediaInfo]:
+    """Copy a shared range source, retaining keyframe padding and its real offset."""
     validate_media_for_transcription(media)
-    if interval.end > media.duration:
-        raise MediaError("Transcription interval exceeds source media duration")
+    original_duration = source.original_duration or media.duration
+    if interval.end > original_duration:
+        raise MediaError("Requested interval exceeds source media duration")
     check_media_tools()
-    temporary: Path | None = None
-    complete = False
     try:
         workspace.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            dir=workspace, prefix="transcription-range-", suffix=".mkv", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-ss",
-            f"{interval.start:.6f}",
-            "-i",
-            str(source.local_path),
-            "-t",
-            f"{interval.end - interval.start:.6f}",
-            "-map",
-            f"0:{media.video_stream_index}",
-            "-map",
-            f"0:{media.audio_stream_index}",
-            # ASR uses audio, but the public multisubs API also requires video
-            # geometry. Limit this private video's size; final cuts use the source.
-            "-vf",
-            "fps=5:start_time=0:round=up",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "35",
-            "-maxrate",
-            "128k",
-            "-bufsize",
-            "256k",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "flac",
-            "-sample_fmt",
-            "s16",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-y",
-            str(temporary),
-        ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        if result.returncode != 0:
-            raise MediaError(
-                "Could not extract the transcription interval with FFmpeg "
-                f"(exit code {result.returncode})"
+        # MP4/MOV retain display-matrix rotation; Matroska accepts the other
+        # source codecs without selecting a lossy fallback encoder.
+        suffix = source.local_path.suffix.lower()
+        suffix = suffix if suffix in {".mp4", ".mov"} else ".mkv"
+        output = workspace / source.local_path.with_suffix(suffix).name
+        with tempfile.TemporaryDirectory(dir=workspace) as private:
+            raw_path = source.local_path
+            raw_media = media
+            if source.acquired_range is None:
+                raw_path = Path(private) / f"source-timestamps{suffix}"
+                _copy_media(source.local_path, raw_path, media, interval=interval)
+                raw_media = inspect_media_path(raw_path)
+            # The first copy keeps source timestamps, so the preceding keyframe
+            # never becomes an unrecorded shift. Normalize only after probing it.
+            start = max(0.0, raw_media.start_time)
+            normalized = Path(private) / f"normalized{suffix}"
+            # yt-dlp's Matroska download also remuxes Opus once; compensate
+            # that codec-delay subtraction as well as this normalization pass.
+            extra_audio_delay = (
+                raw_media.audio_codec_delay
+                if source.source_kind == "youtube"
+                and raw_path.suffix.lower() in {".webm", ".mkv"}
+                else 0.0
             )
-        extracted = inspect_media_path(temporary)
-        validate_media_for_transcription(extracted)
-        if not isclose(
-            extracted.duration,
-            interval.end - interval.start,
-            rel_tol=0,
-            abs_tol=0.25,
-        ):
-            raise MediaError(
-                "Extracted media duration differs from transcription interval"
+            _copy_media(
+                raw_path, normalized, raw_media, extra_audio_delay=extra_audio_delay
             )
-        complete = True
-        return temporary
+            prepared_media = inspect_media_path(normalized)
+            validate_media_for_transcription(prepared_media)
+            if abs(prepared_media.start_time) > 0.001:
+                raise MediaError("Copied source timeline could not be normalized")
+            end = min(original_duration, start + prepared_media.duration)
+            if start > interval.start + 0.001 or end < interval.end - 0.001:
+                raise MediaError("Copied source does not cover the requested interval")
+            if (
+                prepared_media.presentation_width != media.presentation_width
+                or prepared_media.presentation_height != media.presentation_height
+            ):
+                raise MediaError("Copied source changed presentation geometry")
+            acquired_range = TimeRange(start, end)
+            identity = json.dumps(
+                [
+                    source.fingerprint,
+                    float(interval.start),
+                    float(interval.end),
+                    start,
+                    end,
+                    "stream-copy-v1",
+                ],
+                separators=(",", ":"),
+            )
+            prepared_source = replace(
+                source,
+                local_path=output,
+                fingerprint="sha256-v1:" + sha256(identity.encode("utf-8")).hexdigest(),
+                acquired_range=acquired_range,
+                original_duration=original_duration,
+            )
+            os.link(normalized, output)
+        return prepared_source, prepared_media
     except OSError as exc:
-        raise MediaError("Could not prepare the transcription interval") from exc
-    finally:
-        if temporary is not None and not complete:
-            temporary.unlink(missing_ok=True)
+        raise MediaError("Could not prepare the source interval") from exc
+
+
+def _copy_media(
+    source: Path,
+    output: Path,
+    media: MediaInfo,
+    *,
+    interval: TimeRange | None = None,
+    extra_audio_delay: float = 0.0,
+) -> None:
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if interval is not None:
+        if interval.start:
+            command += ["-ss", f"{interval.start:.6f}"]
+        command += ["-t", f"{interval.end - interval.start:.6f}"]
+    command += ["-i", str(source), "-map", f"0:{media.video_stream_index}"]
+    if media.audio_stream_index is not None:
+        command += ["-map", f"0:{media.audio_stream_index}"]
+    command += [
+        "-c",
+        "copy",
+        "-copyts",
+        "-start_at_zero",
+        "-avoid_negative_ts",
+        "disabled",
+    ]
+    if output.suffix == ".mkv" and media.audio_codec_delay:
+        delay = media.audio_codec_delay + extra_audio_delay
+        if extra_audio_delay:
+            # Each Matroska mux pass rounds CodecDelay to millisecond ticks.
+            delay = (
+                ceil(media.audio_codec_delay * 1000) + ceil(extra_audio_delay * 1000)
+            ) / 1000
+        # Matroska subtracts CodecDelay when remuxing Opus. Restore packet
+        # timestamps without changing the encoded audio or its pre-skip header.
+        command += ["-bsf:a", f"setts=pts=PTS+{delay:.9f}/TB:dts=DTS+{delay:.9f}/TB"]
+    command += ["-y", str(output)]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise MediaError(
+            "Could not copy the source interval with FFmpeg "
+            f"(exit code {result.returncode}); source streams must support remuxing"
+        )
 
 
 def normalize_media_probe(payload: object) -> MediaInfo:
@@ -241,9 +278,48 @@ def normalize_media_probe(payload: object) -> MediaInfo:
             video_stream_index=video_index,
             audio_stream_index=audio_index,
             rotation_degrees=rotation,
+            start_time=_media_start_time(media_format.get("start_time", "0")),
+            audio_codec_delay=_audio_codec_delay(streams, audio_index),
         )
     except ValueError as exc:
         raise MediaError("Media stream metadata is invalid") from exc
+
+
+def _media_start_time(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise MediaError("Media start time is invalid")
+    try:
+        start = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise MediaError("Media start time is invalid") from exc
+    if not isfinite(start):
+        raise MediaError("Media start time is invalid")
+    return start
+
+
+def _audio_codec_delay(streams: list[object], index: int | None) -> float:
+    for stream in streams:
+        if not isinstance(stream, dict) or stream.get("index") != index:
+            continue
+        if stream.get("codec_name") != "opus":
+            return 0.0
+        data = stream.get("extradata")
+        if not isinstance(data, str):
+            raise MediaError("Opus codec delay metadata is missing")
+        try:
+            header = bytes.fromhex(
+                "".join(
+                    line.split(":", 1)[1].split("  ", 1)[0].replace(" ", "")
+                    for line in data.splitlines()
+                    if ":" in line
+                )
+            )
+        except ValueError as exc:
+            raise MediaError("Opus codec delay metadata is invalid") from exc
+        if len(header) < 12 or header[:8] != b"OpusHead":
+            raise MediaError("Opus codec delay metadata is invalid")
+        return int.from_bytes(header[10:12], "little") / 48000
+    return 0.0
 
 
 def _select_video_stream(streams: list[object]) -> dict[str, object]:

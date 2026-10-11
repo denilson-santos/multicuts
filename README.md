@@ -308,18 +308,24 @@ is acquired.
 
 Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
 duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
-Accurate interval boundaries require reencoding during acquisition; remote media
-headers and adjacent fragments may also be transferred.
+The downloaded streams are copied without reencoding or reducing resolution,
+frame rate, or audio quality. Remote headers and adjacent fragments may also be
+transferred.
 
-Local `--search-range` and `--clip-range` requests check the full-source transcript
-cache first, then the interval cache. On a miss, a precise temporary video segment
-is prepared for the public multisubs API, which requires video geometry. The
-original stays intact and is used directly for final rendering. The temporary
-segment uses video at 5 fps with a constrained bitrate and mono 16 kHz FLAC audio
-to reduce disk usage while retaining the audio used for transcription. It is
-removed unless `--keep-intermediates` is enabled. Different intervals
-have separate transcript caches; `--force-recompute` bypasses both cache choices.
-Direct cuts without published subtitles skip transcription and temporary extraction.
+Local `--search-range` and `--clip-range` requests also prepare one range source
+by copying the original video and audio streams. Both transcription and final
+rendering read this file. Copying compressed streams can retain neighboring
+keyframe data; the pipeline records the actual source offset and applies the
+requested bounds when selecting and rendering cuts. This preserves image detail
+for framing and computer vision without a low-quality transcription proxy.
+
+Compatible complete local transcript caches are checked first, then the range
+cache. Fresh ASR processes the shared range source once. The original stays
+intact, and the private range source is removed unless `--keep-intermediates` is
+enabled. Different ranges have separate caches; `--force-recompute` bypasses
+both cache choices. Direct cuts without published subtitles skip ASR while still
+preparing the shared range source. Unrestricted and `--clip-full` local requests
+continue using the original file.
 
 **Keep the source framing and disable subtitles**
 
