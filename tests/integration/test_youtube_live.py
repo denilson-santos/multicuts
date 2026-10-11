@@ -185,6 +185,8 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         rendering_inputs.append(source.local_path)
         # Both stages use the same source with the downloaded video/audio streams.
         assert source.acquired_range is not None
+        assert clip.proposal.start == source.acquired_range.start
+        assert clip.proposal.end == source.acquired_range.end
         for mapping, encoding in (
             ("0:v:0", ["-f", "framemd5"]),
             ("0:a:0", ["-c:a", "pcm_s16le", "-f", "s16le"]),
@@ -238,24 +240,42 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         result = run_pipeline(config, transcriber=transcriber, raw_renderer=render)
         (video,) = result.clip_paths
         media = inspect_media_path(video)
-        assert media.duration == pytest.approx(2.5, abs=0.25)
         assert media.has_audio
         assert any(start > 0 for start in requests), (
             "FFmpeg must seek into remote media"
         )
         metadata = json.loads(video.with_suffix(".json").read_text())
-        assert (metadata["start"], metadata["end"]) == (18.25, 20.75)
         assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
         manifest = json.loads(result.manifest_path.read_text())
+        assert manifest["requested_clip_range"] == {"start": 18.25, "end": 20.75}
         assert manifest["source"]["original_duration"] == original_media.duration
         assert 2.5 <= manifest["source"]["acquired_duration"] < 4
         actual_range = manifest["source"]["acquired_range"]
         assert actual_range["start"] <= interval.start
         assert actual_range["end"] >= interval.end
+        assert actual_range["start"] < interval.start
+        assert manifest["clip_range"] == actual_range
+        assert (metadata["start"], metadata["end"]) == (
+            actual_range["start"],
+            actual_range["end"],
+        )
+        assert media.duration == pytest.approx(
+            actual_range["end"] - actual_range["start"], abs=0.25
+        )
         assert len(rendering_inputs) == 1
         if subtitles:
             assert transcription_inputs == rendering_inputs
             assert manifest["transcription"]["source_range"] == actual_range
+            cues_path = next(
+                path
+                for path in metadata["subtitle_files"]
+                if path.endswith(".cues.json")
+            )
+            cues = json.loads((result.manifest_path.parent / cues_path).read_text())[
+                "cues"
+            ]
+            assert cues[0]["start"] == pytest.approx(0.5)
+            assert cues[0]["words"][0]["start"] == pytest.approx(0.5)
         assert transcriber.calls == int(subtitles)
     finally:
         server.shutdown()

@@ -264,10 +264,10 @@ original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
 seconds. Units crossing either edge are excluded; an interval without complete
 units produces zero clips. Bounds must be ordered and within the source duration.
 Local files reuse a compatible full-source transcript when it is cached;
-otherwise, only the requested interval is transcribed. For YouTube sources,
-only the requested interval is acquired and transcribed.
+otherwise, the prepared range source is transcribed, including any keyframe
+padding. YouTube acquisition also includes only the range and required padding.
 
-**Render one exact interval**
+**Render one interval**
 
 ```bash
 multicuts source.mp4 --output-dir out --clip-range 00:01:30.25 00:02:45
@@ -284,6 +284,13 @@ discovery, boundary adjustments, ranking, or editorial rejection. No AI backend,
 model, or credentials are required. The full-video mode includes silence before
 and after speech, using the probed media duration. These options and
 `--search-range` are mutually exclusive and CLI-only.
+
+Local `--clip-range` cuts keep the exact requested bounds. For YouTube URLs, the
+final cut uses the entire acquired interval, including neighboring keyframe or
+codec packet data. Its start and end may differ from the requested times. The
+CLI reports both intervals before transcription/rendering, and the manifest
+records `requested_clip_range` separately from the effective `clip_range`.
+Clip metadata and subtitle timings describe the actual output interval.
 
 Direct cuts use the same subtitle, framing, and variant settings as automatic
 cuts. Their duration determines the class: up to 180 seconds is short; longer is
@@ -311,6 +318,11 @@ duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
 The downloaded streams are copied without reencoding or reducing resolution,
 frame rate, or audio quality. Remote headers and adjacent fragments may also be
 transferred.
+
+With YouTube `--search-range`, acquisition and transcription can also include
+keyframe padding. The CLI reports the requested and acquired intervals. Clip
+discovery stays inside the requested search range, and each final clip follows
+the boundaries selected by the analysis.
 
 Local `--search-range` and `--clip-range` requests also prepare one range source
 by copying the original video and audio streams. Both transcription and final
@@ -376,7 +388,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--search-range START END` | Find clips only inside an absolute source interval. |
-| `--clip-range START END` | Render one exact interval without AI analysis. |
+| `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
 | `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |

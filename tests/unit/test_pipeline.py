@@ -251,6 +251,10 @@ def test_custom_cut_preserves_exact_bounds_without_ai_or_asr(
     assert len(result.clip_paths) == 1
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["selection_mode"] == "custom"
+    assert manifest["requested_clip_range"] == {
+        "start": interval.start,
+        "end": interval.end,
+    }
     assert manifest["clip_range"] == {"start": interval.start, "end": interval.end}
     assert manifest["transcription"] is None
     assert manifest["analysis"]["backend"] is None
@@ -379,7 +383,11 @@ def test_invalid_direct_cut_fails_before_asr(tmp_path: Path, kwargs: dict) -> No
 @pytest.mark.parametrize("subtitles", [False, True])
 @pytest.mark.parametrize("padding", [0.0, 2.0])
 def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
-    mode: str, subtitles: bool, padding: float, tmp_path: Path
+    mode: str,
+    subtitles: bool,
+    padding: float,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     interval = TimeRange(600.25, 720.5)
     acquisition_ranges: list[TimeRange | None] = []
@@ -477,6 +485,9 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         if transcript is not None:
             transcripts.append(transcript)
             local = clip_transcript(transcript, clip.proposal.start, clip.proposal.end)
+            assert local.words[0].start == pytest.approx(
+                0.5 + padding if mode == "custom" else 0.0
+            )
             assert local.words[1].start == local.words[1].end
             assert local.words[1].source_segment_index == 0
         output.parent.mkdir(exist_ok=True)
@@ -509,12 +520,35 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
 
     first = run(config)
     repeated = run(config)
-    expected = (600.25, 720.5) if mode == "custom" else (600.75, 710.25)
+    expected = (
+        (600.25 - padding, 720.5 + padding) if mode == "custom" else (600.75, 710.25)
+    )
     assert rendered == [expected, expected]
     needs_asr = subtitles or mode == "automatic"
     assert asr.calls == int(needs_asr)
     assert ai.calls == (2 if mode == "automatic" else 0)
     manifest = json.loads(repeated.manifest_path.read_text())
+    assert manifest["requested_clip_range"] == (
+        {"start": interval.start, "end": interval.end} if mode == "custom" else None
+    )
+    assert manifest["clip_range"] == (
+        {"start": expected[0], "end": expected[1]} if mode == "custom" else None
+    )
+    metadata = json.loads(first.clip_paths[0].with_suffix(".json").read_text())
+    assert (metadata["start"], metadata["end"]) == expected
+    warning = next(
+        record.message for record in caplog.records if record.levelno == logging.WARNING
+    )
+    assert "Requested 600.250-720.500s" in warning
+    assert f"{600.25 - padding:.3f}-{720.5 + padding:.3f}s" in warning
+    if mode == "custom":
+        assert "YouTube --clip-range boundaries are approximate" in warning
+        assert "the final cut uses the acquired interval" in warning
+    else:
+        assert (
+            "YouTube --search-range acquisition boundaries are approximate" in warning
+        )
+        assert "clip discovery stays within the requested range" in warning
     assert manifest["source"]["original_duration"] == 1800
     assert manifest["source"]["acquired_duration"] == 120.25 + 2 * padding
     assert manifest["source"]["acquired_range"] == {
@@ -542,6 +576,74 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
     assert asr.calls == 2 * int(needs_asr)
     assert ai.calls == (4 if mode == "automatic" else 0)
     assert acquisition_ranges == [interval, interval, changed]
+
+
+@pytest.mark.parametrize("long_enabled", [False, True])
+def test_youtube_custom_cut_uses_acquired_duration_for_class_and_subtitles(
+    long_enabled: bool, tmp_path: Path
+) -> None:
+    requested = TimeRange(100, 279)
+    acquired = TimeRange(98, 281)
+    media = replace(_media(), duration=183)
+    source_path = tmp_path / "part.mp4"
+    source_path.write_bytes(b"source")
+    source = AcquiredSource(
+        source_path,
+        "partial-source",
+        "youtube",
+        "abc123",
+        "Source title",
+        "https://youtu.be/abc123",
+        acquired_range=acquired,
+        original_duration=600,
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    config = AppConfig(
+        "https://youtu.be/abc123",
+        tmp_path / "out",
+        clip_range=requested,
+        short_clips_enabled=not long_enabled,
+        long_clips_enabled=long_enabled,
+        short_subtitles_enabled=True,
+        long_subtitles_enabled=False,
+        render_variants=False,
+        long_aspect_ratio="original",
+    )
+
+    def render(_source, _media, clip, _config, *, output, work):
+        assert clip.proposal.clip_class == "long"
+        assert (clip.proposal.start, clip.proposal.end) == (98, 281)
+        output.parent.mkdir(parents=True)
+        output.write_bytes(b"raw")
+        return output, media, "original"
+
+    def finish(raw, _media, transcript, clip, _config, *, output, work):
+        assert transcript is None
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(raw, output)
+        return output, (), None
+
+    def run():
+        return run_pipeline(
+            config,
+            acquire=lambda *_args, **_kwargs: source,
+            probe=lambda _: media,
+            transcriber=asr,
+            backend=ai,
+            raw_renderer=render,
+            final_renderer=finish,
+        )
+
+    if not long_enabled:
+        with pytest.raises(ConfigurationError, match="interval is long"):
+            run()
+    else:
+        result = run()
+        metadata = json.loads(result.clip_paths[0].with_suffix(".json").read_text())
+        assert metadata["class"] == "long"
+        assert metadata["duration"] == 183
+        assert metadata["render"]["subtitles_enabled"] is False
+    assert asr.calls == ai.calls == 0
 
 
 @pytest.mark.parametrize(

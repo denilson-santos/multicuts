@@ -366,7 +366,7 @@ def _direct_clip(
             if transcript is not None
             else "",
             title=(source.title or source.local_path.stem)[:120],
-            rationale="Exact source interval selected by the user.",
+            rationale="Source interval selected for the user's cut.",
         ),
         source_duration=source_duration,
     )
@@ -462,17 +462,41 @@ def run_pipeline(
         direct_range = (
             TimeRange(0.0, source_duration) if config.full_video else config.clip_range
         )
+        if direct_range is not None and direct_range.end > source_duration:
+            raise ConfigurationError("--clip-range exceeds source media duration")
+        if source.source_kind == "youtube" and requested_range is not None:
+            assert source.acquired_range is not None
+            if config.clip_range is not None:
+                direct_range = source.acquired_range
+                logger.warning(
+                    "YouTube --clip-range boundaries are approximate to preserve "
+                    "keyframes without reencoding the source. Requested %.3f-%.3fs; "
+                    "the final cut uses the acquired interval %.3f-%.3fs.",
+                    requested_range.start,
+                    requested_range.end,
+                    direct_range.start,
+                    direct_range.end,
+                )
+            else:
+                logger.warning(
+                    "YouTube --search-range acquisition boundaries are approximate "
+                    "to preserve keyframes without reencoding the source. "
+                    "Requested %.3f-%.3fs; acquired %.3f-%.3fs. Transcription "
+                    "includes the acquired interval; clip discovery stays "
+                    "within the requested range.",
+                    requested_range.start,
+                    requested_range.end,
+                    source.acquired_range.start,
+                    source.acquired_range.end,
+                )
         needs_transcript = True
         if direct_range is not None:
-            if direct_range.end > source_duration:
-                raise ConfigurationError("--clip-range exceeds source media duration")
             clip_class = (
                 "short" if direct_range.end - direct_range.start <= 180 else "long"
             )
             if not config.clips_for(clip_class):
                 raise ConfigurationError(
-                    f"The requested interval is {clip_class}; "
-                    f"enable --{clip_class}-clips"
+                    f"The cut interval is {clip_class}; enable --{clip_class}-clips"
                 )
             primary_ratio = (
                 config.short_aspect_ratio
@@ -540,7 +564,7 @@ def run_pipeline(
                 direct_range.end,
             )
             logger.info("[4/6] Editorial review skipped for user-selected cut")
-            logger.info("[5/6] Selected one exact cut without an editorial score")
+            logger.info("[5/6] Selected one cut without an editorial score")
         else:
             assert transcript is not None
             fingerprint = transcript_content_fingerprint(transcript)
@@ -914,6 +938,12 @@ def run_pipeline(
         manifest = {
             "schema_version": 4,
             "selection_mode": config.selection_mode,
+            "requested_clip_range": {
+                "start": config.clip_range.start,
+                "end": config.clip_range.end,
+            }
+            if config.clip_range is not None
+            else None,
             "clip_range": {"start": direct_range.start, "end": direct_range.end}
             if direct_range is not None
             else None,

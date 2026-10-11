@@ -271,7 +271,10 @@ def run_command(
         typer.Option(
             "--search-range",
             metavar="START END",
-            help="Search only within these source times (seconds or HH:MM:SS).",
+            help=(
+                "Search only within these source times (seconds or HH:MM:SS). "
+                "YouTube acquisition may include extra keyframe data."
+            ),
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -280,7 +283,10 @@ def run_command(
         typer.Option(
             "--clip-range",
             metavar="START END",
-            help="Render one exact source interval without AI review.",
+            help=(
+                "Render one source interval without AI review. Local bounds are "
+                "exact; YouTube cuts include the acquired keyframe padding."
+            ),
             rich_help_panel="Clips",
         ),
     ] = None,

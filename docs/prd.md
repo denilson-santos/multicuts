@@ -29,12 +29,13 @@ without complete units yields zero clips. Accept nonnegative seconds, `MM:SS`,
 or `HH:MM:SS` with optional fractional seconds. Reject unordered, empty,
 nonfinite, or out-of-source intervals before ASR when media duration is known.
 Local files reuse a compatible full-source transcript when cached; otherwise,
-transcribe only the requested interval and cache it separately.
-For YouTube, acquire and transcribe only the requested interval; different
-intervals have separate caches. Repeated identical intervals can reuse ASR.
+transcribe the prepared interval, including required padding, and cache it separately.
+For YouTube, acquire and transcribe only the requested interval and required
+keyframe/codec packet padding; different intervals have separate caches.
+Repeated identical intervals can reuse ASR.
 Record the interval in `analysis.search_range` (null when unrestricted).
 
-`--clip-range START END` renders one exact user-selected interval, and
+`--clip-range START END` renders one user-selected interval, and
 `--clip-full` renders one interval from zero through the probed media duration,
 including any silence outside ASR coverage. Both bypass automatic discovery,
 boundary refinement, judgment, and ranking; neither requires AI configuration.
@@ -43,7 +44,12 @@ custom bounds and the duration-derived enabled class before transcription. Up to
 180 seconds is short; longer is long. Apply existing class-specific geometry,
 subtitle, and variant settings. Skip transcription when all published versions
 have subtitles disabled; otherwise reuse the shared source transcript once.
-Preserve exact requested media boundaries without inventing ASR timestamps.
+Local cuts preserve exact requested media boundaries without inventing ASR
+timestamps. YouTube custom cuts use the complete acquired interval, including
+keyframe/codec packet padding, without forcing the final output to the requested
+bounds. Class, subtitles, and variant settings use the actual cut duration.
+Before transcription/rendering, show a warning that YouTube custom boundaries
+are approximate and report the requested and actual intervals.
 Direct titles use the source filename or YouTube title, truncated to 120 characters.
 
 Local and YouTube range requests prepare one private source segment by copying
@@ -51,8 +57,10 @@ the selected video and audio streams without reencoding, scaling, frame-rate
 reduction, or bitrate overrides. Both fresh transcription and final rendering
 must use this shared segment. Preserve the original local file. Keyframe and
 codec packet padding may extend the acquired segment beyond the requested
-range; record its actual source offset and restrict discovery and final cuts to
-the user's bounds. Preserve presentation geometry, rotation, and audio sync.
+range; record its actual source offset. Local custom cuts keep the user's bounds;
+YouTube custom cuts keep the acquired bounds. Automatic discovery and editorial
+refinement remain inside the user's search range for both source types.
+Preserve presentation geometry, rotation, and audio sync.
 
 For local ranges, check a compatible complete transcript cache first, then the
 shared segment cache, using provider version, backend, model, and language.
@@ -64,8 +72,11 @@ processing and remove it with other intermediates unless retention is requested.
 Unrestricted and full-video requests continue using the complete source.
 
 YouTube ranges use yt-dlp's public download-ranges API without forced keyframe
-reencoding. Validate FFmpeg/ffprobe before partial acquisition and reject live,
-unfinished, unknown-duration, or out-of-source intervals before downloading.
+reencoding. For `--search-range`, warn that acquisition/transcription can include
+padding, report requested/acquired bounds, and state that discovery stays inside
+the requested search range. Validate FFmpeg/ffprobe before partial acquisition
+and reject live, unfinished, unknown-duration, or out-of-source intervals before
+downloading.
 Validate provider section metadata and copied media coverage before ASR; never
 silently fall back to full download or lossy encoding. Media headers and
 neighboring fragments may also be transferred. Preserve original source times
@@ -73,9 +84,12 @@ in AI input and artifacts while rendering from file-local times. Unrestricted
 YouTube and `--clip-full` still acquire the full video.
 
 Manifest schema 4 records `selection_mode` (`automatic`, `custom`, `full_video`)
-and the effective direct `clip_range` (null for automatic runs). Direct runs have
-zero proposals/editorial eligibility and one selected cut; AI provenance and
-clip scores are null. Manifest `transcription` is null when skipped. Clip JSON
+and the effective direct `clip_range` (null for automatic runs).
+`requested_clip_range` records the exact custom CLI request, or null for automatic
+and full-video runs. Clip JSON bounds and clip-local subtitle timings describe
+the actual rendered interval, including padding in YouTube custom cuts. Direct
+runs have zero proposals/editorial eligibility and one selected cut; AI provenance
+and clip scores are null. Manifest `transcription` is null when skipped. Clip JSON
 schema 2 records the same selection mode and uses null `viral_potential` and
 `transcript_unit_ids` for direct cuts, with empty transcript text when ASR is
 skipped. Automatic scoring meaning and composition remain unchanged.

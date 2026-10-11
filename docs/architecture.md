@@ -24,7 +24,10 @@ The AI backend never receives video or audio. Prompts explicitly treat source tr
 ## Module boundaries
 
 For `AppConfig.clip_range` or `full_video`, the pipeline validates the requested
-media interval and its enabled duration class after probing, then constructs a
+media interval after probing. YouTube custom cuts use
+`AcquiredSource.acquired_range` as their effective interval; local cuts retain the
+requested bounds. Validate the enabled duration class against the effective
+interval, then construct a
 `DirectClip`. It bypasses semantic units and AI entirely. `DirectClip` carries the
 original source duration so subtitle slicing can retain leading/trailing silence
 beyond ASR coverage without changing any observed segment or word timestamps.
@@ -62,10 +65,13 @@ source is shared by ASR and all final renderers, including runs without captions
 both local and YouTube ranges. The interval can include neighboring keyframe or
 codec packet data. `MediaInfo` describes the prepared file and includes container
 start time and audio codec delay for media-boundary normalization. The pipeline
-checks coverage/duration and records the real source offset; requested search
-and direct-cut bounds remain unchanged. Partial fingerprints include the source
-identity, requested and acquired intervals, and the stream-copy preparation
-version, isolating older transcription-only proxy caches.
+checks coverage/duration and records the real source offset. Requested search
+bounds stay unchanged; YouTube custom cut bounds become the acquired interval.
+Warnings report requested and acquired YouTube ranges before ASR/rendering,
+explain approximate custom bounds, and retain strict discovery scope for search
+ranges. Partial fingerprints include the source identity, requested and acquired
+intervals, and the stream-copy preparation version, isolating older
+transcription-only proxy caches.
 
 A compatible complete local transcript cache still takes priority over a range
 cache. Fresh ASR reads the shared segment; cached partial timings remain
@@ -118,6 +124,9 @@ Each manifest clip reference preserves its primary `video` and `metadata` paths 
 The manifest's `transcription.backend` and `transcription.model` record the configured ASR engine and model on cache hits and fresh transcriptions. ASR progress logs include both settings.
 `transcription.source_range` records the actual ASR interval on the original
 timeline, or null when using a full-source transcript, including local cache hits.
+`requested_clip_range` records the custom CLI request; `clip_range` records the
+effective direct interval. Both per-clip bounds and subtitle slicing use the
+effective interval, so YouTube custom captions retain any acquired padding.
 
 The manifest's `analysis.editorial_context` and per-clip `viral_potential.editorial_context` record the applied optional context as text or null. Normal and verbose application logs may report that video context is enabled but do not print the text.
 
