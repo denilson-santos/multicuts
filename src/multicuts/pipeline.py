@@ -44,7 +44,12 @@ from multicuts.clips import (
     select_clips,
     timed_units,
 )
-from multicuts.errors import ArtifactError, ScoringError, TranscriptionError
+from multicuts.errors import (
+    ArtifactError,
+    ConfigurationError,
+    ScoringError,
+    TranscriptionError,
+)
 from multicuts.media import probe_media
 from multicuts.models import AcquiredSource, MediaInfo, Transcript
 from multicuts.render import (
@@ -312,6 +317,8 @@ def run_pipeline(
         logger.info("[1/6] Acquiring source and checking media")
         source = acquire(config.source, work / "acquisition")
         media = probe(source)
+        if config.search_range is not None and config.search_range.end > media.duration:
+            raise ConfigurationError("--search-range exceeds source media duration")
         logger.info(
             "Source ready: %.1fs, %dx%d (%.1fs elapsed)",
             media.duration,
@@ -334,6 +341,19 @@ def run_pipeline(
         units = timed_units(
             transcript, max_unit_chars=min(6000, config.block_chars - 48)
         )
+        if config.search_range is not None:
+            units = tuple(
+                unit
+                for unit in units
+                if unit.start >= config.search_range.start
+                and unit.end <= config.search_range.end
+            )
+            logger.info(
+                "Searching source interval %.2f-%.2fs (%d complete transcript units)",
+                config.search_range.start,
+                config.search_range.end,
+                len(units),
+            )
         ai = backend or LlmBackend(
             config.llm_backend, config.llm_model, config.llm_effort
         )
@@ -702,6 +722,12 @@ def run_pipeline(
                 "cache_hit": transcript_hit,
             },
             "analysis": {
+                "search_range": {
+                    "start": config.search_range.start,
+                    "end": config.search_range.end,
+                }
+                if config.search_range is not None
+                else None,
                 "backend": config.llm_backend,
                 "model": config.llm_model,
                 "effort": config.llm_effort,

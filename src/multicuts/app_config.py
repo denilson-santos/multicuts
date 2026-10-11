@@ -7,6 +7,7 @@ from math import isfinite
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
+from multicuts.models import TimeRange
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -56,8 +57,13 @@ class AppConfig:
     long_variants_enabled: bool | None = None
     short_variant_subtitles_enabled: bool | None = None
     long_variant_subtitles_enabled: bool | None = None
+    search_range: TimeRange | None = None
 
     def __post_init__(self) -> None:
+        if self.search_range is not None and not isinstance(
+            self.search_range, TimeRange
+        ):
+            raise ConfigurationError("--search-range must be a time range")
         if not isinstance(self.source, str) or not self.source.strip():
             raise ConfigurationError("source must not be empty")
         if self.llm_backend not in LLM_BACKENDS:

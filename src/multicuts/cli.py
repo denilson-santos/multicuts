@@ -26,6 +26,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
+from multicuts.models import TimeRange
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 
 PipelineRunner = Callable[[AppConfig], RunResult]
@@ -150,6 +151,30 @@ def _safe_text(value: object) -> str:
     return (message[:500] + "...") if len(message) > 500 else message
 
 
+def _time_range(value: tuple[str, str] | None, option: str) -> TimeRange | None:
+    if value is None:
+        return None
+
+    def seconds(raw: str) -> float:
+        if re.fullmatch(r"\d+(?::\d{1,2}){0,2}(?:\.\d+)?", raw) is None:
+            raise ValueError("invalid timestamp")
+        parts = [float(part) for part in raw.split(":")]
+        if any(part >= 60 for part in parts[1:]):
+            raise ValueError("invalid clock component")
+        total = 0.0
+        for part in parts:
+            total = total * 60 + part
+        return total
+
+    try:
+        return TimeRange(seconds(value[0]), seconds(value[1]))
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{option} requires ordered START END within the source; "
+            "use nonnegative seconds, MM:SS, or HH:MM:SS (decimals allowed)"
+        ) from exc
+
+
 def _value(option: object | None, name: str, default: object) -> object:
     if option is not None:
         return option
@@ -241,6 +266,15 @@ def run_command(
         Path,
         typer.Option("--output-dir", help="Root for unique runs and shared caches."),
     ],
+    search_range: Annotated[
+        tuple[str, str] | None,
+        typer.Option(
+            "--search-range",
+            metavar="START END",
+            help="Search only within these source times (seconds or HH:MM:SS).",
+            rich_help_panel="Analysis",
+        ),
+    ] = None,
     llm_backend: Annotated[
         str | None,
         typer.Option(
@@ -533,6 +567,7 @@ def run_command(
         llm_model=llm_model_value,
         llm_effort=effort_value,
         editorial_context=context,
+        search_range=_time_range(search_range, "--search-range"),
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
         transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),

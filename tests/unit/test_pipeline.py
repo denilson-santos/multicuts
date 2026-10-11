@@ -18,8 +18,14 @@ from multicuts.clips import (
     parse_proposals,
     select_clips,
 )
-from multicuts.errors import ScoringError
-from multicuts.models import AcquiredSource, MediaInfo, Transcript, TranscriptSegment
+from multicuts.errors import ConfigurationError, ScoringError
+from multicuts.models import (
+    AcquiredSource,
+    MediaInfo,
+    TimeRange,
+    Transcript,
+    TranscriptSegment,
+)
 from multicuts.pipeline import run_pipeline
 
 
@@ -107,6 +113,89 @@ class FakeBackend:
 
 def _media(width: int = 1920, height: int = 1080) -> MediaInfo:
     return MediaInfo(360.0, width, height, width, height, 0, 1)
+
+
+def test_search_range_scopes_discovery_review_and_cache(tmp_path: Path) -> None:
+    class RangeBackend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Find every" in prompt:
+                self.calls += 1
+                ids = re.findall(r"^(u\d+) \[", prompt, re.MULTILINE)
+                assert ids in (["u1", "u2", "u3"], ["u2", "u3", "u4"])
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": ids[0],
+                            "end_id": ids[1],
+                            "title": "Scoped idea",
+                            "rationale": "Complete idea",
+                        }
+                    ]
+                }
+            assert "Point 0." not in prompt and "Point 5." not in prompt
+            response = super().complete(prompt, schema)
+            assert isinstance(response, dict)
+            # Review may extend to the last in-range unit, never past it.
+            response["end_id"] = "u3" if "Point 1." in prompt else "u4"
+            return response
+
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        search_range=TimeRange(30, 250),
+        subtitles_enabled=False,
+    )
+    asr, ai = FakeTranscriber(), RangeBackend()
+    first = _run(tmp_path, asr, ai, config=config)
+    metadata = json.loads(first.clip_paths[0].with_suffix(".json").read_text())
+    assert (metadata["start"], metadata["end"]) == (60, 240)
+    manifest = json.loads(first.manifest_path.read_text())
+    assert manifest["analysis"]["search_range"] == {"start": 30, "end": 250}
+    assert manifest["analysis"]["timed_units"] == 3
+    repeated = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == 1 and ai.calls == 2
+    assert json.loads(repeated.manifest_path.read_text())["analysis"]["ai_cache"] == {
+        "hits": 2,
+        "misses": 0,
+    }
+    changed = _run(
+        tmp_path, asr, ai, config=replace(config, search_range=TimeRange(120, 300))
+    )
+    metadata = json.loads(changed.clip_paths[0].with_suffix(".json").read_text())
+    assert (metadata["start"], metadata["end"]) == (120, 300)
+    assert asr.calls == 1 and ai.calls == 4
+
+
+def test_search_range_without_complete_units_selects_nothing(tmp_path: Path) -> None:
+    asr, ai = FakeTranscriber(), FakeBackend()
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        search_range=TimeRange(1, 59),
+        subtitles_enabled=False,
+    )
+    result = _run(tmp_path, asr, ai, config=config)
+    assert result.clip_paths == ()
+    assert ai.calls == 0
+
+
+def test_search_range_outside_media_fails_before_transcription(tmp_path: Path) -> None:
+    asr, ai = FakeTranscriber(), FakeBackend()
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        search_range=TimeRange(0, 361),
+    )
+    with pytest.raises(ConfigurationError, match="exceeds source"):
+        _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == ai.calls == 0
 
 
 def _run(

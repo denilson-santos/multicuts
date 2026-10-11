@@ -14,6 +14,7 @@ from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.cli import main, parse_run_config
 from multicuts.errors import ConfigurationError, ScoringError
+from multicuts.models import TimeRange
 from multicuts.pipeline import RunOutcome, RunResult
 
 
@@ -27,6 +28,41 @@ def _args() -> list[str]:
         "--llm-model",
         "test-model",
     ]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        ("0", "90.5", TimeRange(0, 90.5)),
+        ("01:30", "02:45.25", TimeRange(90, 165.25)),
+        ("01:00:00", "01:02:30", TimeRange(3600, 3750)),
+    ],
+)
+def test_search_range_accepts_seconds_and_clock_times(
+    start: str, end: str, expected: TimeRange
+) -> None:
+    assert (
+        parse_run_config(_args() + ["--search-range", start, end]).search_range
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("10", "10"),
+        ("20", "10"),
+        ("-1", "10"),
+        ("nan", "10"),
+        ("0", "inf"),
+        ("0", "01:60"),
+        ("0", "1:2:3:4"),
+        ("oops", "10"),
+    ],
+)
+def test_search_range_rejects_invalid_timestamps(start: str, end: str) -> None:
+    with pytest.raises(ConfigurationError, match="--search-range"):
+        parse_run_config(_args() + ["--search-range", start, end])
 
 
 @pytest.fixture(autouse=True)

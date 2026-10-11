@@ -38,6 +38,20 @@ def _validate_clip_local_interval(
 
 
 @dataclass(frozen=True, slots=True)
+class TimeRange:
+    """A positive interval in absolute source seconds."""
+
+    start: float
+    end: float
+
+    def __post_init__(self) -> None:
+        for value in (self.start, self.end):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("range boundaries must be numbers")
+        _validate_interval(self.start, self.end)
+
+
+@dataclass(frozen=True, slots=True)
 class AcquiredSource:
     """A source available locally with identity and safe origin metadata.
 

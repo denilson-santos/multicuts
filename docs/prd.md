@@ -22,6 +22,15 @@ Each proposal includes a social-media title in the language of its transcript, p
 
 ## Configuration and integrations
 
+`--search-range START END` optionally limits automatic discovery and editorial
+boundary refinement to complete observed transcript units contained in an
+absolute source interval. Units crossing its edges are excluded. An interval
+without complete units yields zero clips. Accept nonnegative seconds, `MM:SS`,
+or `HH:MM:SS` with optional fractional seconds. Reject unordered, empty,
+nonfinite, or out-of-source intervals before ASR when media duration is known.
+Transcribe/cache the source as usual; different search intervals reuse ASR.
+Record the interval in `analysis.search_range` (null when unrestricted).
+
 `multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
 
 Source, output directory, editorial context, transcription language, verbosity, forced recomputation, and intermediate-file retention are CLI-only. `--output-dir` is required. With no `--lang`, `multisubs` detects language automatically. `--asr-model` or `ASR_MODEL` selects its transcription model, defaulting explicitly to `turbo`; the former `TRANSCRIPTION_MODEL` name is no longer read. `--asr-backend` or `ASR_BACKEND` selects `whisperx` (default), `faster-whisper`, `parakeet`, or `qwen`. The model default remains `turbo` for every backend; users must select a compatible model and install the matching optional `multisubs` dependencies for other engines. The public provider validates model and language compatibility. Logs and `transcription.backend` / `transcription.model` in the manifest record the selected settings. Other result-affecting options are available as CLI flags and environment variables without a `MULTICUTS_` prefix. CLI values override process environment, which overrides current-directory `.env`, which overrides built-in defaults. Config validation does not require opening the source file.

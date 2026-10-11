@@ -250,6 +250,19 @@ Long clips preferably span 3–15 minutes, with no hard duration ceiling. The nu
 
 ## Usage
 
+**Search within part of the source**
+
+```bash
+multicuts source.mp4 --output-dir out --search-range 00:05:00 00:12:30
+```
+
+`--search-range START END` restricts discovery and editorial boundary adjustments
+to complete observed transcript units inside the interval. Times refer to the
+original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
+seconds. Units crossing either edge are excluded; an interval without complete
+units produces zero clips. Bounds must be ordered and within the source duration.
+The full source transcript remains cached and reusable for other intervals.
+
 The following examples use the backend and model configured in `.env`.
 
 **Use a YouTube source**

@@ -22,6 +22,12 @@ The AI backend never receives video or audio. Prompts explicitly treat source tr
 
 ## Module boundaries
 
+For `AppConfig.search_range`, the pipeline validates source bounds after probing
+and filters semantic units by full containment before building proposal blocks
+or judgment boundary options. IDs and timestamps remain on the source timeline.
+Only scoped transcript text reaches the AI. The transcript cache stays scoped to
+the full source; AI cache keys continue to include their scoped prompt evidence.
+
 - `source.py`, `local_source.py`, and `adapters/youtube.py`: acquisition and source fingerprinting.
 - `media.py`: FFmpeg/ffprobe availability and normalized media geometry.
 - `adapters/multisubs.py`: the single `multisubs` boundary for transcription and subtitle rendering. Provider artifacts remain internal, and both operations return project-owned models.
