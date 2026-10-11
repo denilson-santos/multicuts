@@ -114,18 +114,12 @@ python -m pip install --editable .
 
 This installs the pinned `multisubs[whisperx]` **4.4.1** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
 
-This development branch requires the matching multisubs build with the public
-`transcribe_video` API and schema-2 semantic rendering. The published 4.4.1 wheel
-does not yet include that contract. After installing the app, install the wheel
-built from the multisubs `fix/semantic-transcript-layout` branch:
-
-```bash
-python -m pip install --no-deps --force-reinstall /path/to/multisubs-4.4.1-py3-none-any.whl
-```
-
-The release pin must be updated to the verified provider release before this
-integration is merged or released. Earlier builds fail explicitly rather than
-rendering already formatted transcript blocks again.
+This development branch's transcription and subtitle flow requires a multisubs
+release with the public `transcribe_video` API and schema-2 semantic rendering.
+The pinned 4.4.1 release does not include that contract. This integration is
+waiting for the provider update; after it is published, update the release URL
+and verified SHA-256 in `pyproject.toml` before merging or releasing multicuts.
+Earlier provider releases fail explicitly when this flow is requested.
 
 <a id="asr-backends"></a>
 
