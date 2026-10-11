@@ -5,7 +5,7 @@ description: Apply the repository delivery workflow when implementing or finaliz
 
 # Deliver Feature
 
-Deliver related repository changes through a short-lived branch and a reviewable pull request, keeping each feature in a separate atomic commit. Preserve the user's existing work and distinguish local implementation from approval to publish the delivery.
+Deliver related repository changes through a short-lived branch and a reviewable pull request, using coherent commits that keep different features separate. Preserve the user's existing work and distinguish local implementation from approval to publish the delivery.
 
 ## Start the change
 
@@ -22,7 +22,7 @@ Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavail
 
 ## Continue before publication
 
-When the user requests another feature while delivery approval is pending, continue implementation without treating the new request as approval to push or open a pull request. For related features on an unpublished branch, reuse it and rename it with `git branch -m` when its name no longer describes the combined scope. Preserve each completed feature in its own commit. Use a separate branch/worktree for independent features.
+When the user requests another feature while delivery approval is pending, continue implementation without treating the new request as approval to push or open a pull request. For related features on an unpublished branch, reuse it and rename it with `git branch -m` when its name no longer describes the combined scope. Preserve logical commit boundaries within and between features. Use a separate branch/worktree for independent features.
 
 For branch renaming, amendment, and other history rewrites, an unpublished branch must never have been pushed, and the commits being rewritten must not have been shared through another branch, tag, or pull request. Check remote refs and known publication history; a missing remote branch or an upstream pointing at the base does not establish this. If publication status is uncertain, preserve the existing name and commits.
 
@@ -31,15 +31,15 @@ Before starting the next feature, validate and commit any completed feature usin
 ## Implement and validate
 
 - Follow the repository's active instructions and load only the project documentation relevant to the change.
-- Keep the branch and pull request focused on related changes, with a separate atomic commit for each feature and its tests/documentation.
+- Keep the branch and pull request focused on related changes. A feature may span one or more commits, each covering a coherent, reviewable change with its relevant tests/documentation. Keep different features in separate commits.
 - Add or update tests when behavior changes.
 - Run the narrowest relevant checks first, followed by the repository's required validation commands when applicable.
-- After a requested feature or adjustment is complete and its applicable checks pass, inspect the diff, stage only task-owned changes, recheck the staged diff, and create a local Conventional Commit without a separate confirmation. Never include unrelated pre-existing user changes or unfinished/failing work.
+- After a coherent implementation step, feature, or adjustment is complete and its applicable checks pass, inspect the diff, stage only task-owned changes, recheck the staged diff, and create a local Conventional Commit without a separate confirmation. Never include unrelated pre-existing user changes or unfinished/failing work.
 - Report local commit identifiers and validation results. Do not claim that a check passed unless it was run successfully.
 
-For a follow-up adjustment to the same feature, use `git commit --amend` only when the feature commit is the branch's latest commit, was created by the agent for this task, is not a merge commit, and the branch and commit satisfy the unpublished conditions above. Validate the adjustment first and include only changes belonging to that feature. Update the commit message if necessary to describe its final behavior.
+For a follow-up adjustment, use `git commit --amend` only when it belongs to the same coherent change as the branch's latest commit, that commit was created by the agent for this task, is not a merge commit, and the branch and commit satisfy the unpublished conditions above. Validate the adjustment first and include only changes within that commit's scope. Update the commit message if necessary to describe its final behavior.
 
-If other features have been committed afterward, or the branch has been published, create a new commit for the adjustment. Do not automatically fold adjustments into older feature commits or rewrite pre-existing user commits. After an amendment or added commit, refresh any pending delivery package with the new identifiers, scope, and validation results.
+If the adjustment belongs to an older commit, covers a separate coherent change, or the branch has been published, create a new commit for the adjustment. Do not automatically fold adjustments into older feature commits or rewrite pre-existing user commits. After an amendment or added commit, refresh any pending delivery package with the new identifiers, scope, and validation results.
 
 ## Coordinate branches and pull requests
 
@@ -47,7 +47,7 @@ Compare changed-file lists from open pull requests and other worktrees first, th
 
 Before requesting publication approval, fetch the target base again. With the requested changes committed and the working tree clean, synchronize the feature branch with the latest remote base:
 
-- For an unpublished branch, rebase onto the base only when all commits being replayed are task-owned and satisfy the unpublished conditions above. Preserve separate feature commits; this synchronization does not authorize folding adjustments into older feature commits.
+- For an unpublished branch, rebase onto the base only when all commits being replayed are task-owned and satisfy the unpublished conditions above. Preserve feature boundaries and the logical separation of commits; this synchronization does not authorize folding adjustments into older feature commits.
 - For a published/shared branch, prefer merging the base into the feature branch, creating a local synchronization commit. Do not rename it, rebase published commits, or force-push without separate explicit authorization.
 
 Do not stash or discard changes to synchronize. Preserve pre-existing user history; if it prevents a safe update, explain the issue rather than rewriting it. Resolve conflicts within the requested scope, preserving each feature's intended behavior; ask for clarification when the correct behavior is ambiguous. Rerun applicable validation when synchronization changes the branch and refresh the delivery package.
