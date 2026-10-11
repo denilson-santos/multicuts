@@ -291,5 +291,4 @@ Do not expand the task beyond what is required to satisfy it correctly.
 ## 17. Git delivery workflow
 
 - for every repository-changing implementation task, follow the `deliver-feature` skill before editing files;
-- never commit, push, or open a pull request without explicit user approval;
 - read-only analysis, diagnosis, review, and status requests do not use this workflow.

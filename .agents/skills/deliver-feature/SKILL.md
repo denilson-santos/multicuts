@@ -1,11 +1,11 @@
 ---
 name: deliver-feature
-description: Apply the repository delivery workflow when implementing or finalizing a code change. Use GitHub Flow and Conventional Commits, and require explicit user approval before committing, pushing, or opening a pull request. Do not use for read-only analysis, diagnosis, review, or status requests.
+description: Apply the repository delivery workflow when implementing or finalizing a code change. Use GitHub Flow and Conventional Commits, create validated local commits, and require explicit user approval before pushing or opening a pull request. Do not use for read-only analysis, diagnosis, review, or status requests.
 ---
 
 # Deliver Feature
 
-Deliver one coherent repository change through a short-lived branch and a reviewable pull request. Preserve the user's existing work and treat approval for implementation as distinct from approval to publish the delivery.
+Deliver related repository changes through a short-lived branch and a reviewable pull request, keeping each feature in a separate atomic commit. Preserve the user's existing work and distinguish local implementation from approval to publish the delivery.
 
 ## Start the change
 
@@ -15,17 +15,30 @@ Before editing repository files:
 2. Stop and explain the problem if usable Git metadata, a configured remote, or the remote default branch cannot be established.
 3. Do not discard, stash, move, stage, commit, or absorb pre-existing user changes without explicit permission.
 4. When remote access is available, fetch the remote default branch. If access is temporarily unavailable, use an existing remote-tracking ref for the known default branch and report that it could not be refreshed. Do not introduce a merge commit while synchronizing it.
-5. If the current non-default branch already matches the requested change, reuse it. Otherwise, create a branch from the remote default branch.
+5. If the current non-default branch already matches the requested change, reuse it. Otherwise, create a branch or worktree from the remote default branch, preserving any pending work.
 
 Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavailable. Use lowercase kebab-case. Choose the narrowest applicable type, normally `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, or `chore`.
+
+## Continue before publication
+
+When the user requests another feature while delivery approval is pending, continue implementation without treating the new request as approval to push or open a pull request. For related features on an unpublished branch, reuse it and rename it with `git branch -m` when its name no longer describes the combined scope. Preserve each completed feature in its own commit. Use a separate branch/worktree for independent features.
+
+For branch renaming, amendment, and other history rewrites, an unpublished branch must never have been pushed, and the commits being rewritten must not have been shared through another branch, tag, or pull request. Check remote refs and known publication history; a missing remote branch or an upstream pointing at the base does not establish this. If publication status is uncertain, preserve the existing name and commits.
+
+Before starting the next feature, validate and commit any completed feature using the local commit rules below. Preserve unfinished or failing work without committing it just to switch tasks. Refresh the delivery package to cover the accumulated features, current branch name, and complete commit list; an earlier package does not approve an expanded scope.
 
 ## Implement and validate
 
 - Follow the repository's active instructions and load only the project documentation relevant to the change.
-- Keep the branch and pull request focused on one coherent change.
+- Keep the branch and pull request focused on related changes, with a separate atomic commit for each feature and its tests/documentation.
 - Add or update tests when behavior changes.
 - Run the narrowest relevant checks first, followed by the repository's required validation commands when applicable.
-- Do not create commits during implementation. Do not claim that a check passed unless it was run successfully.
+- After a requested feature or adjustment is complete and its applicable checks pass, inspect the diff, stage only task-owned changes, recheck the staged diff, and create a local Conventional Commit without a separate confirmation. Never include unrelated pre-existing user changes or unfinished/failing work.
+- Report local commit identifiers and validation results. Do not claim that a check passed unless it was run successfully.
+
+For a follow-up adjustment to the same feature, use `git commit --amend` only when the feature commit is the branch's latest commit, was created by the agent for this task, is not a merge commit, and the branch and commit satisfy the unpublished conditions above. Validate the adjustment first and include only changes belonging to that feature. Update the commit message if necessary to describe its final behavior.
+
+If other features have been committed afterward, or the branch has been published, create a new commit for the adjustment. Do not automatically rewrite older feature commits or pre-existing user commits. After an amendment or added commit, refresh any pending delivery package with the new identifiers, scope, and validation results.
 
 ## Releases
 
@@ -96,13 +109,13 @@ the session. Never move or reuse a released tag.
 
 ## Prepare the delivery package
 
-After implementation and validation, inspect the complete diff and present:
+After implementation, validation, and local commits, inspect the complete diff from the base to the branch head, confirm that intended changes are committed, and present:
 
 - branch name and base branch;
 - concise summary of the change;
 - changed and untracked files intended for delivery;
 - validation commands and their results, including any failures or commands that could not run;
-- proposed atomic commits with their exact Conventional Commit messages;
+- existing local commits with their identifiers and exact Conventional Commit messages;
 - proposed pull request title, body, base branch, and draft or ready-for-review state;
 - known risks, limitations, or follow-up work when relevant.
 
@@ -141,18 +154,17 @@ Keep all five headings in this order. Replace the instructional placeholders and
 
 Create the pull request using the exact title and body shown in the approved delivery package. Preserve Markdown with a body file or an equivalent structured tool argument rather than assembling multiline prose through fragile shell quoting.
 
-Ask one explicit confirmation covering the displayed commits, push target, and pull request. Do not treat approval of the implementation request as delivery approval.
+Ask one explicit confirmation covering publication of the displayed commits, the push target, and the pull request. Local commits do not require this confirmation. Do not treat approval of implementation or additional features as publication approval.
 
 ## Publish only after approval
 
 After the user approves the displayed delivery package:
 
-1. Stage only the approved files and recheck the staged diff for unrelated or sensitive content.
-2. Create the approved commits without silently changing their scope or messages.
-3. Push the branch to the approved remote and set its upstream.
-4. Check whether a pull request already exists before creating one, especially after a failed or uncertain retry.
-5. Open the pull request with the approved title, body, base branch, and review state.
-6. Return the commit identifiers, validation summary, and pull request link.
+1. Recheck that the working tree is clean and the committed scope, messages, and validation results match the approved package.
+2. Push the branch to the approved remote and set its upstream.
+3. Check whether a pull request already exists before creating one, especially after a failed or uncertain retry.
+4. Open the pull request with the approved title, body, base branch, and review state.
+5. Return the commit identifiers, validation summary, and pull request link.
 
 Request approval again if the content, commit plan, remote, base branch, or pull request state changes materially. Report failures without inventing a successful result or creating duplicate pull requests. Never merge the pull request without separate explicit authorization.
 
