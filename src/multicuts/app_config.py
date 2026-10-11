@@ -25,8 +25,8 @@ LLM_EFFORT_LEVELS = {
 class AppConfig:
     source: str
     output_dir: Path
-    llm_backend: str
-    llm_model: str
+    llm_backend: str = ""
+    llm_model: str = ""
     overlap_threshold: float = 0.60
     language: str | None = None
     transcription_model: str = "turbo"
@@ -58,19 +58,36 @@ class AppConfig:
     short_variant_subtitles_enabled: bool | None = None
     long_variant_subtitles_enabled: bool | None = None
     search_range: TimeRange | None = None
+    clip_range: TimeRange | None = None
+    full_video: bool = False
 
     def __post_init__(self) -> None:
-        if self.search_range is not None and not isinstance(
-            self.search_range, TimeRange
-        ):
-            raise ConfigurationError("--search-range must be a time range")
+        for name in ("search_range", "clip_range"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, TimeRange):
+                raise ConfigurationError(
+                    f"--{name.replace('_', '-')} must be a time range"
+                )
+        if type(self.full_video) is not bool:
+            raise ConfigurationError("--clip-full must be boolean")
+        modes = (
+            self.search_range is not None,
+            self.clip_range is not None,
+            self.full_video,
+        )
+        if sum(modes) > 1:
+            raise ConfigurationError(
+                "Choose only one of --search-range, --clip-range, or --clip-full"
+            )
         if not isinstance(self.source, str) or not self.source.strip():
             raise ConfigurationError("source must not be empty")
-        if self.llm_backend not in LLM_BACKENDS:
+        if not self.direct_clip and self.llm_backend not in LLM_BACKENDS:
             raise ConfigurationError(
                 "LLM_BACKEND must be openai, anthropic, gemini, codex, claude, or agy"
             )
-        if not isinstance(self.llm_model, str) or not self.llm_model.strip():
+        if not self.direct_clip and (
+            not isinstance(self.llm_model, str) or not self.llm_model.strip()
+        ):
             raise ConfigurationError("LLM_MODEL must not be empty")
         if self.asr_backend not in ASR_BACKENDS:
             raise ConfigurationError(
@@ -82,7 +99,7 @@ class AppConfig:
             object.__setattr__(
                 self, "editorial_context", self.editorial_context.strip() or None
             )
-        if self.llm_effort is not None:
+        if not self.direct_clip and self.llm_effort is not None:
             if not isinstance(self.llm_effort, str) or not self.llm_effort.strip():
                 raise ConfigurationError("LLM_EFFORT must be a supported effort level")
             effort = self.llm_effort.strip().lower()
@@ -96,7 +113,8 @@ class AppConfig:
             else:
                 object.__setattr__(self, "llm_effort", effort)
         if (
-            self.llm_backend == "gemini"
+            not self.direct_clip
+            and self.llm_backend == "gemini"
             and self.llm_effort is not None
             and self.llm_model.startswith("gemini-2.5-")
         ):
@@ -204,6 +222,17 @@ class AppConfig:
             if clip_class == "short"
             else self.long_clips_enabled
         )
+
+    @property
+    def direct_clip(self) -> bool:
+        """Whether the user chose the interval instead of automatic discovery."""
+        return self.clip_range is not None or self.full_video
+
+    @property
+    def selection_mode(self) -> str:
+        if self.full_video:
+            return "full_video"
+        return "custom" if self.clip_range is not None else "automatic"
 
     def variants_for(self, clip_class: str) -> bool:
         """Inherit the shared variant switch unless the class overrides it."""

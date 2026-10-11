@@ -10,7 +10,7 @@ from typing import Protocol
 
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
-from multicuts.clips import JudgedClip
+from multicuts.clips import DirectClip, JudgedClip
 from multicuts.errors import MediaError, RenderingError
 from multicuts.media import inspect_media_path
 from multicuts.models import (
@@ -165,7 +165,7 @@ def _encode_and_publish(
 def render_raw(
     source: AcquiredSource,
     media: MediaInfo,
-    clip: JudgedClip,
+    clip: JudgedClip | DirectClip,
     config: AppConfig,
     *,
     output: Path,
@@ -257,7 +257,13 @@ def render_short_horizontal(
     )
 
 
-def clip_transcript(transcript: Transcript, start: float, end: float) -> ClipTranscript:
+def clip_transcript(
+    transcript: Transcript,
+    start: float,
+    end: float,
+    *,
+    source_duration: float | None = None,
+) -> ClipTranscript:
     """Shift observed source timings into one clip without invoking ASR again."""
     duration = end - start
     segments: list[ClipTranscriptSegment] = []
@@ -358,7 +364,9 @@ def clip_transcript(transcript: Transcript, start: float, end: float) -> ClipTra
         duration=duration,
         source_start=start,
         source_end=end,
-        source_duration=transcript.duration,
+        source_duration=transcript.duration
+        if source_duration is None
+        else source_duration,
         text=" ".join(segment.text for segment in segments),
         segments=tuple(segments),
         words=tuple(words),
@@ -396,8 +404,8 @@ def publish_subtitle_sidecars(
 def render_final(
     raw_path: Path,
     raw_media: MediaInfo,
-    transcript: Transcript,
-    clip: JudgedClip,
+    transcript: Transcript | None,
+    clip: JudgedClip | DirectClip,
     config: AppConfig,
     *,
     output: Path,
@@ -412,9 +420,18 @@ def render_final(
     if not config.subtitles_for(clip.proposal.clip_class):
         publish_without_overwrite(raw_path, output)
         return output, (), None
+    if transcript is None:
+        raise RenderingError("Subtitles require a source transcript")
     provider = subtitle_provider or MultisubsAdapter()
     try:
-        local = clip_transcript(transcript, clip.proposal.start, clip.proposal.end)
+        local = clip_transcript(
+            transcript,
+            clip.proposal.start,
+            clip.proposal.end,
+            source_duration=clip.source_duration
+            if isinstance(clip, DirectClip)
+            else None,
+        )
     except ValueError as exc:
         raise RenderingError("Could not derive clip-local transcript") from exc
     if not local.word_animation_safe:

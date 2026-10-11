@@ -6,6 +6,25 @@ from multicuts.models import ClipTranscript, Transcript, TranscriptSegment, Word
 from multicuts.render import clip_transcript
 
 
+def test_explicit_media_duration_preserves_silence_beyond_asr_coverage() -> None:
+    transcript = Transcript(
+        None,
+        "en",
+        2.5,
+        "Hello.",
+        (TranscriptSegment("Hello.", 0.5, 2.5),),
+        (Word("Hello.", 0.6, 2.4),),
+        "multisubs",
+        "4.4.1",
+    )
+    clip = clip_transcript(transcript, 0, 3.0, source_duration=3.0)
+    assert clip.duration == clip.source_duration == 3.0
+    assert (clip.words[0].start, clip.words[0].end) == (0.6, 2.4)
+    assert transcript.duration == 2.5
+    with pytest.raises(ValueError, match="exceeds source duration"):
+        clip_transcript(transcript, 0, 3.0)
+
+
 @pytest.mark.parametrize(
     "failure", ["geometry", "duration", "audio", "ffmpeg", "exists"]
 )

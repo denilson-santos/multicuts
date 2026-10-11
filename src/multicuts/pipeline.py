@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from typing import Protocol
@@ -33,8 +34,11 @@ from multicuts.clips import (
     PROMPT_VERSION,
     PROPOSAL_SCHEMA,
     SCORE_VERSION,
+    DirectClip,
     JsonBackend,
     JudgedClip,
+    Proposal,
+    TimedUnit,
     context_blocks,
     judgment_prompt,
     judgment_schema,
@@ -51,8 +55,9 @@ from multicuts.errors import (
     TranscriptionError,
 )
 from multicuts.media import probe_media
-from multicuts.models import AcquiredSource, MediaInfo, Transcript
+from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
 from multicuts.render import (
+    clip_transcript,
     publish_subtitle_sidecars,
     render_final,
     render_raw,
@@ -209,7 +214,7 @@ def _transcribe(
 
 
 def _clip_metadata(
-    clip: JudgedClip,
+    clip: JudgedClip | DirectClip,
     *,
     rank: int,
     video: Path,
@@ -218,7 +223,7 @@ def _clip_metadata(
     width: int,
     height: int,
     template: str | None,
-    transcript: Transcript,
+    transcript: Transcript | None,
     config: AppConfig,
     run_root: Path,
     layout: str = "center_crop",
@@ -228,7 +233,8 @@ def _clip_metadata(
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "selection_mode": config.selection_mode,
         "id": proposal.id,
         "rank": rank,
         "class": proposal.clip_class,
@@ -236,7 +242,9 @@ def _clip_metadata(
         "start": proposal.start,
         "end": proposal.end,
         "duration": proposal.end - proposal.start,
-        "transcript_unit_ids": {"start": proposal.start_id, "end": proposal.end_id},
+        "transcript_unit_ids": {"start": proposal.start_id, "end": proposal.end_id}
+        if isinstance(clip, JudgedClip)
+        else None,
         "transcript_text": proposal.text,
         "proposal_rationale": proposal.rationale,
         "viral_potential": {
@@ -253,7 +261,9 @@ def _clip_metadata(
             "effort": config.llm_effort,
             "prompt_version": PROMPT_VERSION,
             "editorial_context": config.editorial_context,
-        },
+        }
+        if isinstance(clip, JudgedClip)
+        else None,
         "render": {
             "is_variant": is_variant,
             "layout": layout,
@@ -264,7 +274,7 @@ def _clip_metadata(
             "subtitle_template": template,
             "subtitle_provider": "multisubs" if subtitles_enabled else None,
             "subtitle_provider_version": transcript.provider_version
-            if subtitles_enabled
+            if subtitles_enabled and transcript is not None
             else None,
             "subtitle_source_video": subtitle_source_video.relative_to(
                 run_root
@@ -275,6 +285,33 @@ def _clip_metadata(
         "video": video.relative_to(run_root).as_posix(),
         "subtitle_files": [path.relative_to(run_root).as_posix() for path in sidecars],
     }
+
+
+def _direct_clip(
+    source: AcquiredSource,
+    media: MediaInfo,
+    interval: TimeRange,
+    transcript: Transcript | None,
+) -> DirectClip:
+    identity = f"{source.fingerprint}\0direct\0{interval.start}\0{interval.end}"
+    return DirectClip(
+        Proposal(
+            id=sha256(identity.encode()).hexdigest()[:20],
+            clip_class="short" if interval.end - interval.start <= 180 else "long",
+            start_id=None,
+            end_id=None,
+            start=interval.start,
+            end=interval.end,
+            text=clip_transcript(
+                transcript, interval.start, interval.end, source_duration=media.duration
+            ).text
+            if transcript is not None
+            else "",
+            title=(source.title or source.local_path.stem)[:120],
+            rationale="Exact source interval selected by the user.",
+        ),
+        source_duration=media.duration,
+    )
 
 
 def run_pipeline(
@@ -292,7 +329,7 @@ def run_pipeline(
         ..., tuple[Path, MediaInfo]
     ] = render_short_horizontal,
 ) -> RunResult:
-    """Review enabled classes and publish every approved nonredundant cut."""
+    """Publish automatic selections or one exact user-selected source interval."""
     started = perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -319,6 +356,35 @@ def run_pipeline(
         media = probe(source)
         if config.search_range is not None and config.search_range.end > media.duration:
             raise ConfigurationError("--search-range exceeds source media duration")
+        direct_range = (
+            TimeRange(0.0, media.duration) if config.full_video else config.clip_range
+        )
+        needs_transcript = True
+        if direct_range is not None:
+            if direct_range.end > media.duration:
+                raise ConfigurationError("--clip-range exceeds source media duration")
+            clip_class = (
+                "short" if direct_range.end - direct_range.start <= 180 else "long"
+            )
+            if not config.clips_for(clip_class):
+                raise ConfigurationError(
+                    f"The requested interval is {clip_class}; "
+                    f"enable --{clip_class}-clips"
+                )
+            primary_ratio = (
+                config.short_aspect_ratio
+                if clip_class == "short"
+                else config.long_aspect_ratio
+            )
+            square_output = primary_ratio == "1:1" or (
+                primary_ratio == "original"
+                and media.presentation_width == media.presentation_height
+            )
+            needs_transcript = config.subtitles_for(clip_class) or (
+                config.variants_for(clip_class)
+                and not square_output
+                and config.subtitles_for(clip_class, variant=True)
+            )
         logger.info(
             "Source ready: %.1fs, %dx%d (%.1fs elapsed)",
             media.duration,
@@ -326,155 +392,181 @@ def run_pipeline(
             media.presentation_height,
             perf_counter() - started,
         )
-        logger.info("[2/6] Loading source transcription")
-        transcription_started = perf_counter()
-        provider = transcriber or MultisubsAdapter()
-        transcript, transcript_hit = _transcribe(config, source, provider, work)
-        logger.info(
-            "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
-            len(transcript.segments),
-            len(transcript.words),
-            transcript.language_detected or "unknown",
-            perf_counter() - transcription_started,
-        )
-        fingerprint = transcript_content_fingerprint(transcript)
-        units = timed_units(
-            transcript, max_unit_chars=min(6000, config.block_chars - 48)
-        )
-        if config.search_range is not None:
-            units = tuple(
-                unit
-                for unit in units
-                if unit.start >= config.search_range.start
-                and unit.end <= config.search_range.end
-            )
+        transcript: Transcript | None = None
+        transcript_hit = False
+        if needs_transcript:
+            logger.info("[2/6] Loading source transcription")
+            transcription_started = perf_counter()
+            provider = transcriber or MultisubsAdapter()
+            transcript, transcript_hit = _transcribe(config, source, provider, work)
             logger.info(
-                "Searching source interval %.2f-%.2fs (%d complete transcript units)",
-                config.search_range.start,
-                config.search_range.end,
-                len(units),
+                "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
+                len(transcript.segments),
+                len(transcript.words),
+                transcript.language_detected or "unknown",
+                perf_counter() - transcription_started,
             )
-        ai = backend or LlmBackend(
-            config.llm_backend, config.llm_model, config.llm_effort
-        )
+        else:
+            logger.info("[2/6] Transcription skipped; direct cut has no subtitles")
         cache_stats = {"hits": 0, "misses": 0}
-        proposals = {}
-        blocks = context_blocks(
-            units,
-            max_chars=config.block_chars,
-            overlap_chars=config.block_overlap_chars,
-        )
-        logger.info(
-            "[3/6] Finding candidates in %d transcript blocks "
-            "(backend=%s, model=%s, effort=%s)",
-            len(blocks),
-            config.llm_backend,
-            config.llm_model,
-            config.llm_effort or "auto",
-        )
-        if config.editorial_context is not None:
+        proposals: dict[str, Proposal] = {}
+        units: tuple[TimedUnit, ...] = ()
+        eligible = 0
+        boundary_adjusted = 0
+        selected: tuple[JudgedClip | DirectClip, ...]
+        if direct_range is not None:
+            selected = (_direct_clip(source, media, direct_range, transcript),)
             logger.info(
-                "Video context enabled (%d characters)",
-                len(config.editorial_context),
+                "[3/6] Using %s interval %.2f-%.2fs",
+                config.selection_mode,
+                direct_range.start,
+                direct_range.end,
             )
-        analysis_started = perf_counter()
-        for block_index, block in enumerate(blocks, start=1):
-            logger.info("Analyzing transcript block %d/%d", block_index, len(blocks))
-            prompt = proposal_prompt(block, context=config.editorial_context)
+            logger.info("[4/6] Editorial review skipped for user-selected cut")
+            logger.info("[5/6] Selected one exact cut without an editorial score")
+        else:
+            assert transcript is not None
+            fingerprint = transcript_content_fingerprint(transcript)
+            units = timed_units(
+                transcript, max_unit_chars=min(6000, config.block_chars - 48)
+            )
+            if config.search_range is not None:
+                units = tuple(
+                    unit
+                    for unit in units
+                    if unit.start >= config.search_range.start
+                    and unit.end <= config.search_range.end
+                )
+                logger.info(
+                    "Searching source interval %.2f-%.2fs "
+                    "(%d complete transcript units)",
+                    config.search_range.start,
+                    config.search_range.end,
+                    len(units),
+                )
+            ai = backend or LlmBackend(
+                config.llm_backend, config.llm_model, config.llm_effort
+            )
+            blocks = context_blocks(
+                units,
+                max_chars=config.block_chars,
+                overlap_chars=config.block_overlap_chars,
+            )
+            logger.info(
+                "[3/6] Finding candidates in %d transcript blocks "
+                "(backend=%s, model=%s, effort=%s)",
+                len(blocks),
+                config.llm_backend,
+                config.llm_model,
+                config.llm_effort or "auto",
+            )
+            if config.editorial_context is not None:
+                logger.info(
+                    "Video context enabled (%d characters)",
+                    len(config.editorial_context),
+                )
+            analysis_started = perf_counter()
+            for block_index, block in enumerate(blocks, start=1):
+                logger.info(
+                    "Analyzing transcript block %d/%d", block_index, len(blocks)
+                )
+                prompt = proposal_prompt(block, context=config.editorial_context)
 
-            def validate(value: object, current: tuple = block) -> object:
-                return parse_proposals(value, current, source.fingerprint)
+                def validate(value: object, current: tuple = block) -> object:
+                    return parse_proposals(value, current, source.fingerprint)
 
-            response = _ai_request(
-                ai,
-                config,
-                source_fingerprint=source.fingerprint,
-                transcript_fingerprint=fingerprint,
-                task="propose",
-                prompt=prompt,
-                schema=PROPOSAL_SCHEMA,
-                validate=validate,
-                cache_stats=cache_stats,
-            )
-            for proposal in parse_proposals(response, block, source.fingerprint):
-                if proposal.end > media.duration + 0.001:
-                    raise ScoringError(
-                        "AI proposed a clip beyond source media duration"
-                    )
-                if config.clips_for(proposal.clip_class):
-                    proposals.setdefault(proposal.id, proposal)
-        logger.info(
-            "Found %d unique candidates: %d short, %d long",
-            len(proposals),
-            sum(clip.clip_class == "short" for clip in proposals.values()),
-            sum(clip.clip_class == "long" for clip in proposals.values()),
-        )
-        logger.info("[4/6] Reviewing %d candidates", len(proposals))
-        judged_by_id: dict[str, JudgedClip] = {}
-        for index, proposal in enumerate(proposals.values(), start=1):
+                response = _ai_request(
+                    ai,
+                    config,
+                    source_fingerprint=source.fingerprint,
+                    transcript_fingerprint=fingerprint,
+                    task="propose",
+                    prompt=prompt,
+                    schema=PROPOSAL_SCHEMA,
+                    validate=validate,
+                    cache_stats=cache_stats,
+                )
+                for proposal in parse_proposals(response, block, source.fingerprint):
+                    if proposal.end > media.duration + 0.001:
+                        raise ScoringError(
+                            "AI proposed a clip beyond source media duration"
+                        )
+                    if config.clips_for(proposal.clip_class):
+                        proposals.setdefault(proposal.id, proposal)
             logger.info(
-                "Reviewing candidate %d/%d: %s, %.1fs",
-                index,
+                "Found %d unique candidates: %d short, %d long",
                 len(proposals),
-                proposal.clip_class,
-                proposal.end - proposal.start,
+                sum(clip.clip_class == "short" for clip in proposals.values()),
+                sum(clip.clip_class == "long" for clip in proposals.values()),
             )
-            prompt = judgment_prompt(proposal, units, context=config.editorial_context)
-            response = _ai_request(
-                ai,
-                config,
-                source_fingerprint=source.fingerprint,
-                transcript_fingerprint=fingerprint,
-                task="judge",
-                prompt=prompt,
-                schema=judgment_schema(proposal, units),
-                validate=lambda value, current=proposal: parse_judgment(
-                    value, current, units, source.fingerprint
-                ),
-                cache_stats=cache_stats,
+            logger.info("[4/6] Reviewing %d candidates", len(proposals))
+            judged_by_id: dict[str, JudgedClip] = {}
+            for index, proposal in enumerate(proposals.values(), start=1):
+                logger.info(
+                    "Reviewing candidate %d/%d: %s, %.1fs",
+                    index,
+                    len(proposals),
+                    proposal.clip_class,
+                    proposal.end - proposal.start,
+                )
+                prompt = judgment_prompt(
+                    proposal, units, context=config.editorial_context
+                )
+                response = _ai_request(
+                    ai,
+                    config,
+                    source_fingerprint=source.fingerprint,
+                    transcript_fingerprint=fingerprint,
+                    task="judge",
+                    prompt=prompt,
+                    schema=judgment_schema(proposal, units),
+                    validate=lambda value, current=proposal: parse_judgment(
+                        value, current, units, source.fingerprint
+                    ),
+                    cache_stats=cache_stats,
+                )
+                clip = parse_judgment(response, proposal, units, source.fingerprint)
+                if clip.proposal.end > media.duration + 0.001:
+                    raise ScoringError("AI revised a clip beyond source media duration")
+                logger.info(
+                    "Candidate %d/%d: %s, score=%.2f, interval=%.2f-%.2fs",
+                    index,
+                    len(proposals),
+                    "approved" if clip.approved else "rejected",
+                    clip.score,
+                    clip.proposal.start,
+                    clip.proposal.end,
+                )
+                previous = judged_by_id.get(clip.proposal.id)
+                if previous is None or (clip.approved, clip.score) > (
+                    previous.approved,
+                    previous.score,
+                ):
+                    judged_by_id[clip.proposal.id] = clip
+            judged = tuple(judged_by_id.values())
+            eligible = sum(clip.approved for clip in judged)
+            selected = select_clips(judged, overlap_threshold=config.overlap_threshold)
+            boundary_adjusted = sum(
+                clip.proposed_start_id != clip.proposal.start_id
+                or clip.proposed_end_id != clip.proposal.end_id
+                for clip in judged
             )
-            clip = parse_judgment(response, proposal, units, source.fingerprint)
-            if clip.proposal.end > media.duration + 0.001:
-                raise ScoringError("AI revised a clip beyond source media duration")
             logger.info(
-                "Candidate %d/%d: %s, score=%.2f, interval=%.2f-%.2fs",
-                index,
-                len(proposals),
-                "approved" if clip.approved else "rejected",
-                clip.score,
-                clip.proposal.start,
-                clip.proposal.end,
+                "[5/6] Selection: %d approved, %d rejected, %d selected "
+                "(%d merged intervals, %d overlaps removed, %d boundaries adjusted)",
+                eligible,
+                len(judged) - eligible,
+                len(selected),
+                len(proposals) - len(judged),
+                eligible - len(selected),
+                boundary_adjusted,
             )
-            previous = judged_by_id.get(clip.proposal.id)
-            if previous is None or (clip.approved, clip.score) > (
-                previous.approved,
-                previous.score,
-            ):
-                judged_by_id[clip.proposal.id] = clip
-        judged = tuple(judged_by_id.values())
-        eligible = sum(clip.approved for clip in judged)
-        selected = select_clips(judged, overlap_threshold=config.overlap_threshold)
-        boundary_adjusted = sum(
-            clip.proposed_start_id != clip.proposal.start_id
-            or clip.proposed_end_id != clip.proposal.end_id
-            for clip in judged
-        )
-        logger.info(
-            "[5/6] Selection: %d approved, %d rejected, %d selected "
-            "(%d merged intervals, %d overlaps removed, %d boundaries adjusted)",
-            eligible,
-            len(judged) - eligible,
-            len(selected),
-            len(proposals) - len(judged),
-            eligible - len(selected),
-            boundary_adjusted,
-        )
-        logger.info(
-            "AI analysis finished in %.1fs; cache: %d hits, %d misses",
-            perf_counter() - analysis_started,
-            cache_stats["hits"],
-            cache_stats["misses"],
-        )
+            logger.info(
+                "AI analysis finished in %.1fs; cache: %d hits, %d misses",
+                perf_counter() - analysis_started,
+                cache_stats["hits"],
+                cache_stats["misses"],
+            )
         if not selected:
             logger.info("[6/6] No clips selected; rendering skipped")
         else:
@@ -489,13 +581,13 @@ def run_pipeline(
         for rank, clip in enumerate(selected, start=1):
             clip_started = perf_counter()
             logger.info(
-                "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%.2f",
+                "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%s",
                 rank,
                 len(selected),
                 clip.proposal.clip_class,
                 clip.proposal.start,
                 clip.proposal.end,
-                clip.score,
+                f"{clip.score:.2f}" if isinstance(clip, JudgedClip) else "unscored",
             )
             stem = f"{rank:03d}-{clip.proposal.clip_class}-{clip.proposal.id}"
             is_short = clip.proposal.clip_class == "short"
@@ -694,7 +786,7 @@ def run_pipeline(
                 {
                     "id": clip.proposal.id,
                     "class": clip.proposal.clip_class,
-                    "score": clip.score,
+                    "score": clip.score if isinstance(clip, JudgedClip) else None,
                     "video": primary_video.relative_to(root).as_posix(),
                     "metadata": primary_video.with_suffix(".json")
                     .relative_to(root)
@@ -703,7 +795,11 @@ def run_pipeline(
                 }
             )
         manifest = {
-            "schema_version": 3,
+            "schema_version": 4,
+            "selection_mode": config.selection_mode,
+            "clip_range": {"start": direct_range.start, "end": direct_range.end}
+            if direct_range is not None
+            else None,
             "run_id": run_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "outcome": "completed" if clips else "zero_selection",
@@ -720,7 +816,9 @@ def run_pipeline(
                 "language_requested": config.language,
                 "language_detected": transcript.language_detected,
                 "cache_hit": transcript_hit,
-            },
+            }
+            if transcript is not None
+            else None,
             "analysis": {
                 "search_range": {
                     "start": config.search_range.start,
@@ -728,13 +826,13 @@ def run_pipeline(
                 }
                 if config.search_range is not None
                 else None,
-                "backend": config.llm_backend,
-                "model": config.llm_model,
-                "effort": config.llm_effort,
-                "prompt_version": PROMPT_VERSION,
+                "backend": config.llm_backend if not config.direct_clip else None,
+                "model": config.llm_model if not config.direct_clip else None,
+                "effort": config.llm_effort if not config.direct_clip else None,
+                "prompt_version": PROMPT_VERSION if not config.direct_clip else None,
                 "editorial_context": config.editorial_context,
-                "score_version": SCORE_VERSION,
-                "score_weights": DIMENSION_WEIGHTS,
+                "score_version": SCORE_VERSION if not config.direct_clip else None,
+                "score_weights": DIMENSION_WEIGHTS if not config.direct_clip else None,
                 "overlap_threshold": config.overlap_threshold,
                 "clip_classes": [
                     name for name in ("short", "long") if config.clips_for(name)

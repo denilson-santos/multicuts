@@ -176,8 +176,8 @@ class JsonBackend(Protocol):
 class Proposal:
     id: str
     clip_class: str
-    start_id: str
-    end_id: str
+    start_id: str | None
+    end_id: str | None
     start: float
     end: float
     text: str
@@ -194,6 +194,14 @@ class JudgedClip:
     reason: str
     proposed_start_id: str
     proposed_end_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class DirectClip:
+    """A user-selected interval without an editorial judgment or score."""
+
+    proposal: Proposal
+    source_duration: float
 
 
 PROPOSAL_SCHEMA: dict[str, object] = {
@@ -488,7 +496,12 @@ def judgment_boundary_options(
 ) -> tuple[tuple[TimedUnit, ...], tuple[TimedUnit, ...]]:
     """Offer nearby observed boundaries without changing the clip's duration class."""
     positions = {unit.id: index for index, unit in enumerate(units)}
-    if proposal.start_id not in positions or proposal.end_id not in positions:
+    if (
+        proposal.start_id is None
+        or proposal.end_id is None
+        or proposal.start_id not in positions
+        or proposal.end_id not in positions
+    ):
         raise ScoringError("Clip boundary is missing from timed transcript units")
     start_index = positions[proposal.start_id]
     end_index = positions[proposal.end_id]
@@ -592,6 +605,8 @@ def parse_judgment(
     units: tuple[TimedUnit, ...],
     source_fingerprint: str,
 ) -> JudgedClip:
+    if proposal.start_id is None or proposal.end_id is None:
+        raise ScoringError("Editorial review requires observed transcript IDs")
     root = _record(
         payload,
         {"start_id", "end_id", "approved", "dimensions", "reason"},

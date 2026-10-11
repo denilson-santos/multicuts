@@ -31,9 +31,29 @@ nonfinite, or out-of-source intervals before ASR when media duration is known.
 Transcribe/cache the source as usual; different search intervals reuse ASR.
 Record the interval in `analysis.search_range` (null when unrestricted).
 
-`multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
+`--clip-range START END` renders one exact user-selected interval, and
+`--clip-full` renders one interval from zero through the probed media duration,
+including any silence outside ASR coverage. Both bypass automatic discovery,
+boundary refinement, judgment, and ranking; neither requires AI configuration.
+The three interval/mode options are mutually exclusive and CLI-only. Validate
+custom bounds and the duration-derived enabled class before transcription. Up to
+180 seconds is short; longer is long. Apply existing class-specific geometry,
+subtitle, and variant settings. Skip transcription when all published versions
+have subtitles disabled; otherwise reuse the shared source transcript once.
+Preserve exact requested media boundaries without inventing ASR timestamps.
+Direct titles use the source filename or YouTube title, truncated to 120 characters.
 
-Source, output directory, editorial context, transcription language, verbosity, forced recomputation, and intermediate-file retention are CLI-only. `--output-dir` is required. With no `--lang`, `multisubs` detects language automatically. `--asr-model` or `ASR_MODEL` selects its transcription model, defaulting explicitly to `turbo`; the former `TRANSCRIPTION_MODEL` name is no longer read. `--asr-backend` or `ASR_BACKEND` selects `whisperx` (default), `faster-whisper`, `parakeet`, or `qwen`. The model default remains `turbo` for every backend; users must select a compatible model and install the matching optional `multisubs` dependencies for other engines. The public provider validates model and language compatibility. Logs and `transcription.backend` / `transcription.model` in the manifest record the selected settings. Other result-affecting options are available as CLI flags and environment variables without a `MULTICUTS_` prefix. CLI values override process environment, which overrides current-directory `.env`, which overrides built-in defaults. Config validation does not require opening the source file.
+Manifest schema 4 records `selection_mode` (`automatic`, `custom`, `full_video`)
+and the effective direct `clip_range` (null for automatic runs). Direct runs have
+zero proposals/editorial eligibility and one selected cut; AI provenance and
+clip scores are null. Manifest `transcription` is null when skipped. Clip JSON
+schema 2 records the same selection mode and uses null `viral_potential` and
+`transcript_unit_ids` for direct cuts, with empty transcript text when ASR is
+skipped. Automatic scoring meaning and composition remain unchanged.
+
+`multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required for automatic discovery by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
+
+Source, output directory, search/custom intervals, full-video mode, editorial context, transcription language, verbosity, forced recomputation, and intermediate-file retention are CLI-only. `--output-dir` is required. With no `--lang`, `multisubs` detects language automatically. `--asr-model` or `ASR_MODEL` selects its transcription model, defaulting explicitly to `turbo`; the former `TRANSCRIPTION_MODEL` name is no longer read. `--asr-backend` or `ASR_BACKEND` selects `whisperx` (default), `faster-whisper`, `parakeet`, or `qwen`. The model default remains `turbo` for every backend; users must select a compatible model and install the matching optional `multisubs` dependencies for other engines. The public provider validates model and language compatibility. Logs and `transcription.backend` / `transcription.model` in the manifest record the selected settings. Other result-affecting options are available as CLI flags and environment variables without a `MULTICUTS_` prefix. CLI values override process environment, which overrides current-directory `.env`, which overrides built-in defaults. Config validation does not require opening the source file.
 
 For Faster-Whisper on Linux/WSL, installed NVIDIA CUDA 12/cuDNN 9 libraries are loaded automatically when needed from the active Python environment. Users do not need to export a library-path variable before each command. GPU execution still requires compatible runtime packages and an NVIDIA driver; CPU transcription does not require NVIDIA packages.
 

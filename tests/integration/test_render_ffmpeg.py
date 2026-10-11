@@ -11,11 +11,115 @@ from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.clips import JudgedClip, Proposal
 from multicuts.media import inspect_media_path
-from multicuts.models import AcquiredSource, Transcript, TranscriptSegment, Word
+from multicuts.models import (
+    AcquiredSource,
+    TimeRange,
+    Transcript,
+    TranscriptSegment,
+    Word,
+)
 from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw, render_short_horizontal
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("interval", [None, TimeRange(0.64, 2.36)])
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_direct_cuts_render_exact_media_interval_without_ai(
+    interval: TimeRange | None, subtitles: bool, tmp_path: Path
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x180:r=25:d=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:d=3",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source_media = inspect_media_path(source_path)
+    provider_version = MultisubsAdapter().version() if subtitles else "unused"
+
+    class Transcriber:
+        calls = 0
+
+        def version(self) -> str:
+            assert subtitles, "Uncaptioned direct cuts must skip ASR"
+            return provider_version
+
+        def transcribe(
+            self,
+            video_path: Path,
+            *,
+            language: str | None,
+            backend: str,
+            model: str,
+            workspace: Path,
+        ) -> Transcript:
+            self.calls += 1
+            return Transcript(
+                language,
+                "en",
+                2.5,
+                "A complete idea.",
+                (TranscriptSegment("A complete idea.", 0.5, 2.5),),
+                (
+                    Word("A", 0.6, 1.0),
+                    Word("complete", 1.1, 1.8),
+                    Word("idea.", 1.9, 2.4),
+                ),
+                "multisubs",
+                provider_version,
+            )
+
+    class Backend:
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            pytest.fail("Direct cuts must never call AI")
+
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        clip_range=interval,
+        full_video=interval is None,
+        subtitles_enabled=subtitles,
+        render_variants=False,
+        short_aspect_ratio="original",
+    )
+    transcriber = Transcriber()
+    result = run_pipeline(config, transcriber=transcriber, backend=Backend())
+    assert transcriber.calls == int(subtitles)
+    (video,) = result.clip_paths
+    actual = inspect_media_path(video)
+    start = interval.start if interval else 0.0
+    end = interval.end if interval else source_media.duration
+    assert actual.duration == pytest.approx(end - start, abs=0.25)
+    assert (actual.presentation_width, actual.presentation_height) == (320, 180)
+    assert actual.has_audio
+    metadata = json.loads(video.with_suffix(".json").read_text())
+    assert metadata["start"] == pytest.approx(start, abs=0.000001)
+    assert metadata["end"] == pytest.approx(end, abs=0.000001)
+    assert metadata["viral_potential"] is None
+    assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
+    assert not (result.manifest_path.parent / ".work").exists()
 
 
 @pytest.mark.parametrize("primary_ratio", ["9:16", "16:9"])

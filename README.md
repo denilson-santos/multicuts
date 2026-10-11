@@ -225,7 +225,7 @@ LLM_MODEL=YOUR_MODEL
 OPENAI_API_KEY=YOUR_API_KEY
 ```
 
-Replace the placeholders. Both the backend and model are required; neither has a built-in default. API backends need their corresponding key; CLI backends need an installed, authenticated command.
+Replace the placeholders. For automatic discovery, both the backend and model are required; neither has a built-in default. API backends need their corresponding key; CLI backends need an installed, authenticated command.
 
 ### 3. Generate clips
 
@@ -250,6 +250,8 @@ Long clips preferably span 3–15 minutes, with no hard duration ceiling. The nu
 
 ## Usage
 
+Automatic discovery examples use the backend and model configured in `.env`.
+
 **Search within part of the source**
 
 ```bash
@@ -263,7 +265,31 @@ seconds. Units crossing either edge are excluded; an interval without complete
 units produces zero clips. Bounds must be ordered and within the source duration.
 The full source transcript remains cached and reusable for other intervals.
 
-The following examples use the backend and model configured in `.env`.
+**Render one exact interval**
+
+```bash
+multicuts source.mp4 --output-dir out --clip-range 00:01:30.25 00:02:45
+```
+
+**Use the entire source as one cut**
+
+```bash
+multicuts prepared-clip.mp4 --output-dir out --clip-full
+```
+
+`--clip-range START END` and `--clip-full` render exactly one cut without AI
+discovery, boundary adjustments, ranking, or editorial rejection. No AI backend,
+model, or credentials are required. The full-video mode includes silence before
+and after speech, using the probed media duration. These options and
+`--search-range` are mutually exclusive and CLI-only.
+
+Direct cuts use the same subtitle, framing, and variant settings as automatic
+cuts. Their duration determines the class: up to 180 seconds is short; longer is
+long. That class must be enabled. Add `--no-variants` for one output file, or
+`--short-aspect-ratio original --long-aspect-ratio original --no-variants` to keep
+the source framing. With all published subtitles disabled, direct cuts skip ASR.
+Otherwise, they reuse one source transcript for all versions. Their title comes
+from the source filename or YouTube title; their metadata has no editorial score.
 
 **Use a YouTube source**
 
@@ -319,6 +345,9 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--asr-model MODEL` | Choose the transcription model; default: `turbo`. |
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
+| `--search-range START END` | Find clips only inside an absolute source interval. |
+| `--clip-range START END` | Render one exact interval without AI analysis. |
+| `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
 | `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |
 | `--short-subtitles` / `--no-short-subtitles` | Set primary short subtitles and the default for short variants; environment: `SHORT_SUBTITLES_ENABLED`. |
@@ -338,7 +367,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
+Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ### Optional editorial context
 
@@ -356,6 +385,12 @@ Supply context through `--context` for each source invocation. Omitting the flag
 The applied context is recorded in the run manifest and each clip's JSON. Logs report that video context is enabled without printing its contents.
 
 ## Output and reruns
+
+Manifest schema 4 and clip metadata schema 2 record `selection_mode`
+(`automatic`, `custom`, or `full_video`). Direct cuts have null `viral_potential`
+and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
+editorially eligible counts. Their AI provenance fields are null. When ASR is
+skipped, manifest `transcription` is null and clip `transcript_text` is empty.
 
 Pass `--output-dir` on every invocation. Each run gets a unique directory:
 
@@ -417,7 +452,7 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <details>
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
-Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
 
 `--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
 

@@ -275,6 +275,23 @@ def run_command(
             rich_help_panel="Analysis",
         ),
     ] = None,
+    clip_range: Annotated[
+        tuple[str, str] | None,
+        typer.Option(
+            "--clip-range",
+            metavar="START END",
+            help="Render one exact source interval without AI review.",
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    clip_full: Annotated[
+        bool,
+        typer.Option(
+            "--clip-full",
+            help="Render the entire source as one cut without AI review.",
+            rich_help_panel="Clips",
+        ),
+    ] = False,
     llm_backend: Annotated[
         str | None,
         typer.Option(
@@ -550,13 +567,16 @@ def run_command(
         ),
     ] = None,
 ) -> None:
-    backend = _value(llm_backend, "LLM_BACKEND", "")
-    llm_model_value = _value(llm_model, "LLM_MODEL", "")
-    if not isinstance(backend, str) or not backend.strip():
+    direct = clip_range is not None or clip_full
+    backend = "" if direct else _value(llm_backend, "LLM_BACKEND", "")
+    llm_model_value = "" if direct else _value(llm_model, "LLM_MODEL", "")
+    if not isinstance(backend, str) or (not direct and not backend.strip()):
         raise ConfigurationError("Set LLM_BACKEND or pass --llm-backend")
-    if not isinstance(llm_model_value, str) or not llm_model_value.strip():
+    if not isinstance(llm_model_value, str) or (
+        not direct and not llm_model_value.strip()
+    ):
         raise ConfigurationError("Set LLM_MODEL or pass --llm-model")
-    effort_value = _value(llm_effort, "LLM_EFFORT", None)
+    effort_value = None if direct else _value(llm_effort, "LLM_EFFORT", None)
     if effort_value is not None and not isinstance(effort_value, str):
         raise ConfigurationError("LLM_EFFORT must be a string")
     template_dir = _value(subtitle_template_dir, "SUBTITLE_TEMPLATE_DIR", None)
@@ -568,6 +588,8 @@ def run_command(
         llm_effort=effort_value,
         editorial_context=context,
         search_range=_time_range(search_range, "--search-range"),
+        clip_range=_time_range(clip_range, "--clip-range"),
+        full_video=clip_full,
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
         transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),

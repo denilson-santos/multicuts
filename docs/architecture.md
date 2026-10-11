@@ -22,6 +22,15 @@ The AI backend never receives video or audio. Prompts explicitly treat source tr
 
 ## Module boundaries
 
+For `AppConfig.clip_range` or `full_video`, the pipeline validates the requested
+media interval and its enabled duration class after probing, then constructs a
+`DirectClip`. It bypasses semantic units and AI entirely. `DirectClip` carries the
+probed source duration so subtitle slicing can retain leading/trailing silence
+beyond ASR coverage without changing any observed segment or word timestamps.
+The existing renderer accepts either a judged or direct clip. Source transcription
+is loaded only when a published output needs captions; otherwise renderers receive
+no transcript. Output JSON distinguishes selection modes and unscored clips.
+
 For `AppConfig.search_range`, the pipeline validates source bounds after probing
 and filters semantic units by full containment before building proposal blocks
 or judgment boundary options. IDs and timestamps remain on the source timeline.
@@ -63,7 +72,7 @@ The transcript key includes media fingerprint, ASR backend/model, requested lang
 
 The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
 
-Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent editorial cuts and their primary videos. The primary version keeps the existing filename; companion versions use `-vertical`, `-horizontal`, and `-square`. Manifest schema 3 and clip schema 1 gain additive fields.
+Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent selected cuts and their primary videos. The primary version keeps the existing filename; companion versions use `-vertical`, `-horizontal`, and `-square`. Manifest schema 4 and clip schema 2 identify the selection mode. Direct cuts have no score or transcript boundary IDs; skipped transcription is null in the manifest. Existing automatic analysis and cache schemas retain their meaning.
 
 The manifest's `transcription.backend` and `transcription.model` record the configured ASR engine and model on cache hits and fresh transcriptions. ASR progress logs include both settings.
 
