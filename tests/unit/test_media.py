@@ -73,7 +73,9 @@ def test_extract_transcription_range_preserves_source_and_maps_probed_streams(
         "0:3",
         "0:5",
     ]
-    assert command[command.index("-c:a") + 1] == "pcm_s16le"
+    assert command[command.index("-c:a") + 1] == "flac"
+    assert command[command.index("-ar") + 1] == "16000"
+    assert command[command.index("-ac") + 1] == "1"
 
 
 @pytest.mark.parametrize("failure", ["encode", "duration", "audio", "probe", "os"])

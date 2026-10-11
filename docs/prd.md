@@ -50,6 +50,9 @@ For local range requests needing ASR, check a validated full-source cache first,
 then the exact interval cache, using the configured provider version, backend,
 model, and language. On a miss, extract one exact private video segment with
 FFmpeg because the public multisubs transcription API requires video geometry.
+Keep this input compact with low-frame-rate video, a constrained video bitrate,
+and mono 16 kHz FLAC audio; preserve requested audio bounds and original source
+times. Published media quality must come from the original source.
 Preserve the original and render final cuts directly from it. Validate the
 temporary segment before ASR and remove it with other intermediates unless
 retention is requested. Store file-local ASR timings and restore original times

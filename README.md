@@ -315,7 +315,9 @@ Local `--search-range` and `--clip-range` requests check the full-source transcr
 cache first, then the interval cache. On a miss, a precise temporary video segment
 is prepared for the public multisubs API, which requires video geometry. The
 original stays intact and is used directly for final rendering. The temporary
-segment is removed unless `--keep-intermediates` is enabled. Different intervals
+segment uses video at 5 fps with a constrained bitrate and mono 16 kHz FLAC audio
+to reduce disk usage while retaining the audio used for transcription. It is
+removed unless `--keep-intermediates` is enabled. Different intervals
 have separate transcript caches; `--force-recompute` bypasses both cache choices.
 Direct cuts without published subtitles skip transcription and temporary extraction.
 

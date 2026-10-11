@@ -60,10 +60,15 @@ Unrestricted YouTube and full-video cuts retain full acquisition.
 Local acquisition retains the original path and fingerprint. When a local range
 requires ASR, the pipeline checks both compatible full-source and interval caches
 before extraction. On a miss, `media.extract_transcription_range` creates and
-validates an exact private MKV segment, with fast video encoding and PCM audio,
-using the probed stream indexes. The public multisubs API requires video geometry,
-so an audio-only WAV cannot be supplied in the supported version. The temporary
-video is only an ASR input; final rendering reads the original file. Failed
+validates a private MKV segment using the probed stream indexes. Its video retains
+source geometry at 5 fps with H.264 CRF 35, the veryfast preset, and a 128 kbit/s
+video rate limit with a 256 kbit buffer. Audio is prepared as mono 16 kHz FLAC
+with 16-bit samples to reduce temporary storage without lossy audio encoding.
+Requested audio boundaries and source offsets remain unchanged; video frame
+rounding stays within the extraction duration tolerance. The public multisubs API
+requires video geometry, so an audio-only WAV cannot be supplied in the supported
+version. The temporary video is only an ASR input; final rendering reads the
+original file. Failed
 extractions are removed, and successful inputs follow normal intermediate cleanup.
 Local interval cache keys add the normalized requested range, preserving existing
 full-source and YouTube keys. Cached partial timings remain file-local; the pipeline
