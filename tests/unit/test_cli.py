@@ -620,7 +620,7 @@ def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
     monkeypatch.chdir(tmp_path)
     calls: list[str] = []
 
-    def generate(_source: Path, _output: Path, **_kwargs: object) -> None:
+    def generate(_source: Path, **_kwargs: object) -> None:
         calls.append("transcribe")
         try:
             raise RuntimeError(
@@ -630,7 +630,7 @@ def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
             raise RuntimeError("private input path; token=private-token") from error
 
     provider = ModuleType("multisubs")
-    provider.__dict__["generate_transcriptions"] = generate
+    provider.__dict__["transcribe_video"] = generate
     monkeypatch.setitem(sys.modules, "multisubs", provider)
     monkeypatch.setattr(
         "multicuts.adapters.multisubs.importlib.metadata.version", lambda _name: "4.4.0"

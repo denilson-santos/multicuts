@@ -46,14 +46,13 @@ def test_public_transcription_signature_and_version(
     language: str | None, backend: str, model: str
 ) -> None:
     provider = _installed_provider()
-    generate = getattr(provider, "generate_transcriptions", None)
-    assert callable(generate), "multisubs.generate_transcriptions is unavailable"
+    generate = getattr(provider, "transcribe_video", None)
+    assert callable(generate), "multisubs.transcribe_video is unavailable"
     _assert_supported_provider_version()
 
     try:
         inspect.signature(generate).bind(
             Path("source.mp4"),
-            Path("output"),
             lang=language,
             task="transcribe",
             model_name=model,
@@ -61,10 +60,16 @@ def test_public_transcription_signature_and_version(
         )
     except (TypeError, ValueError) as exc:
         pytest.fail(f"multisubs public transcription signature changed: {exc}")
+    document = getattr(provider, "TranscriptDocument", None)
+    assert document is not None
+    assert {"language", "task", "full_text", "segments"}.issubset(
+        getattr(document, "__dataclass_fields__", {})
+    )
+    assert hasattr(document, "duration")
 
 
 def test_multisubs_subtitle_timed_cue_json_signature_and_artifact_shape() -> None:
-    """Pin the 4.4 timed-cue splitting contract consumed by the adapter."""
+    """Pin the public semantic rendering contract consumed by the adapter."""
     provider = _installed_provider()
     _assert_supported_provider_version()
 

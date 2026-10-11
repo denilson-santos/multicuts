@@ -8,7 +8,8 @@ import logging
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict
 from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
@@ -60,29 +61,20 @@ def _preload_cuda_libraries(backend: str) -> tuple[ctypes.CDLL, ...]:
     return tuple(handles)
 
 
-@dataclass(frozen=True, slots=True)
-class _TranscriptionArtifact:
-    """Validated provider JSON location and source-transcription provenance."""
-
-    json_path: Path
-    provider_version: str
-    language_requested: str | None
-
-
 def _invalid_field(field: str) -> NoReturn:
-    raise TranscriptionError(f"multisubs JSON transcript has invalid {field}")
+    raise TranscriptionError(f"multisubs semantic transcript has invalid {field}")
 
 
 def _record(value: object, field: str) -> dict[str, object]:
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+    if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
         _invalid_field(field)
-    return cast(dict[str, object], value)
+    return dict(cast(Mapping[str, object], value))
 
 
 def _items(value: object, field: str) -> list[object]:
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         _invalid_field(field)
-    return cast(list[object], value)
+    return list(cast(list[object] | tuple[object, ...], value))
 
 
 def _text(value: object, field: str) -> str:
@@ -98,7 +90,7 @@ def _number(value: object, field: str) -> float:
         number = float(value)
     except (OverflowError, ValueError) as exc:
         raise TranscriptionError(
-            f"multisubs JSON transcript has invalid {field}"
+            f"multisubs semantic transcript has invalid {field}"
         ) from exc
     if not isfinite(number):
         _invalid_field(field)
@@ -115,10 +107,6 @@ def _interval(
     if start is None or end is None:
         _invalid_field(f"{field} timing")
     return _number(start, f"{field} start"), _number(end, f"{field} end")
-
-
-def _reject_json_constant(_value: str) -> NoReturn:
-    raise ValueError("non-finite JSON number")
 
 
 def _transcription_failure_message(error: Exception) -> str:
@@ -164,30 +152,18 @@ def _transcription_failure_message(error: Exception) -> str:
     )
 
 
-def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
-    try:
-        with artifact.json_path.open(encoding="utf-8") as artifact_file:
-            payload: object = json.load(
-                artifact_file, parse_constant=_reject_json_constant
-            )
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise TranscriptionError(
-            "multisubs did not produce a readable JSON transcript"
-        ) from exc
-
-    root = _record(payload, "root object")
-    if root.get("schema_version") != 3 or isinstance(root.get("schema_version"), bool):
-        _invalid_field("schema version")
-    metadata = _record(root.get("metadata"), "metadata")
-    if metadata.get("task") != "transcribe":
+def _normalize_transcription(
+    document: object, *, provider_version: str, language_requested: str | None
+) -> Transcript:
+    """Consume only public semantic fields, before any visual cue layout."""
+    if getattr(document, "task", None) != "transcribe":
         _invalid_field("task")
-    detected_language = _text(metadata.get("language"), "detected language")
-    duration = _number(metadata.get("duration"), "duration")
+    detected_language = _text(getattr(document, "language", None), "detected language")
+    duration = _number(getattr(document, "duration", None), "duration")
     if duration <= 0:
         _invalid_field("duration")
-    transcription = _record(root.get("transcription"), "transcription")
-    full_text = _text(transcription.get("text"), "transcription text")
-    raw_segments = _items(transcription.get("segments"), "segments")
+    full_text = _text(getattr(document, "full_text", None), "transcription text")
+    raw_segments = _items(getattr(document, "segments", None), "segments")
     if not raw_segments:
         _invalid_field("segments")
 
@@ -205,7 +181,7 @@ def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
             )
         except ValueError as exc:
             raise TranscriptionError(
-                f"multisubs JSON transcript has invalid {field}"
+                f"multisubs semantic transcript has invalid {field}"
             ) from exc
         for word_index, raw_word in enumerate(
             _items(segment.get("words", []), f"{field} words")
@@ -229,22 +205,22 @@ def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
                 )
             except ValueError as exc:
                 raise TranscriptionError(
-                    f"multisubs JSON transcript has invalid {word_field}"
+                    f"multisubs semantic transcript has invalid {word_field}"
                 ) from exc
 
     try:
         return Transcript(
-            language_requested=artifact.language_requested,
+            language_requested=language_requested,
             language_detected=detected_language,
             duration=duration,
             text=full_text,
             segments=tuple(segments),
             words=tuple(words),
             provider="multisubs",
-            provider_version=artifact.provider_version,
+            provider_version=provider_version,
         )
     except ValueError as exc:
-        raise TranscriptionError("multisubs JSON transcript is invalid") from exc
+        raise TranscriptionError("multisubs semantic transcript is invalid") from exc
 
 
 def _require_provider_version() -> str:
@@ -262,6 +238,19 @@ def _require_provider_version() -> str:
         raise RenderingError(
             f"multisubs {version} cannot split timed cues to fit the clip; "
             "install version 4.4 or newer"
+        )
+    try:
+        provider = importlib.import_module("multisubs")
+        semantic_api = getattr(provider, "transcribe_video", None)
+    except Exception as exc:
+        raise RenderingError(
+            "multisubs semantic transcript support is unavailable; "
+            "install the matching multisubs development build"
+        ) from exc
+    if not callable(semantic_api):
+        raise RenderingError(
+            "multisubs semantic transcript support is unavailable; "
+            "install the matching multisubs development build"
         )
     return version
 
@@ -283,46 +272,6 @@ def _source_text_for_words(segment_text: str, words: list[ClipTranscriptWord]) -
             return segment_text[offset:cursor]
         offset = segment_text.find(first, offset + 1)
     return " ".join(tokens)
-
-
-def _subtitle_word_groups(
-    words: list[ClipTranscriptWord], text: str, cue_start: float, cue_end: float
-) -> list[dict[str, object]]:
-    """Group observed point words because the public cue API requires duration.
-
-    Original word timestamps stay in the transcript. Each rendering group uses
-    its observed outer word bounds, or the observed segment bounds when every
-    word is a point; no individual word receives fabricated timing.
-    """
-    groups: list[tuple[int, int]] = []
-    pending_start = 0
-    spans: list[tuple[int, int]] = []
-    cursor = 0
-    for index, word in enumerate(words):
-        token = word.text.strip()
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-        spans.append((cursor, cursor + len(token)))
-        cursor += len(token)
-        if word.start is None or word.end is None:
-            raise RenderingError("Clip subtitle word timing is incomplete")
-        if word.end > word.start:
-            groups.append((pending_start, index + 1))
-            pending_start = index + 1
-        elif groups:
-            first, _ = groups[-1]
-            groups[-1] = (first, index + 1)
-            pending_start = index + 1
-    if not groups:
-        return [{"start": cue_start, "end": cue_end, "text": text}]
-    return [
-        {
-            "start": words[first].start,
-            "end": words[stop - 1].end,
-            "text": text[spans[first][0] : spans[stop - 1][1]],
-        }
-        for first, stop in groups
-    ]
 
 
 def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
@@ -371,14 +320,17 @@ def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
                 "start": cue_start,
                 "end": cue_end,
                 "text": text,
-                "words": _subtitle_word_groups(words, text, cue_start, cue_end),
+                "words": [
+                    {"start": word.start, "end": word.end, "text": word.text.strip()}
+                    for word in words
+                ],
             }
         )
     if not cues or len(assigned) != len(clip.words):
         raise RenderingError(
             "Clip words cannot be mapped to timed source segments for subtitles"
         )
-    return {"schema_version": 1, "language": language, "cues": cues}
+    return {"schema_version": 2, "language": language, "segments": cues}
 
 
 def _render_subtitles(
@@ -517,35 +469,16 @@ class MultisubsAdapter:
         workspace: Path,
         backend: str = "whisperx",
     ) -> Transcript:
-        """Return a project-owned transcript from one public provider call."""
-        artifact = self._transcribe_to_artifact(
-            video_path,
-            language=language,
-            model=model,
-            workspace=workspace,
-            backend=backend,
-        )
-        return _normalize_artifact(artifact)
-
-    def _transcribe_to_artifact(
-        self,
-        video_path: Path,
-        *,
-        language: str | None,
-        model: str,
-        workspace: Path,
-        backend: str,
-    ) -> _TranscriptionArtifact:
-        """Generate source artifacts inside the workspace and verify the JSON."""
+        """Normalize one public semantic ASR result without subtitle layout."""
         try:
             provider = importlib.import_module("multisubs")
-            generate = provider.generate_transcriptions
+            transcribe = provider.transcribe_video
         except Exception as exc:
             raise TranscriptionError(
-                "multisubs public transcription API is unavailable; "
-                "check the multisubs installation"
+                "multisubs public semantic transcription API is unavailable; "
+                "install the multisubs build with transcribe_video support"
             ) from exc
-        if not callable(generate):
+        if not callable(transcribe):
             raise TranscriptionError("multisubs public transcription API is invalid")
         version = self.version()
 
@@ -567,9 +500,8 @@ class MultisubsAdapter:
         try:
             # Retain native handles for the lifetime of the public ASR call.
             _cuda_handles = _preload_cuda_libraries(backend)
-            generated = generate(
+            document = transcribe(
                 video_path,
-                actual_output_dir,
                 lang=language,
                 task="transcribe",
                 asr_backend=backend,
@@ -578,38 +510,18 @@ class MultisubsAdapter:
         except Exception as exc:
             raise TranscriptionError(_transcription_failure_message(exc)) from exc
 
-        if (
-            not isinstance(generated, tuple)
-            or len(generated) != 3
-            or any(not isinstance(path, (str, Path)) for path in generated)
-        ):
-            raise TranscriptionError("multisubs returned invalid artifact paths")
-
-        try:
-            artifact_paths = tuple(
-                Path(path).resolve(strict=True) for path in generated
-            )
-            if any(
-                not path.is_relative_to(actual_output_dir) or not path.is_file()
-                for path in artifact_paths
-            ):
-                raise TranscriptionError(
-                    "multisubs artifacts must be files inside its workspace"
-                )
-            resolved_json = artifact_paths[0]
-            with resolved_json.open(encoding="utf-8") as artifact_file:
-                payload = json.load(artifact_file)
-        except (OSError, UnicodeError, ValueError) as exc:
-            raise TranscriptionError(
-                "multisubs did not produce a readable JSON transcript"
-            ) from exc
-        if not isinstance(payload, dict) or not payload:
-            raise TranscriptionError(
-                "multisubs produced an empty or invalid JSON transcript"
-            )
-
-        return _TranscriptionArtifact(
-            json_path=resolved_json,
-            provider_version=version,
-            language_requested=language,
+        transcript = _normalize_transcription(
+            document, provider_version=version, language_requested=language
         )
+        try:
+            with (actual_output_dir / "transcript.json").open(
+                "x", encoding="utf-8"
+            ) as stream:
+                json.dump(
+                    asdict(transcript), stream, ensure_ascii=False, allow_nan=False
+                )
+        except (OSError, ValueError) as exc:
+            raise TranscriptionError(
+                "Could not save the normalized transcript"
+            ) from exc
+        return transcript

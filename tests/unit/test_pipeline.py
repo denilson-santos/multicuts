@@ -1774,6 +1774,29 @@ def test_language_change_invalidates_transcript_cache(tmp_path: Path) -> None:
     )
 
 
+def test_legacy_display_block_cache_is_not_reused_for_semantic_asr(
+    tmp_path: Path,
+) -> None:
+    asr = FakeTranscriber()
+    _run(tmp_path, asr, FakeBackend(empty=True))
+    cache_dir = tmp_path / "out" / ".cache" / "transcripts"
+    (current,) = cache_dir.glob("*.json")
+    payload = json.loads(current.read_text())
+    # Golden identity from transcript stage 2 for this source/configuration.
+    legacy_digest = "a07e72a63150a17781b04e1e2da11a19a129bf7701252a245c37a6be86560c24"
+    legacy = cache_dir / f"{legacy_digest}.json"
+    payload["key"] = f"sha256-v1:{legacy_digest}"
+    current.rename(legacy)
+    legacy.write_text(json.dumps(payload), encoding="utf-8")
+    result = _run(tmp_path, asr, FakeBackend(empty=True))
+    assert asr.calls == 2
+    assert not json.loads(result.manifest_path.read_text())["transcription"][
+        "cache_hit"
+    ]
+    assert legacy.is_file()
+    assert current.is_file()
+
+
 def test_malformed_transcript_cache_is_recomputed(tmp_path: Path) -> None:
     _run(tmp_path, FakeTranscriber(), FakeBackend())
     cache_path = next((tmp_path / "out" / ".cache" / "transcripts").glob("*.json"))

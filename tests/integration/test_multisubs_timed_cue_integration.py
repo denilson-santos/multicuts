@@ -81,8 +81,13 @@ def test_timed_cue_template_renders_final_clip_geometry(
     assert "PlayResX: 360" in ass
     assert "PlayResY: 640" in ass
     assert "Olá de novo." in result.srt_path.read_text(encoding="utf-8")
-    cues = json.loads(result.cues_json_path.read_text(encoding="utf-8"))["cues"]
-    assert all(word["end"] > word["start"] for cue in cues for word in cue["words"])
+    payload = json.loads(result.cues_json_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert [
+        (word["start"], word["end"])
+        for segment in payload["segments"]
+        for word in segment["words"]
+    ] == list(intervals)
     assert [(word.start, word.end) for word in clip.words] == list(intervals)
     probe = subprocess.run(
         [

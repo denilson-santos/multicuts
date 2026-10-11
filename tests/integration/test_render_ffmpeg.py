@@ -167,7 +167,7 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
             path for path in metadata["subtitle_files"] if path.endswith(".cues.json")
         )
         cues = json.loads((result.manifest_path.parent / cues_path).read_text())
-        first_word = cues["cues"][0]["words"][0]
+        first_word = cues["segments"][0]["words"][0]
         assert (first_word["start"], first_word["end"]) == pytest.approx(
             first_word_times[0], abs=0.000001
         )

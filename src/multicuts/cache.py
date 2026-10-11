@@ -58,7 +58,7 @@ def transcript_paths(
         "model": model,
         "language_requested": language,
         "task": "transcribe",
-        "stage_version": 2,
+        "stage_version": 3,
         "schema_version": 1,
     }
     if time_range is not None:

@@ -114,6 +114,19 @@ python -m pip install --editable .
 
 This installs the pinned `multisubs[whisperx]` **4.4.1** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
 
+This development branch requires the matching multisubs build with the public
+`transcribe_video` API and schema-2 semantic rendering. The published 4.4.1 wheel
+does not yet include that contract. After installing the app, install the wheel
+built from the multisubs `fix/semantic-transcript-layout` branch:
+
+```bash
+python -m pip install --no-deps --force-reinstall /path/to/multisubs-4.4.1-py3-none-any.whl
+```
+
+The release pin must be updated to the verified provider release before this
+integration is merged or released. Earlier builds fail explicitly rather than
+rendering already formatted transcript blocks again.
+
 <a id="asr-backends"></a>
 
 #### Follow your ASR backend's instructions
@@ -299,6 +312,12 @@ long. That class must be enabled. Add `--no-variants` for one output file, or
 the source framing. With all published subtitles disabled, direct cuts skip ASR.
 Otherwise, they reuse one source transcript for all versions. Their title comes
 from the source filename or YouTube title; their metadata has no editorial score.
+
+Transcription retains semantic text and observed word times without visual
+formatting. Multisubs organizes subtitles once, using the final template and
+geometry. Published `.cues.json` sidecars use schema version 2 with `segments`,
+including unchanged individual point-word times. Older display-block transcript
+caches are recomputed once; completed runs remain available.
 
 **Use a YouTube source**
 

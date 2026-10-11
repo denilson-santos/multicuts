@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from importlib import metadata
 from pathlib import Path
-from types import ModuleType
+from types import MappingProxyType, ModuleType, SimpleNamespace
 
 import pytest
 
@@ -34,6 +34,13 @@ TRANSCRIPT_FIXTURE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _semantic_provider_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = ModuleType("multisubs")
+    provider.__dict__["transcribe_video"] = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, "multisubs", provider)
+
+
 def test_provider_version_uses_distribution_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -56,15 +63,15 @@ def test_missing_provider_version_is_actionable(
 
 def _install_provider(
     monkeypatch: pytest.MonkeyPatch,
-    generate: Callable[..., object] | None,
+    transcribe: Callable[..., object] | None,
     *,
     version: str = "4.2.0",
 ) -> None:
     provider = ModuleType("multisubs")
     monkeypatch.setattr(metadata, "version", lambda _name: version)
     provider.__dict__["__version__"] = version
-    if generate is not None:
-        provider.__dict__["generate_transcriptions"] = generate
+    if transcribe is not None:
+        provider.__dict__["transcribe_video"] = transcribe
     monkeypatch.setitem(sys.modules, "multisubs", provider)
 
     def missing_distribution(name: str) -> metadata.Distribution:
@@ -77,23 +84,24 @@ def _install_provider(
     monkeypatch.setattr(multisubs.ctypes, "CDLL", missing_library)
 
 
-def _write_artifacts(
-    output_dir: Path,
-    *,
-    json_text: str | None = None,
-) -> tuple[str, str, str]:
-    json_path = output_dir / "source.json"
-    srt_path = output_dir / "source.srt"
-    ass_path = output_dir / "source.ass"
-    json_path.write_text(
-        TRANSCRIPT_FIXTURE.read_text(encoding="utf-8")
-        if json_text is None
-        else json_text,
-        encoding="utf-8",
+def _semantic_document(payload: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        language=payload.get("metadata", {}).get("language"),
+        task=payload.get("metadata", {}).get("task"),
+        duration=payload.get("metadata", {}).get("duration"),
+        full_text=payload.get("transcription", {}).get("text"),
+        segments=payload.get("transcription", {}).get("segments"),
     )
-    srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
-    ass_path.write_text("[Script Info]\n", encoding="utf-8")
-    return str(json_path), str(srt_path), str(ass_path)
+
+
+def _fixture_document(*, json_text: str | None = None) -> SimpleNamespace:
+    return _semantic_document(
+        json.loads(
+            TRANSCRIPT_FIXTURE.read_text(encoding="utf-8")
+            if json_text is None
+            else json_text
+        )
+    )
 
 
 def _transcribe_json(
@@ -103,12 +111,10 @@ def _transcribe_json(
     *,
     language: str | None = None,
 ) -> Transcript:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        return _write_artifacts(output_dir, json_text=json_text)
+    def transcribe(_input_path: Path, **_kwargs: object) -> SimpleNamespace:
+        return _fixture_document(json_text=json_text)
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     return MultisubsAdapter().transcribe(
         tmp_path / "source.mp4",
         language=language,
@@ -118,7 +124,7 @@ def _transcribe_json(
 
 
 @pytest.mark.parametrize("requested_language", [None, "pt"])
-def test_normalizes_public_json_without_losing_timing_or_text(
+def test_normalizes_public_semantic_document_without_losing_timing_or_text(
     requested_language: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -147,6 +153,31 @@ def test_normalizes_public_json_without_losing_timing_or_text(
         "multisubs",
         "4.2.0",
     )
+
+
+def test_public_semantic_mapping_and_tuple_fields_are_supported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = _fixture_document()
+    document.segments = tuple(
+        MappingProxyType(
+            {
+                **segment,
+                "words": tuple(MappingProxyType(word) for word in segment["words"]),
+            }
+        )
+        for segment in document.segments
+    )
+    _install_provider(monkeypatch, lambda *_args, **_kwargs: document)
+    transcript = MultisubsAdapter().transcribe(
+        tmp_path / "source.mp4",
+        language=None,
+        model="default",
+        workspace=tmp_path / "work",
+    )
+    assert transcript.segments[0].text == "Olá mundo."
+    assert len(transcript.words) == 3
+    assert transcript.words[0].confidence == 0.97
 
 
 def test_point_word_normalization_and_cache_preserve_asr_data(
@@ -219,7 +250,7 @@ def test_missing_segment_timing_remains_absent(
 @pytest.mark.parametrize(
     "case, expected",
     [
-        ("schema", "schema version"),
+        ("task", "task"),
         ("language", "detected language"),
         ("duration", "duration"),
         ("text", "transcription text"),
@@ -232,15 +263,15 @@ def test_missing_segment_timing_remains_absent(
         ("word_score", "word 0 score"),
     ],
 )
-def test_rejects_invalid_consumed_json_fields(
+def test_rejects_invalid_consumed_semantic_fields(
     case: str,
     expected: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
-    if case == "schema":
-        payload["schema_version"] = 4
+    if case == "task":
+        payload["metadata"]["task"] = "translate"
     elif case == "language":
         payload["metadata"]["language"] = ""
     elif case == "duration":
@@ -269,28 +300,26 @@ def test_rejects_invalid_consumed_json_fields(
         _transcribe_json(json.dumps(payload, ensure_ascii=False), tmp_path, monkeypatch)
 
 
-def test_non_finite_json_number_is_rejected(
+def test_non_finite_semantic_number_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
     payload["metadata"]["duration"] = float("nan")
 
-    with pytest.raises(TranscriptionError, match="readable JSON transcript"):
+    with pytest.raises(TranscriptionError, match="duration"):
         _transcribe_json(json.dumps(payload), tmp_path, monkeypatch)
 
 
 def test_auto_language_and_default_model_use_public_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[tuple[Path, Path, dict[str, object]]] = []
+    calls: list[tuple[Path, dict[str, object]]] = []
 
-    def generate(
-        input_path: Path, output_dir: Path, **kwargs: object
-    ) -> tuple[str, str, str]:
-        calls.append((input_path, output_dir, kwargs))
-        return _write_artifacts(output_dir)
+    def transcribe(input_path: Path, **kwargs: object) -> SimpleNamespace:
+        calls.append((input_path, kwargs))
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     video_path = tmp_path / "source.mp4"
     result = MultisubsAdapter().transcribe(
         video_path,
@@ -299,13 +328,12 @@ def test_auto_language_and_default_model_use_public_api(
         workspace=tmp_path / "run",
     )
 
-    assert (tmp_path / "run/multisubs/source.json").is_file()
+    assert (tmp_path / "run/multisubs/transcript.json").is_file()
     assert result.provider_version == "4.2.0"
     assert result.language_requested is None
     assert calls == [
         (
             video_path,
-            (tmp_path / "run/multisubs").resolve(),
             {"lang": None, "task": "transcribe", "asr_backend": "whisperx"},
         )
     ]
@@ -314,12 +342,10 @@ def test_auto_language_and_default_model_use_public_api(
 def test_transcript_provenance_matches_cache_provider_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        return _write_artifacts(output_dir)
+    def transcribe(_input_path: Path, **_kwargs: object) -> SimpleNamespace:
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate, version="4.3.0")
+    _install_provider(monkeypatch, transcribe, version="4.3.0")
     sys.modules["multisubs"].__dict__["__version__"] = "different"
     adapter = MultisubsAdapter()
 
@@ -347,13 +373,11 @@ def test_explicit_language_backend_and_model_are_forwarded(
 ) -> None:
     options: list[dict[str, object]] = []
 
-    def generate(
-        _input_path: Path, output_dir: Path, **kwargs: object
-    ) -> tuple[str, str, str]:
+    def transcribe(_input_path: Path, **kwargs: object) -> SimpleNamespace:
         options.append(kwargs)
-        return _write_artifacts(output_dir)
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
 
     result = MultisubsAdapter().transcribe(
         tmp_path / "source.mp4",
@@ -379,10 +403,10 @@ def test_provider_failure_is_chained_without_leaking_provider_message(
 ) -> None:
     failure = RuntimeError("private video path and provider details")
 
-    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> None:
+    def transcribe(_input_path: Path, **_kwargs: object) -> None:
         raise failure
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
 
     with pytest.raises(TranscriptionError, match="could not transcribe") as caught:
         MultisubsAdapter().transcribe(
@@ -430,10 +454,10 @@ def test_known_setup_failures_are_actionable_without_leaking_provider_details(
     else:
         wrapper.__context__ = failure
 
-    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> None:
+    def transcribe(_input_path: Path, **_kwargs: object) -> None:
         raise wrapper
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     with pytest.raises(TranscriptionError) as caught:
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
@@ -456,13 +480,11 @@ def test_faster_whisper_loads_registered_cuda_wheels_before_one_asr_call(
 ) -> None:
     events: list[str] = []
 
-    def generate(
-        _source: Path, output: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
+    def transcribe(_source: Path, **_kwargs: object) -> SimpleNamespace:
         events.append("ASR")
-        return _write_artifacts(output)
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     monkeypatch.setattr(multisubs.sys, "platform", "linux")
     if library_path is None:
         monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
@@ -510,12 +532,10 @@ def test_faster_whisper_keeps_available_system_cuda_libraries(
 ) -> None:
     loaded: list[str] = []
 
-    def generate(
-        _source: Path, output: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        return _write_artifacts(output)
+    def transcribe(_source: Path, **_kwargs: object) -> SimpleNamespace:
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     monkeypatch.setattr(multisubs.sys, "platform", "linux")
 
     def load(name: str, *, mode: int) -> object:
@@ -553,12 +573,10 @@ def test_cuda_preloading_is_scoped_to_faster_whisper_on_linux(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def generate(
-        _source: Path, output: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        return _write_artifacts(output)
+    def transcribe(_source: Path, **_kwargs: object) -> SimpleNamespace:
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     monkeypatch.setattr(multisubs.sys, "platform", platform)
 
     def unexpected_load(_name: str, *, mode: int) -> None:
@@ -587,13 +605,11 @@ def test_optional_cuda_libraries_do_not_prevent_cpu_transcription(
 ) -> None:
     calls: list[str] = []
 
-    def generate(
-        _source: Path, output: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
+    def transcribe(_source: Path, **_kwargs: object) -> SimpleNamespace:
         calls.append("ASR")
-        return _write_artifacts(output)
+        return _fixture_document()
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     monkeypatch.setattr(multisubs.sys, "platform", "linux")
     if wheel_state != "missing":
         root = tmp_path / "site-packages"
@@ -632,10 +648,10 @@ def test_unknown_cyclic_provider_failure_keeps_the_safe_generic_message(
     failure = RuntimeError("private provider failure")
     failure.__cause__ = failure
 
-    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> None:
+    def transcribe(_input_path: Path, **_kwargs: object) -> None:
         raise failure
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
     with pytest.raises(TranscriptionError, match="could not transcribe") as caught:
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
@@ -652,7 +668,7 @@ def test_missing_public_api_is_actionable(
 ) -> None:
     _install_provider(monkeypatch, None)
 
-    with pytest.raises(TranscriptionError, match="public transcription API"):
+    with pytest.raises(TranscriptionError, match="public semantic transcription API"):
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
             language=None,
@@ -673,7 +689,9 @@ def test_unavailable_provider_is_wrapped(
         "multicuts.adapters.multisubs.importlib.import_module", unavailable
     )
 
-    with pytest.raises(TranscriptionError, match="public transcription API") as caught:
+    with pytest.raises(
+        TranscriptionError, match="public semantic transcription API"
+    ) as caught:
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
             language=None,
@@ -688,12 +706,12 @@ def test_unavailable_provider_is_wrapped(
 def test_invalid_provider_return_is_rejected(
     generated: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def generate(_input_path: Path, _output_dir: Path, **_kwargs: object) -> object:
+    def transcribe(_input_path: Path, **_kwargs: object) -> object:
         return generated
 
-    _install_provider(monkeypatch, generate)
+    _install_provider(monkeypatch, transcribe)
 
-    with pytest.raises(TranscriptionError, match="invalid artifact paths"):
+    with pytest.raises(TranscriptionError, match="semantic transcript"):
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
             language=None,
@@ -702,87 +720,20 @@ def test_invalid_provider_return_is_rejected(
         )
 
 
-@pytest.mark.parametrize("json_text", ["", "{invalid", "{}", "[]"])
-def test_missing_or_invalid_json_cannot_be_successful(
-    json_text: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        return _write_artifacts(output_dir, json_text=json_text)
-
-    _install_provider(monkeypatch, generate)
-
-    with pytest.raises(TranscriptionError, match="JSON transcript"):
-        MultisubsAdapter().transcribe(
-            tmp_path / "source.mp4",
-            language=None,
-            model="default",
-            workspace=tmp_path / "run",
-        )
-
-
-def test_missing_companion_artifact_is_rejected(
+def test_workspace_cannot_escape_its_configured_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        paths = _write_artifacts(output_dir)
-        (output_dir / "source.ass").unlink()
-        return paths
-
-    _install_provider(monkeypatch, generate)
-
-    with pytest.raises(TranscriptionError, match="readable JSON transcript"):
+    _install_provider(
+        monkeypatch, lambda *_args, **_kwargs: pytest.fail("ASR must not start")
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    (workspace / "multisubs").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(TranscriptionError, match="workspace must stay"):
         MultisubsAdapter().transcribe(
-            tmp_path / "source.mp4",
-            language=None,
-            model="default",
-            workspace=tmp_path / "run",
-        )
-
-
-def test_missing_json_artifact_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        paths = _write_artifacts(output_dir)
-        (output_dir / "source.json").unlink()
-        return paths
-
-    _install_provider(monkeypatch, generate)
-
-    with pytest.raises(TranscriptionError, match="readable JSON transcript"):
-        MultisubsAdapter().transcribe(
-            tmp_path / "source.mp4",
-            language=None,
-            model="default",
-            workspace=tmp_path / "run",
-        )
-
-
-def test_provider_output_cannot_escape_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def generate(
-        _input_path: Path, output_dir: Path, **_kwargs: object
-    ) -> tuple[str, str, str]:
-        paths = _write_artifacts(output_dir)
-        outside = tmp_path / "outside.json"
-        outside.write_text('{"text": "hello"}', encoding="utf-8")
-        return str(outside), paths[1], paths[2]
-
-    _install_provider(monkeypatch, generate)
-
-    with pytest.raises(TranscriptionError, match="inside its workspace"):
-        MultisubsAdapter().transcribe(
-            tmp_path / "source.mp4",
-            language=None,
-            model="default",
-            workspace=tmp_path / "run",
+            tmp_path / "source.mp4", language=None, model="default", workspace=workspace
         )
 
 
@@ -807,57 +758,49 @@ def _clip(*, complete: bool = True) -> ClipTranscript:
 
 
 @pytest.mark.parametrize(
-    "text,tokens,intervals,expected",
+    "text,tokens,intervals",
     [
         (
             "Olá de novo.",
             ("Olá", "de", "novo."),
             ((0.2, 0.2), (0.8, 1.2), (1.3, 1.8)),
-            [(0.2, 1.2, "Olá de"), (1.3, 1.8, "novo.")],
         ),
         (
             "Olá de novo.",
             ("Olá", "de", "novo."),
             ((0.2, 0.7), (0.8, 0.8), (1.0, 1.8)),
-            [(0.2, 0.8, "Olá de"), (1.0, 1.8, "novo.")],
         ),
         (
             "Olá de novo.",
             ("Olá", "de", "novo."),
             ((0.2, 0.7), (0.8, 1.2), (1.8, 1.8)),
-            [(0.2, 0.7, "Olá"), (0.8, 1.8, "de novo.")],
         ),
         (
             "Olá de novo.",
             ("Olá", "de", "novo."),
             ((0.2, 0.2), (0.8, 0.8), (1.8, 1.8)),
-            [(0.2, 1.8, "Olá de novo.")],
         ),
         (
             "Olá de novo.",
             ("Olá", "de", "novo."),
             ((0.7, 0.7), (0.7, 0.7), (0.7, 0.7)),
-            [(0.2, 1.8, "Olá de novo.")],
         ),
         (
             "a b a  b",
             ("a", "b", "a", "b"),
             ((0.2, 0.5), (0.5, 0.7), (0.8, 1.2), (1.8, 1.8)),
-            [(0.2, 0.5, "a"), (0.5, 0.7, "b"), (0.8, 1.8, "a  b")],
         ),
         (
             "你好世界!",
             ("你好", "世界", "!"),
             ((0.2, 0.2), (0.7, 0.7), (0.8, 1.8)),
-            [(0.2, 1.8, "你好世界!")],
         ),
     ],
 )
-def test_subtitle_groups_preserve_point_word_text_and_observed_bounds(
+def test_semantic_segments_preserve_every_point_word_and_its_observed_timing(
     text: str,
     tokens: tuple[str, ...],
     intervals: tuple[tuple[float, float], ...],
-    expected: list[tuple[float, float, str]],
 ) -> None:
     words = tuple(
         ClipTranscriptWord(token, start, end, 0.9, index, 0)
@@ -871,7 +814,7 @@ def test_subtitle_groups_preserve_point_word_text_and_observed_bounds(
         segments=(ClipTranscriptSegment(text, 0.2, 1.8, 0),),
         words=words,
     )
-    cues = multisubs._timed_cues(clip)["cues"]
+    cues = multisubs._timed_cues(clip)["segments"]
     assert cues == [
         {
             "start": 0.2,
@@ -879,7 +822,7 @@ def test_subtitle_groups_preserve_point_word_text_and_observed_bounds(
             "text": text,
             "words": [
                 {"start": start, "end": end, "text": token}
-                for start, end, token in expected
+                for token, (start, end) in zip(tokens, intervals, strict=True)
             ],
         }
     ]
@@ -923,9 +866,9 @@ def test_public_cli_receives_clip_local_json_and_template(
 
     payload = json.loads(result.cues_json_path.read_text(encoding="utf-8"))
     assert payload == {
-        "schema_version": 1,
+        "schema_version": 2,
         "language": "pt",
-        "cues": [
+        "segments": [
             {
                 "start": 0.2,
                 "end": 1.8,
@@ -968,7 +911,7 @@ def test_partial_segment_keeps_selected_word_text_without_outside_words() -> Non
         word_timing_complete=True,
     )
 
-    assert multisubs._timed_cues(clip)["cues"] == [
+    assert multisubs._timed_cues(clip)["segments"] == [
         {
             "start": 0.0,
             "end": 1.0,
@@ -1001,7 +944,7 @@ def test_long_asr_segment_is_submitted_as_one_timed_cue() -> None:
         word_timing_complete=True,
     )
 
-    cues = multisubs._timed_cues(clip)["cues"]
+    cues = multisubs._timed_cues(clip)["segments"]
 
     assert cues == [
         {
@@ -1032,6 +975,20 @@ def test_missing_word_timing_fails_before_renderer(
             workspace=tmp_path / "work",
         )
     assert not (tmp_path / "work").exists()
+
+
+def test_provider_without_semantic_api_fails_before_subtitle_rendering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_provider(monkeypatch, None, version="4.4.1")
+    with pytest.raises(RenderingError, match="semantic transcript support"):
+        MultisubsAdapter().subtitle_clip(
+            tmp_path / "raw.mp4",
+            _clip(),
+            template=None,
+            template_dir=None,
+            workspace=tmp_path / "work",
+        )
 
 
 def test_old_provider_fails_with_compatibility_message(
