@@ -76,16 +76,26 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
             workspace: Path,
         ) -> Transcript:
             self.calls += 1
+            factor = 1.0
+            if interval is not None:
+                assert video_path != source_path
+                expected_duration = interval.end - interval.start
+                assert inspect_media_path(video_path).duration == pytest.approx(
+                    expected_duration, abs=0.25
+                )
+                factor = expected_duration / 2.5
+            else:
+                assert video_path == source_path
             return Transcript(
                 language,
                 "en",
-                2.5,
+                2.5 * factor,
                 "A complete idea.",
-                (TranscriptSegment("A complete idea.", 0.5, 2.5),),
+                (TranscriptSegment("A complete idea.", 0.5 * factor, 2.5 * factor),),
                 (
-                    Word("A", 0.6, 1.0),
-                    Word("complete", 1.1, 1.8),
-                    Word("idea.", 1.9, 2.4),
+                    Word("A", 0.6 * factor, 1.0 * factor),
+                    Word("complete", 1.1 * factor, 1.8 * factor),
+                    Word("idea.", 1.9 * factor, 2.4 * factor),
                 ),
                 "multisubs",
                 provider_version,
@@ -119,6 +129,12 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
     assert metadata["end"] == pytest.approx(end, abs=0.000001)
     assert metadata["viral_potential"] is None
     assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["source"]["acquired_range"] is None
+    if subtitles:
+        assert manifest["transcription"]["source_range"] == (
+            {"start": interval.start, "end": interval.end} if interval else None
+        )
     assert not (result.manifest_path.parent / ".work").exists()
 
 

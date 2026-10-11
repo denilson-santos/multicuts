@@ -34,9 +34,10 @@ no transcript. Output JSON distinguishes selection modes and unscored clips.
 For `AppConfig.search_range`, the pipeline validates source bounds after probing
 and filters semantic units by full containment before building proposal blocks
 or judgment boundary options. IDs and timestamps remain on the source timeline.
-Only scoped transcript text reaches the AI. Local sources retain their full-source
-transcript cache; YouTube range requests cache only the acquired interval. AI cache
-keys continue to include their scoped prompt evidence.
+Only scoped transcript text reaches the AI. Local range requests prefer a
+compatible cached full-source transcript, then an exact interval cache; YouTube
+range requests cache the acquired interval. AI cache keys continue to include
+their scoped prompt evidence.
 
 The source boundary accepts an optional `TimeRange`. Local acquisition ignores it;
 the YouTube adapter uses yt-dlp's public `download_ranges` callback and
@@ -56,8 +57,22 @@ original source duration without changing timing provenance. AI and artifacts us
 these original times; FFmpeg rendering subtracts the offset for local seeking.
 Unrestricted YouTube and full-video cuts retain full acquisition.
 
+Local acquisition retains the original path and fingerprint. When a local range
+requires ASR, the pipeline checks both compatible full-source and interval caches
+before extraction. On a miss, `media.extract_transcription_range` creates and
+validates an exact private MKV segment, with fast video encoding and PCM audio,
+using the probed stream indexes. The public multisubs API requires video geometry,
+so an audio-only WAV cannot be supplied in the supported version. The temporary
+video is only an ASR input; final rendering reads the original file. Failed
+extractions are removed, and successful inputs follow normal intermediate cleanup.
+Local interval cache keys add the normalized requested range, preserving existing
+full-source and YouTube keys. Cached partial timings remain file-local; the pipeline
+restores original timestamps and duration once after cache load or fresh ASR.
+`--force-recompute` skips both local cache choices. A partial cache cannot satisfy
+a full-source request; direct cuts without published captions skip extraction.
+
 - `source.py`, `local_source.py`, and `adapters/youtube.py`: acquisition and source fingerprinting.
-- `media.py`: FFmpeg/ffprobe availability and normalized media geometry.
+- `media.py`: FFmpeg/ffprobe availability, normalized media geometry, and precise local interval extraction for transcription.
 - `adapters/multisubs.py`: the single `multisubs` boundary for transcription and subtitle rendering. Provider artifacts remain internal, and both operations return project-owned models.
 - `clips.py`: provider-independent prompts, nearby boundary options, ID/duration validation, scoring weights, and nonredundant selection.
 - `adapters/backends.py`: selects one explicitly configured backend. Each provider has its own named adapter class and module under `adapters/`; shared HTTP, CLI, and JSON boundary helpers live in `adapters/_llm_common.py`. The adapters normalize JSON before domain validation and do not log secrets. An explicit AI effort is translated to each provider's reasoning control; no setting leaves the provider default. Transient HTTP failures have finite retries; there is no run-wide call cap.
@@ -94,6 +109,8 @@ The manifest summarizes the source identity, transcription and AI provenance, ca
 Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent selected cuts and their primary videos. The primary version keeps the existing filename; companion versions use `-vertical`, `-horizontal`, and `-square`. Manifest schema 4 and clip schema 2 identify the selection mode. Direct cuts have no score or transcript boundary IDs; skipped transcription is null in the manifest. Existing automatic analysis and cache schemas retain their meaning.
 
 The manifest's `transcription.backend` and `transcription.model` record the configured ASR engine and model on cache hits and fresh transcriptions. ASR progress logs include both settings.
+`transcription.source_range` records the actual ASR interval on the original
+timeline, or null when using a full-source transcript, including local cache hits.
 
 The manifest's `analysis.editorial_context` and per-clip `viral_potential.editorial_context` record the applied optional context as text or null. Normal and verbose application logs may report that video context is enabled but do not print the text.
 

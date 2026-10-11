@@ -50,15 +50,24 @@ class FakeTranscriber:
     ) -> Transcript:
         self.calls += 1
         self.settings.append((backend, model))
+        start, end = (0.0, 360.0)
+        if video_path.suffix == ".range":
+            start, end = map(float, json.loads(video_path.read_text(encoding="utf-8")))
+        segments = tuple(
+            TranscriptSegment(
+                f"Point {index}.",
+                max(start, index * 60.0) - start,
+                min(end, (index + 1) * 60.0) - start,
+            )
+            for index in range(6)
+            if index * 60.0 < end and (index + 1) * 60.0 > start
+        )
         return Transcript(
             language_requested=language,
             language_detected="en",
-            duration=360.0,
-            text=" ".join(f"Point {index}." for index in range(6)),
-            segments=tuple(
-                TranscriptSegment(f"Point {index}.", index * 60.0, (index + 1) * 60.0)
-                for index in range(6)
-            ),
+            duration=end - start,
+            text=" ".join(segment.text for segment in segments),
+            segments=segments,
             words=(),
             provider="multisubs",
             provider_version=self.version(),
@@ -117,7 +126,9 @@ def _media(width: int = 1920, height: int = 1080) -> MediaInfo:
     return MediaInfo(360.0, width, height, width, height, 0, 1)
 
 
-def test_search_range_scopes_discovery_review_and_cache(tmp_path: Path) -> None:
+def test_search_range_scopes_discovery_review_and_reuses_full_cache(
+    tmp_path: Path,
+) -> None:
     class RangeBackend(FakeBackend):
         def complete(self, prompt: str, schema: dict[str, object]) -> object:
             if "Find every" in prompt:
@@ -151,6 +162,7 @@ def test_search_range_scopes_discovery_review_and_cache(tmp_path: Path) -> None:
         subtitles_enabled=False,
     )
     asr, ai = FakeTranscriber(), RangeBackend()
+    _run(tmp_path, asr, FakeBackend(empty=True))
     first = _run(tmp_path, asr, ai, config=config)
     metadata = json.loads(first.clip_paths[0].with_suffix(".json").read_text())
     assert (metadata["start"], metadata["end"]) == (60, 240)
@@ -173,6 +185,7 @@ def test_search_range_scopes_discovery_review_and_cache(tmp_path: Path) -> None:
 
 def test_search_range_without_complete_units_selects_nothing(tmp_path: Path) -> None:
     asr, ai = FakeTranscriber(), FakeBackend()
+    _run(tmp_path, asr, FakeBackend(empty=True))
     config = AppConfig(
         "source.mp4",
         tmp_path / "out",
@@ -282,7 +295,7 @@ def test_full_video_uses_media_bounds_including_silence(
 
 
 @pytest.mark.parametrize("variant_subtitles", [False, True])
-def test_custom_subtitles_reuse_one_source_transcript(
+def test_custom_subtitles_reuse_cached_full_source_transcript(
     variant_subtitles: bool, tmp_path: Path
 ) -> None:
     config = AppConfig(
@@ -293,6 +306,7 @@ def test_custom_subtitles_reuse_one_source_transcript(
         short_variant_subtitles_enabled=variant_subtitles,
     )
     asr, ai = FakeTranscriber(), FakeBackend()
+    _run(tmp_path, asr, FakeBackend(empty=True))
     _run(tmp_path, asr, ai, config=config)
     result = _run(
         tmp_path, asr, ai, config=replace(config, clip_range=TimeRange(20, 100))
@@ -556,6 +570,137 @@ def test_partial_youtube_rejects_whole_or_mismatched_media_before_asr(
     assert asr.calls == 0
 
 
+@pytest.mark.parametrize("mode", ["custom", "automatic"])
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
+    mode: str, subtitles: bool, tmp_path: Path
+) -> None:
+    class Backend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if "Find every" not in prompt:
+                return super().complete(prompt, schema)
+            self.calls += 1
+            ids = re.findall(r"^(u\d+) \[", prompt, re.MULTILINE)
+            return {
+                "clips": [
+                    {
+                        "class": "short",
+                        "start_id": ids[0],
+                        "end_id": ids[-1] if len(ids) <= 3 else ids[1],
+                        "title": "Scoped idea",
+                        "rationale": "Complete point",
+                    }
+                ]
+            }
+
+    interval = TimeRange(90.25, 210.5)
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        clip_range=interval if mode == "custom" else None,
+        search_range=interval if mode == "automatic" else None,
+        subtitles_enabled=subtitles,
+        render_variants=False,
+    )
+    asr, ai = FakeTranscriber(), Backend()
+    extracted: list[TimeRange] = []
+
+    def run(current: AppConfig):
+        return _run(tmp_path, asr, ai, config=current, extraction_calls=extracted)
+
+    first, repeated = run(config), run(config)
+    needs_asr = subtitles or mode == "automatic"
+    assert asr.calls == int(needs_asr)
+    assert extracted == ([interval] if needs_asr else [])
+    manifest = json.loads(repeated.manifest_path.read_text())
+    assert manifest["source"]["acquired_range"] is None
+    if needs_asr:
+        assert manifest["transcription"]["cache_hit"]
+        assert manifest["transcription"]["source_range"] == {
+            "start": 90.25,
+            "end": 210.5,
+        }
+        (cached,) = (config.output_dir / ".cache" / "transcripts").glob("*.json")
+        content = json.loads(cached.read_text(encoding="utf-8"))["transcript"]
+        assert content["duration"] == 120.25
+        assert content["segments"][0]["start"] == 0
+    else:
+        assert manifest["transcription"] is None
+    for result in (first, repeated):
+        metadata = json.loads(result.clip_paths[0].with_suffix(".json").read_text())
+        assert (metadata["start"], metadata["end"]) == (90.25, 210.5)
+
+    changed = TimeRange(240, 300)
+    changed_config = replace(
+        config,
+        clip_range=changed if mode == "custom" else None,
+        search_range=changed if mode == "automatic" else None,
+    )
+    run(changed_config)
+    assert asr.calls == 2 * int(needs_asr)
+    assert extracted == ([interval, changed] if needs_asr else [])
+    # A partial cache must never satisfy a request for the full source.
+    full = replace(config, clip_range=None, search_range=None, full_video=True)
+    full_result = run(full)
+    assert asr.calls == 2 * int(needs_asr) + int(subtitles)
+    if subtitles:
+        assert (
+            json.loads(full_result.manifest_path.read_text())["transcription"][
+                "source_range"
+            ]
+            is None
+        )
+        before = asr.calls
+        reused = run(config)
+        assert asr.calls == before
+        assert extracted == [interval, changed]
+        assert (
+            json.loads(reused.manifest_path.read_text())["transcription"][
+                "source_range"
+            ]
+            is None
+        )
+    run(replace(config, force_recompute=True))
+    assert extracted == ([interval, changed, interval] if needs_asr else [])
+
+
+@pytest.mark.parametrize("failure", ["malformed", "provider", "language"])
+def test_local_range_recomputes_when_complete_cache_is_invalid(
+    failure: str, tmp_path: Path
+) -> None:
+    asr = FakeTranscriber()
+    _run(tmp_path, asr, FakeBackend(empty=True))
+    output_dir = tmp_path / "out"
+    (complete,) = (output_dir / ".cache" / "transcripts").glob("*.json")
+    content = json.loads(complete.read_text(encoding="utf-8"))
+    if failure == "malformed":
+        complete.write_text("broken", encoding="utf-8")
+    else:
+        field, value = (
+            ("provider_version", "4.9.0")
+            if failure == "provider"
+            else ("language_requested", "pt")
+        )
+        content["transcript"][field] = value
+        complete.write_text(json.dumps(content), encoding="utf-8")
+    interval = TimeRange(90.25, 120.5)
+    config = AppConfig(
+        "source.mp4", output_dir, clip_range=interval, render_variants=False
+    )
+    extracted: list[TimeRange] = []
+    result = _run(
+        tmp_path, asr, FakeBackend(), config=config, extraction_calls=extracted
+    )
+    assert asr.calls == 2
+    assert extracted == [interval]
+    manifest = json.loads(result.manifest_path.read_text())
+    assert not manifest["transcription"]["cache_hit"]
+    assert manifest["transcription"]["source_range"] == {"start": 90.25, "end": 120.5}
+    assert len(list(complete.parent.glob("*.json"))) == 2
+
+
 def _run(
     tmp_path: Path,
     transcriber: FakeTranscriber,
@@ -563,6 +708,7 @@ def _run(
     *,
     config: AppConfig | None = None,
     source_media: MediaInfo | None = None,
+    extraction_calls: list[TimeRange] | None = None,
 ):
     source_file = tmp_path / "source.mp4"
     source_file.write_bytes(b"source")
@@ -589,6 +735,7 @@ def _run(
         output: Path,
         work: Path,
     ):
+        assert _source.local_path == source_file
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"raw")
         ratio = (
@@ -668,10 +815,20 @@ def _run(
             _config.horizontal_width, _config.horizontal_height
         )
 
+    def range_extractor(source, media, interval, workspace):
+        assert source.local_path == source_file
+        if extraction_calls is not None:
+            extraction_calls.append(interval)
+        workspace.mkdir(parents=True)
+        path = workspace / "transcription.range"
+        path.write_text(json.dumps([interval.start, interval.end]), encoding="utf-8")
+        return path
+
     return run_pipeline(
         current,
         acquire=acquire,
         probe=lambda _: source_info,
+        range_extractor=range_extractor,
         transcriber=transcriber,
         backend=backend,
         raw_renderer=raw_renderer,

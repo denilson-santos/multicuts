@@ -263,9 +263,9 @@ to complete observed transcript units inside the interval. Times refer to the
 original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
 seconds. Units crossing either edge are excluded; an interval without complete
 units produces zero clips. Bounds must be ordered and within the source duration.
-For local files, the full source transcript remains cached and reusable for
-other intervals. For YouTube sources, only the requested interval is acquired
-and transcribed.
+Local files reuse a compatible full-source transcript when it is cached;
+otherwise, only the requested interval is transcribed. For YouTube sources,
+only the requested interval is acquired and transcribed.
 
 **Render one exact interval**
 
@@ -304,12 +304,20 @@ interval through yt-dlp and FFmpeg. Transcription, when needed, processes only
 the acquired interval. CLI times and clip metadata still refer to the original
 video. Repeating the same interval can reuse its transcript; different intervals
 have separate caches. Without a range, including `--clip-full`, the entire video
-is acquired. Local inputs retain their full-source transcription cache.
+is acquired.
 
 Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
 duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
 Accurate interval boundaries require reencoding during acquisition; remote media
 headers and adjacent fragments may also be transferred.
+
+Local `--search-range` and `--clip-range` requests check the full-source transcript
+cache first, then the interval cache. On a miss, a precise temporary video segment
+is prepared for the public multisubs API, which requires video geometry. The
+original stays intact and is used directly for final rendering. The temporary
+segment is removed unless `--keep-intermediates` is enabled. Different intervals
+have separate transcript caches; `--force-recompute` bypasses both cache choices.
+Direct cuts without published subtitles skip transcription and temporary extraction.
 
 **Keep the source framing and disable subtitles**
 
@@ -407,6 +415,8 @@ editorially eligible counts. Their AI provenance fields are null. When ASR is
 skipped, manifest `transcription` is null and clip `transcript_text` is empty.
 Manifest source provenance includes `original_duration`, `acquired_duration`,
 and `acquired_range` (null for full-source acquisition).
+Manifest `transcription.source_range` records the actual transcription interval,
+or null when a full-source transcript was used.
 
 Pass `--output-dir` on every invocation. Each run gets a unique directory:
 
@@ -439,6 +449,7 @@ Reruns create fresh output files and preserve completed runs. Cached transcripts
 | AI model, reasoning effort, or editorial context | Reused | Recomputed |
 | ASR backend or model | Separate cache | Depends on transcript content |
 | YouTube acquisition interval | Separate cache | Recomputed |
+| Local search/custom interval | Reuse complete cache if available; otherwise separate interval cache | Depends on scoped transcript |
 | `--force-recompute` enabled | Recomputed | Recomputed |
 
 YouTube acquisition may download the source again before its media fingerprint is known.

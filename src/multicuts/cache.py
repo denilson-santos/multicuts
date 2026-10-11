@@ -13,7 +13,13 @@ from pathlib import Path
 
 from multicuts.clips import PROMPT_VERSION, SCORE_VERSION
 from multicuts.errors import ArtifactError, ScoringError
-from multicuts.models import AcquiredSource, Transcript, TranscriptSegment, Word
+from multicuts.models import (
+    AcquiredSource,
+    TimeRange,
+    Transcript,
+    TranscriptSegment,
+    Word,
+)
 
 
 def _digest(value: object) -> str:
@@ -40,22 +46,27 @@ def transcript_paths(
     backend: str,
     model: str,
     language: str | None,
+    time_range: TimeRange | None = None,
 ) -> tuple[Path, str]:
     if not provider_version.strip() or not backend.strip() or not model.strip():
         raise ArtifactError("Transcription cache identity is incomplete")
-    key = "sha256-v1:" + _digest(
-        {
-            "source_fingerprint": source.fingerprint,
-            "provider": "multisubs",
-            "provider_version": provider_version,
-            "backend": backend,
-            "model": model,
-            "language_requested": language,
-            "task": "transcribe",
-            "stage_version": 2,
-            "schema_version": 1,
+    identity: dict[str, object] = {
+        "source_fingerprint": source.fingerprint,
+        "provider": "multisubs",
+        "provider_version": provider_version,
+        "backend": backend,
+        "model": model,
+        "language_requested": language,
+        "task": "transcribe",
+        "stage_version": 2,
+        "schema_version": 1,
+    }
+    if time_range is not None:
+        identity["source_range"] = {
+            "start": float(time_range.start),
+            "end": float(time_range.end),
         }
-    )
+    key = "sha256-v1:" + _digest(identity)
     path = (
         output_dir.expanduser().resolve(strict=False)
         / ".cache"

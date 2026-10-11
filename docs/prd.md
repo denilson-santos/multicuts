@@ -28,7 +28,8 @@ absolute source interval. Units crossing its edges are excluded. An interval
 without complete units yields zero clips. Accept nonnegative seconds, `MM:SS`,
 or `HH:MM:SS` with optional fractional seconds. Reject unordered, empty,
 nonfinite, or out-of-source intervals before ASR when media duration is known.
-Local files retain full-source transcription/cache reuse across search intervals.
+Local files reuse a compatible full-source transcript when cached; otherwise,
+transcribe only the requested interval and cache it separately.
 For YouTube, acquire and transcribe only the requested interval; different
 intervals have separate caches. Repeated identical intervals can reuse ASR.
 Record the interval in `analysis.search_range` (null when unrestricted).
@@ -44,6 +45,17 @@ subtitle, and variant settings. Skip transcription when all published versions
 have subtitles disabled; otherwise reuse the shared source transcript once.
 Preserve exact requested media boundaries without inventing ASR timestamps.
 Direct titles use the source filename or YouTube title, truncated to 120 characters.
+
+For local range requests needing ASR, check a validated full-source cache first,
+then the exact interval cache, using the configured provider version, backend,
+model, and language. On a miss, extract one exact private video segment with
+FFmpeg because the public multisubs transcription API requires video geometry.
+Preserve the original and render final cuts directly from it. Validate the
+temporary segment before ASR and remove it with other intermediates unless
+retention is requested. Store file-local ASR timings and restore original times
+after reading or writing the cache. Never satisfy a full-source request with a
+partial transcript. Direct cuts without published captions skip extraction and
+ASR; unrestricted and full-video requests retain full-source transcription.
 
 YouTube `--search-range` and `--clip-range` use partial acquisition through the
 public yt-dlp API with accurate FFmpeg boundaries. Validate FFmpeg/ffprobe before
@@ -63,6 +75,8 @@ schema 2 records the same selection mode and uses null `viral_potential` and
 skipped. Automatic scoring meaning and composition remain unchanged.
 Manifest source provenance records original and acquired durations plus the
 acquired interval, using null for a full-source acquisition.
+`transcription.source_range` records the actual ASR source interval, or null for
+a full-source transcript, including a reused complete local cache.
 
 `multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required for automatic discovery by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
 

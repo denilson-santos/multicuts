@@ -56,7 +56,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.media import probe_media
+from multicuts.media import extract_transcription_range, probe_media
 from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
 from multicuts.render import (
     clip_transcript,
@@ -164,19 +164,35 @@ def _ai_request(
 
 
 def _transcribe(
-    config: AppConfig, source: AcquiredSource, transcriber: Transcriber, work: Path
-) -> tuple[Transcript, bool]:
+    config: AppConfig,
+    source: AcquiredSource,
+    media: MediaInfo,
+    transcriber: Transcriber,
+    work: Path,
+    range_extractor: Callable[[AcquiredSource, MediaInfo, TimeRange, Path], Path],
+) -> tuple[Transcript, bool, TimeRange | None]:
     version = transcriber.version()
-    shared, key = transcript_paths(
-        config.output_dir,
-        source,
-        provider_version=version,
-        backend=config.asr_backend,
-        model=config.transcription_model,
-        language=config.language,
+    local_range = (
+        config.clip_range or config.search_range
+        if source.source_kind == "local"
+        else None
     )
-    if not config.force_recompute:
-        cached = load_transcript(shared, key)
+    cache_ranges = (None, local_range) if local_range is not None else (None,)
+    source_duration = source.original_duration or media.duration
+    for cache_range in cache_ranges:
+        shared, key = transcript_paths(
+            config.output_dir,
+            source,
+            provider_version=version,
+            backend=config.asr_backend,
+            model=config.transcription_model,
+            language=config.language,
+            time_range=cache_range,
+        )
+        transcription_range = (
+            cache_range if source.source_kind == "local" else source.acquired_range
+        )
+        cached = None if config.force_recompute else load_transcript(shared, key)
         if cached is not None and (
             cached.provider == "multisubs"
             and cached.provider_version == version
@@ -188,7 +204,15 @@ def _transcribe(
                 config.asr_backend,
                 config.transcription_model,
             )
-            return cached, True
+            return (
+                _source_timeline(
+                    cached,
+                    source_duration=source_duration,
+                    time_range=transcription_range,
+                ),
+                True,
+                transcription_range,
+            )
     logger.info(
         "Transcription cache %s; running ASR (backend=%s, model=%s, language=%s)",
         "bypassed" if config.force_recompute else "miss",
@@ -196,8 +220,18 @@ def _transcribe(
         config.transcription_model,
         config.language or "auto",
     )
+    transcription_input = source.local_path
+    if local_range is not None:
+        logger.info(
+            "Extracting local transcription interval %.2f-%.2fs",
+            local_range.start,
+            local_range.end,
+        )
+        transcription_input = range_extractor(
+            source, media, local_range, work / "transcription-input"
+        )
     transcript = transcriber.transcribe(
-        source.local_path,
+        transcription_input,
         language=config.language,
         backend=config.asr_backend,
         model=config.transcription_model,
@@ -212,7 +246,13 @@ def _transcribe(
             "Transcription provider returned incompatible provenance"
         )
     save_transcript(shared, transcript, key)
-    return transcript, False
+    return (
+        _source_timeline(
+            transcript, source_duration=source_duration, time_range=transcription_range
+        ),
+        False,
+        transcription_range,
+    )
 
 
 def _clip_metadata(
@@ -289,15 +329,16 @@ def _clip_metadata(
     }
 
 
-def _source_timeline(transcript: Transcript, source: AcquiredSource) -> Transcript:
-    """Restore absolute source times after transcribing a downloaded interval."""
-    if source.acquired_range is None:
+def _source_timeline(
+    transcript: Transcript, *, source_duration: float, time_range: TimeRange | None
+) -> Transcript:
+    """Restore source times after transcribing an acquired or extracted interval."""
+    if time_range is None:
         return transcript
-    assert source.original_duration is not None
-    offset = source.timeline_offset
+    offset = time_range.start
     return replace(
         transcript,
-        duration=source.original_duration,
+        duration=source_duration,
         segments=tuple(
             replace(
                 segment,
@@ -352,6 +393,9 @@ def run_pipeline(
     *,
     acquire: SourceAcquirer = acquire_source,
     probe: Callable[[AcquiredSource], MediaInfo] = probe_media,
+    range_extractor: Callable[
+        [AcquiredSource, MediaInfo, TimeRange, Path], Path
+    ] = extract_transcription_range,
     transcriber: Transcriber | None = None,
     backend: JsonBackend | None = None,
     raw_renderer: Callable[..., tuple[Path, MediaInfo, str]] = render_raw,
@@ -461,12 +505,14 @@ def run_pipeline(
         )
         transcript: Transcript | None = None
         transcript_hit = False
+        transcription_range: TimeRange | None = None
         if needs_transcript:
             logger.info("[2/6] Loading source transcription")
             transcription_started = perf_counter()
             provider = transcriber or MultisubsAdapter()
-            transcript, transcript_hit = _transcribe(config, source, provider, work)
-            transcript = _source_timeline(transcript, source)
+            transcript, transcript_hit, transcription_range = _transcribe(
+                config, source, media, provider, work, range_extractor
+            )
             logger.info(
                 "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
                 len(transcript.segments),
@@ -894,6 +940,12 @@ def run_pipeline(
                 "language_requested": config.language,
                 "language_detected": transcript.language_detected,
                 "cache_hit": transcript_hit,
+                "source_range": {
+                    "start": transcription_range.start,
+                    "end": transcription_range.end,
+                }
+                if transcription_range is not None
+                else None,
             }
             if transcript is not None
             else None,

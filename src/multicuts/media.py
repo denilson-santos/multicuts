@@ -2,11 +2,12 @@
 
 import json
 import subprocess
+import tempfile
 from math import isclose, isfinite
 from pathlib import Path
 
 from multicuts.errors import MediaError
-from multicuts.models import AcquiredSource, MediaInfo
+from multicuts.models import AcquiredSource, MediaInfo, TimeRange
 
 
 def check_media_tools() -> None:
@@ -91,6 +92,89 @@ def validate_media_for_transcription(media: MediaInfo) -> None:
     """Reject normalized media that cannot provide audio for transcription."""
     if not media.has_audio:
         raise MediaError("No usable audio stream found; source cannot be transcribed")
+
+
+def extract_transcription_range(
+    source: AcquiredSource,
+    media: MediaInfo,
+    interval: TimeRange,
+    workspace: Path,
+) -> Path:
+    """Prepare an exact private interval for the video-only public ASR API."""
+    validate_media_for_transcription(media)
+    if interval.end > media.duration:
+        raise MediaError("Transcription interval exceeds source media duration")
+    check_media_tools()
+    temporary: Path | None = None
+    complete = False
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=workspace, prefix="transcription-range-", suffix=".mkv", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-ss",
+            f"{interval.start:.6f}",
+            "-i",
+            str(source.local_path),
+            "-t",
+            f"{interval.end - interval.start:.6f}",
+            "-map",
+            f"0:{media.video_stream_index}",
+            "-map",
+            f"0:{media.audio_stream_index}",
+            # multisubs requires video geometry even for transcription. Keep
+            # exact timing and uncompressed audio in this private provider input.
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            str(temporary),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise MediaError(
+                "Could not extract the transcription interval with FFmpeg "
+                f"(exit code {result.returncode})"
+            )
+        extracted = inspect_media_path(temporary)
+        validate_media_for_transcription(extracted)
+        if not isclose(
+            extracted.duration,
+            interval.end - interval.start,
+            rel_tol=0,
+            abs_tol=0.25,
+        ):
+            raise MediaError(
+                "Extracted media duration differs from transcription interval"
+            )
+        complete = True
+        return temporary
+    except OSError as exc:
+        raise MediaError("Could not prepare the transcription interval") from exc
+    finally:
+        if temporary is not None and not complete:
+            temporary.unlink(missing_ok=True)
 
 
 def normalize_media_probe(payload: object) -> MediaInfo:
