@@ -16,6 +16,7 @@ Before editing repository files:
 3. Do not discard, stash, move, stage, commit, or absorb pre-existing user changes without explicit permission.
 4. When remote access is available, fetch the remote default branch. If access is temporarily unavailable, use an existing remote-tracking ref for the known default branch and report that it could not be refreshed. Do not introduce a merge commit while synchronizing it.
 5. If the current non-default branch already matches the requested change, reuse it. Otherwise, create a branch or worktree from the remote default branch, preserving any pending work.
+6. Inspect open pull requests and other worktrees for overlapping changes, using the coordination rules below before implementing.
 
 Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavailable. Use lowercase kebab-case. Choose the narrowest applicable type, normally `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, or `chore`.
 
@@ -38,7 +39,22 @@ Before starting the next feature, validate and commit any completed feature usin
 
 For a follow-up adjustment to the same feature, use `git commit --amend` only when the feature commit is the branch's latest commit, was created by the agent for this task, is not a merge commit, and the branch and commit satisfy the unpublished conditions above. Validate the adjustment first and include only changes belonging to that feature. Update the commit message if necessary to describe its final behavior.
 
-If other features have been committed afterward, or the branch has been published, create a new commit for the adjustment. Do not automatically rewrite older feature commits or pre-existing user commits. After an amendment or added commit, refresh any pending delivery package with the new identifiers, scope, and validation results.
+If other features have been committed afterward, or the branch has been published, create a new commit for the adjustment. Do not automatically fold adjustments into older feature commits or rewrite pre-existing user commits. After an amendment or added commit, refresh any pending delivery package with the new identifiers, scope, and validation results.
+
+## Coordinate branches and pull requests
+
+Compare changed-file lists from open pull requests and other worktrees first, then read relevant diff ranges for overlapping functions, behavior, or contracts. Include uncommitted work when checking related worktrees, without modifying it. File overlap alone is an alert, not a reason to block independent work. Record dependencies and the proposed integration order; sequence changes to the same behavior when practical.
+
+Before requesting publication approval, fetch the target base again. With the requested changes committed and the working tree clean, synchronize the feature branch with the latest remote base:
+
+- For an unpublished branch, rebase onto the base only when all commits being replayed are task-owned and satisfy the unpublished conditions above. Preserve separate feature commits; this synchronization does not authorize folding adjustments into older feature commits.
+- For a published/shared branch, prefer merging the base into the feature branch, creating a local synchronization commit. Do not rename it, rebase published commits, or force-push without separate explicit authorization.
+
+Do not stash or discard changes to synchronize. Preserve pre-existing user history; if it prevents a safe update, explain the issue rather than rewriting it. Resolve conflicts within the requested scope, preserving each feature's intended behavior; ask for clarification when the correct behavior is ambiguous. Rerun applicable validation when synchronization changes the branch and refresh the delivery package.
+
+After another pull request merges, refresh the base and reassess overlap, dependencies, and mergeability for remaining related work. Update branches within the active task's scope; report other affected branches without changing another worktree's ongoing work. Once published, verify mergeability and CI against the latest head; earlier successful checks do not validate a changed head.
+
+When repository-level enforcement is requested, recommend required CI checks and an up-to-date base before merging. Treat changes to GitHub protection rules as separate configuration work requiring explicit authorization.
 
 ## Releases
 
@@ -109,9 +125,9 @@ the session. Never move or reuse a released tag.
 
 ## Prepare the delivery package
 
-After implementation, validation, and local commits, inspect the complete diff from the base to the branch head, confirm that intended changes are committed, and present:
+Once requested changes are committed, the branch is synchronized, and validation is complete, inspect the complete diff from the base to the branch head and present:
 
-- branch name and base branch;
+- branch name and base branch, with their current base and head commit identifiers;
 - concise summary of the change;
 - changed and untracked files intended for delivery;
 - validation commands and their results, including any failures or commands that could not run;
@@ -160,7 +176,7 @@ Ask one explicit confirmation covering publication of the displayed commits, the
 
 After the user approves the displayed delivery package:
 
-1. Recheck that the working tree is clean and the committed scope, messages, and validation results match the approved package.
+1. Fetch the target base again and recheck that the working tree is clean and the committed scope, messages, and validation results match the approved package. If the base advanced, apply the coordination rules and refresh the package before publishing, requesting renewed approval when it changes materially.
 2. Push the branch to the approved remote and set its upstream.
 3. Check whether a pull request already exists before creating one, especially after a failed or uncertain retry.
 4. Open the pull request with the approved title, body, base branch, and review state.
