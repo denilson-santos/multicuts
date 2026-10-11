@@ -35,6 +35,7 @@ class FakeTranscriber:
     def __init__(self) -> None:
         self.calls = 0
         self.settings: list[tuple[str, str]] = []
+        self.inputs: list[Path] = []
 
     def version(self) -> str:
         return "4.3.0"
@@ -50,8 +51,9 @@ class FakeTranscriber:
     ) -> Transcript:
         self.calls += 1
         self.settings.append((backend, model))
+        self.inputs.append(video_path)
         start, end = (0.0, 360.0)
-        if video_path.suffix == ".range":
+        if video_path.suffix == ".range" or video_path.parent.name == "direct-source":
             start, end = map(float, json.loads(video_path.read_text(encoding="utf-8")))
         segments = tuple(
             TranscriptSegment(
@@ -299,7 +301,7 @@ def test_full_video_uses_media_bounds_including_silence(
 
 
 @pytest.mark.parametrize("variant_subtitles", [False, True])
-def test_custom_subtitles_reuse_cached_full_source_transcript(
+def test_custom_subtitles_cache_the_exact_cut_separately_from_full_source(
     variant_subtitles: bool, tmp_path: Path
 ) -> None:
     config = AppConfig(
@@ -311,13 +313,21 @@ def test_custom_subtitles_reuse_cached_full_source_transcript(
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     _run(tmp_path, asr, FakeBackend(empty=True))
-    _run(tmp_path, asr, ai, config=config)
+    first = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == 2
+    assert not json.loads(first.manifest_path.read_text())["transcription"]["cache_hit"]
+    repeated = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == 2
+    assert json.loads(repeated.manifest_path.read_text())["transcription"]["cache_hit"]
     result = _run(
         tmp_path, asr, ai, config=replace(config, clip_range=TimeRange(20, 100))
     )
-    assert asr.calls == 1 and ai.calls == 0
+    assert asr.calls == 3 and ai.calls == 0
+    assert asr.inputs[0] == tmp_path / "source.mp4"
+    assert all(path.parent.name == "direct-source" for path in asr.inputs[1:])
     manifest = json.loads(result.manifest_path.read_text())
-    assert manifest["transcription"]["cache_hit"] is True
+    assert manifest["transcription"]["cache_hit"] is False
+    assert manifest["transcription"]["source_range"] == {"start": 20, "end": 100}
     for version in manifest["clips"][0]["variants"]:
         metadata = json.loads(
             (result.manifest_path.parent / version["metadata"]).read_text()
@@ -327,6 +337,8 @@ def test_custom_subtitles_reuse_cached_full_source_transcript(
             if metadata["render"]["is_variant"]
             else not variant_subtitles
         )
+    _run(tmp_path, asr, ai, config=replace(config, force_recompute=True))
+    assert asr.calls == 4 and ai.calls == 0
 
 
 @pytest.mark.parametrize(
@@ -683,7 +695,7 @@ def test_partial_youtube_rejects_whole_or_mismatched_media_before_asr(
 
 @pytest.mark.parametrize("mode", ["custom", "automatic"])
 @pytest.mark.parametrize("subtitles", [False, True])
-def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
+def test_local_intervals_use_their_cache_or_a_compatible_complete_cache(
     mode: str, subtitles: bool, tmp_path: Path
 ) -> None:
     class Backend(FakeBackend):
@@ -770,11 +782,9 @@ def test_local_intervals_transcribe_only_the_range_and_reuse_complete_cache(
         reused = run(config)
         assert asr.calls == before
         assert extracted == [interval, interval, changed, interval]
-        assert (
-            json.loads(reused.manifest_path.read_text())["transcription"][
-                "source_range"
-            ]
-            is None
+        reused_manifest = json.loads(reused.manifest_path.read_text())
+        assert reused_manifest["transcription"]["source_range"] == (
+            {"start": interval.start, "end": interval.end} if mode == "custom" else None
         )
     run(replace(config, force_recompute=True))
     assert extracted == [interval, interval, changed] + (
@@ -859,7 +869,12 @@ def _run(
             assert _source.acquired_range.start <= clip.proposal.start
             assert _source.acquired_range.end >= clip.proposal.end
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(b"raw")
+        if output.parent.name == "direct-source":
+            output.write_text(
+                json.dumps([clip.proposal.start, clip.proposal.end]), encoding="utf-8"
+            )
+        else:
+            output.write_bytes(b"raw")
         ratio = (
             _config.short_aspect_ratio
             if clip.proposal.clip_class == "short"

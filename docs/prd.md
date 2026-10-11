@@ -43,7 +43,7 @@ The three interval/mode options are mutually exclusive and CLI-only. Validate
 custom bounds and the duration-derived enabled class before transcription. Up to
 180 seconds is short; longer is long. Apply existing class-specific geometry,
 subtitle, and variant settings. Skip transcription when all published versions
-have subtitles disabled; otherwise reuse the shared source transcript once.
+have subtitles disabled; otherwise share one transcript across all versions.
 Local cuts preserve exact requested media boundaries without inventing ASR
 timestamps. YouTube custom cuts use the complete acquired interval, including
 keyframe/codec packet padding, without forcing the final output to the requested
@@ -54,22 +54,33 @@ Direct titles use the source filename or YouTube title, truncated to 120 charact
 
 Local and YouTube range requests prepare one private source segment by copying
 the selected video and audio streams without reencoding, scaling, frame-rate
-reduction, or bitrate overrides. Both fresh transcription and final rendering
-must use this shared segment. Preserve the original local file. Keyframe and
-codec packet padding may extend the acquired segment beyond the requested
+reduction, or bitrate overrides. Final rendering uses this shared segment.
+Fresh transcription uses it too, except for exact local custom cuts described
+below. Preserve the original local file. Keyframe and codec packet padding may
+extend the acquired segment beyond the requested
 range; record its actual source offset. Local custom cuts keep the user's bounds;
 YouTube custom cuts keep the acquired bounds. Automatic discovery and editorial
 refinement remain inside the user's search range for both source types.
 Preserve presentation geometry, rotation, and audio sync.
 
-For local ranges, check a compatible complete transcript cache first, then the
-shared segment cache, using provider version, backend, model, and language.
-Fresh ASR transcribes the shared range source once. Store file-local ASR timings
-and restore original times after reading or writing the cache. Never satisfy a
+For local search ranges, check a compatible complete transcript cache first,
+then the shared segment cache, using provider version, backend, model, and language.
+Fresh search ASR transcribes the shared range source once. Store file-local ASR
+timings and restore original times after reading or writing the cache. Never satisfy a
 full-source request with a partial transcript. Direct cuts without published
 captions still prepare the range source but skip ASR. Validate the segment before
 processing and remove it with other intermediates unless retention is requested.
 Unrestricted and full-video requests continue using the complete source.
+
+For local `--clip-range` with published captions, render the first required raw
+version before transcription and reuse that video during finalization. Transcribe
+this exact cut once so preceding keyframe padding cannot affect ASR alignment.
+All published versions share this transcript; automatic clips are never
+retranscribed individually. Cache the exact-cut transcript separately from full
+and padded source transcripts, preserving existing artifacts. Cache identity
+includes the preparation version and exact requested bounds. Store file-local
+timings and restore the requested source offset for artifacts. The copied source
+remains unchanged, and this ordering adds no extra video encode.
 
 YouTube ranges use yt-dlp's public download-ranges API without forced keyframe
 reencoding. For `--search-range`, warn that acquisition/transcription can include

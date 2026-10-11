@@ -325,19 +325,26 @@ discovery stays inside the requested search range, and each final clip follows
 the boundaries selected by the analysis.
 
 Local `--search-range` and `--clip-range` requests also prepare one range source
-by copying the original video and audio streams. Both transcription and final
-rendering read this file. Copying compressed streams can retain neighboring
-keyframe data; the pipeline records the actual source offset and applies the
-requested bounds when selecting and rendering cuts. This preserves image detail
-for framing and computer vision without a low-quality transcription proxy.
+by copying the original video and audio streams. Copying compressed streams can
+retain neighboring keyframe data; the pipeline records the actual source offset
+and applies the requested bounds when selecting and rendering cuts. This
+preserves image detail for framing and computer vision without a low-quality
+transcription proxy.
 
-Compatible complete local transcript caches are checked first, then the range
-cache. Fresh ASR processes the shared range source once. The original stays
-intact, and the private range source is removed unless `--keep-intermediates` is
-enabled. Different ranges have separate caches; `--force-recompute` bypasses
-both cache choices. Direct cuts without published subtitles skip ASR while still
-preparing the shared range source. Unrestricted and `--clip-full` local requests
-continue using the original file.
+For local `--clip-range` with subtitles, the pipeline renders the exact raw cut
+from this source before ASR and transcribes it once. That raw video is reused for
+finalization, and all versions share its transcript. ASR therefore hears the
+same interval as the output, without preceding keyframe padding affecting word
+alignment. Its cache is separate from full-source and padded-range transcripts;
+old runs are preserved, but their transcripts are not reused for this mode.
+
+Local `--search-range` still checks compatible complete transcript caches first,
+then the range cache; fresh ASR reads the shared range source. The original stays
+intact, and private sources are removed unless `--keep-intermediates` is enabled.
+Different ranges have separate caches; `--force-recompute` bypasses cache reuse.
+Direct cuts without published subtitles skip ASR while still preparing the range
+source. Unrestricted and `--clip-full` local requests continue using the original
+file.
 
 **Keep the source framing and disable subtitles**
 

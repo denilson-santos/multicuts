@@ -528,6 +528,64 @@ def run_pipeline(
             media.presentation_height,
             perf_counter() - started,
         )
+        prepared_raw: tuple[Path, MediaInfo, str] | None = None
+        transcription_source = source
+        transcription_media = media
+        transcription_original = original_source
+        if (
+            source.source_kind == "local"
+            and config.clip_range is not None
+            and needs_transcript
+        ):
+            assert direct_range is not None
+            # Reuse the first raw version: ASR must hear the exact final cut,
+            # not the source's preceding keyframe padding. This is one ASR pass.
+            direct_clip = _direct_clip(source, source_duration, direct_range, None)
+            clip_class = direct_clip.proposal.clip_class
+            ratio_field = f"{clip_class}_aspect_ratio"
+            primary_ratio = getattr(config, ratio_field)
+            square_output = primary_ratio == "1:1" or (
+                primary_ratio == "original"
+                and media.presentation_width == media.presentation_height
+            )
+            first_ratio = (
+                "9:16"
+                if clip_class == "short"
+                and (
+                    primary_ratio == "16:9"
+                    or (config.variants_for(clip_class) and not square_output)
+                )
+                else primary_ratio
+            )
+            logger.info("Preparing the exact local cut before transcription")
+            prepared_raw = raw_renderer(
+                source,
+                media,
+                direct_clip,
+                replace(config, **{ratio_field: first_ratio}),
+                output=work / "direct-source" / "raw.mp4",
+                work=work / "direct-source",
+            )
+            if prepared_raw[2] != first_ratio:
+                raise ArtifactError("Raw renderer returned an unexpected aspect ratio")
+            identity = json.dumps(
+                [
+                    source.fingerprint,
+                    direct_range.start,
+                    direct_range.end,
+                    "rendered-direct-v1",
+                ],
+                separators=(",", ":"),
+            )
+            transcription_source = replace(
+                source,
+                local_path=prepared_raw[0],
+                fingerprint="sha256-v1:" + sha256(identity.encode("utf-8")).hexdigest(),
+                acquired_range=direct_range,
+                original_duration=source_duration,
+            )
+            transcription_media = prepared_raw[1]
+            transcription_original = None
         transcript: Transcript | None = None
         transcript_hit = False
         transcription_range: TimeRange | None = None
@@ -536,7 +594,12 @@ def run_pipeline(
             transcription_started = perf_counter()
             provider = transcriber or MultisubsAdapter()
             transcript, transcript_hit, transcription_range = _transcribe(
-                config, source, media, provider, work, original_source
+                config,
+                transcription_source,
+                transcription_media,
+                provider,
+                work,
+                transcription_original,
             )
             logger.info(
                 "Transcript ready: %d segments, %d words, language=%s (%.1fs)",
@@ -846,14 +909,18 @@ def run_pipeline(
                     else:
                         sidecars = publish_subtitle_sidecars(sidecars, final)
                 else:
-                    raw, rendered_media, rendered_ratio = raw_renderer(
-                        source,
-                        media,
-                        clip,
-                        variant_config,
-                        output=variant_work / "raw.mp4",
-                        work=variant_work,
-                    )
+                    if prepared_raw is not None and prepared_raw[2] == ratio:
+                        raw, rendered_media, rendered_ratio = prepared_raw
+                        prepared_raw = None
+                    else:
+                        raw, rendered_media, rendered_ratio = raw_renderer(
+                            source,
+                            media,
+                            clip,
+                            variant_config,
+                            output=variant_work / "raw.mp4",
+                            work=variant_work,
+                        )
                     if rendered_ratio != ratio:
                         raise ArtifactError(
                             "Raw renderer returned an unexpected aspect ratio"

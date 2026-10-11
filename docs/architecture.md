@@ -59,7 +59,8 @@ retain their container to preserve display-matrix rotation; other sources use
 Matroska. Opus codec-delay metadata is normalized at this boundary so remuxing
 does not accumulate audio timestamp shifts. Both passes use stream copy; no
 resolution, FPS, audio sampling, or bitrate overrides are applied. The resulting
-source is shared by ASR and all final renderers, including runs without captions.
+source is used by all final renderers, including runs without captions, and by
+ASR except for exact local custom cuts described below.
 
 `AcquiredSource` carries the actual acquired interval and original duration for
 both local and YouTube ranges. The interval can include neighboring keyframe or
@@ -73,8 +74,8 @@ ranges. Partial fingerprints include the source identity, requested and acquired
 intervals, and the stream-copy preparation version, isolating older
 transcription-only proxy caches.
 
-A compatible complete local transcript cache still takes priority over a range
-cache. Fresh ASR reads the shared segment; cached partial timings remain
+A compatible complete local search transcript cache still takes priority over a
+range cache. Fresh ASR reads the shared segment; cached partial timings remain
 file-local. After loading or generating a partial transcript, the pipeline adds
 the acquired offset to observed segment/word timestamps and restores the
 original duration. AI and artifacts use original times; rendering subtracts the
@@ -83,6 +84,19 @@ cache choices. A partial cache cannot satisfy a full-source request. Unrestricte
 local and full-video requests use the original file; unrestricted YouTube
 requests retain full acquisition. Failed preparation inputs are removed, and
 successful range sources follow normal intermediate cleanup.
+
+For captioned local `clip_range` runs, render the first required raw version
+before `_transcribe`, then consume it in the normal rendering loop. This gives
+ASR the exact output interval without another encode, avoiding word-alignment
+changes caused by preceding keyframe padding. All variants share one transcript.
+A separate `AcquiredSource` points ASR at the raw cut, uses the requested interval
+as its source offset, and fingerprints the source, bounds, and
+`rendered-direct-v1` preparation version. It does not fall back to full-source or
+padded-range caches. The original source object still points renderers at the
+losslessly copied segment. Manifest `source.acquired_range` describes that base;
+`transcription.source_range` describes the exact ASR cut. YouTube custom cuts
+continue transcribing the complete acquired interval, and automatic discovery
+continues sharing its source transcript without per-clip ASR.
 
 - `source.py`, `local_source.py`, and `adapters/youtube.py`: acquisition and source fingerprinting.
 - `media.py`: FFmpeg/ffprobe availability, normalized media geometry, and shared source-range preparation without reencoding.
