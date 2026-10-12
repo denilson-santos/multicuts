@@ -426,37 +426,82 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | API | `openai`, `anthropic`, `gemini` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, respectively |
 | Installed CLI | `codex`, `claude`, `agy` | Authenticate the corresponding command |
 
-### Common options
+### Options
+
+Options follow the same groups and order as `multicuts --help`. The required
+`SOURCE` argument accepts a local video path or supported YouTube URL.
 
 | Option | Purpose |
 | --- | --- |
+| `--output-dir PATH` | Required root directory for unique runs and shared caches. |
+| `--help` / `-h` | Show command help and exit. |
+
+#### Analysis
+
+Configure clip discovery, AI analysis, and transcription.
+
+| Option | Purpose |
+| --- | --- |
+| `--search-range START END` | Find clips only inside an absolute source interval. |
+| `--llm-backend BACKEND` | Choose `openai`, `anthropic`, `gemini`, `codex`, `claude`, or `agy`. |
+| `--llm-model MODEL` | Choose the model for the selected AI backend. |
+| `--llm-effort LEVEL` | Set the reasoning level; `auto` uses the provider default. |
+| `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
 | `--lang CODE` | Set the transcription language; omission enables automatic detection. |
 | `--asr-model MODEL` | Choose the transcription model; default: `turbo`. |
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
-| `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
-| `--search-range START END` | Find clips only inside an absolute source interval. |
+| `--block-chars COUNT` | Set transcript characters per AI block; default: `24000`. |
+| `--block-overlap-chars COUNT` | Set shared characters between AI blocks; default: `4000`. |
+
+#### Clips
+
+Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
+
+| Option | Purpose |
+| --- | --- |
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
+| `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
+| `--short-clips` / `--no-short-clips` | Enable or disable shorts and all their variants; default: enabled; environment: `SHORT_CLIPS_ENABLED`. |
+| `--long-clips` / `--no-long-clips` | Enable or disable longs and all their variants; default: enabled; environment: `LONG_CLIPS_ENABLED`. |
+| `--short-aspect-ratio FORMAT` | Choose the primary short format: `9:16`, `16:9`, `1:1`, or `original`; default: `9:16`. Square outputs have no variants. |
+| `--long-aspect-ratio FORMAT` | Choose the primary long format: `9:16`, `16:9`, `1:1`, or `original`; default: `16:9`. Square outputs have no variants. |
+| `--vertical-width PIXELS` | Set the `9:16` output width; default: `1080`. |
+| `--vertical-height PIXELS` | Set the `9:16` output height; default: `1920`. |
+| `--horizontal-width PIXELS` | Set the `16:9` output width; default: `1920`. |
+| `--horizontal-height PIXELS` | Set the `16:9` output height; default: `1080`. |
+| `--square-size PIXELS` | Set the square output side in pixels (positive and even; default: `1080`); environment: `SQUARE_SIZE`. |
+| `--variants` / `--no-variants` | Set the shared default for additional formats; environment: `RENDER_VARIANTS`. |
+| `--short-variants` / `--no-short-variants` | Override additional formats for shorts; environment: `SHORT_VARIANTS_ENABLED`. |
+| `--long-variants` / `--no-long-variants` | Override additional formats for longs; environment: `LONG_VARIANTS_ENABLED`. |
+
+#### Subtitles
+
+Choose the subtitle style and control captions for primary outputs and variants.
+
+| Option | Purpose |
+| --- | --- |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
+| `--subtitle-template-dir PATH` | Load custom subtitle templates from a directory. |
 | `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |
 | `--short-subtitles` / `--no-short-subtitles` | Set primary short subtitles and the default for short variants; environment: `SHORT_SUBTITLES_ENABLED`. |
 | `--long-subtitles` / `--no-long-subtitles` | Set primary long subtitles and the default for long variants; environment: `LONG_SUBTITLES_ENABLED`. |
 | `--short-variant-subtitles` / `--no-short-variant-subtitles` | Override captions only for additional short formats; environment: `SHORT_VARIANT_SUBTITLES_ENABLED`. |
 | `--long-variant-subtitles` / `--no-long-variant-subtitles` | Override captions only for additional long formats; environment: `LONG_VARIANT_SUBTITLES_ENABLED`. |
-| `--short-aspect-ratio` / `--long-aspect-ratio` | Choose the primary version (`9:16`, `16:9`, `1:1`, or `original`) for each class. Square outputs have no variants. |
-| `--variants` / `--no-variants` | Set the shared default for additional formats; environment: `RENDER_VARIANTS`. |
-| `--short-variants` / `--no-short-variants` | Override additional formats for shorts; environment: `SHORT_VARIANTS_ENABLED`. |
-| `--long-variants` / `--no-long-variants` | Override additional formats for longs; environment: `LONG_VARIANTS_ENABLED`. |
-| `--short-clips` / `--no-short-clips` | Enable or disable shorts and all their variants; environment: `SHORT_CLIPS_ENABLED`. |
-| `--long-clips` / `--no-long-clips` | Enable or disable longs and all their variants; environment: `LONG_CLIPS_ENABLED`. |
-| `--square-size` | Set the square output side in pixels (positive and even; default: `1080`); environment: `SQUARE_SIZE`. |
-| `--force-recompute` | Bypass cached transcription and AI analysis. |
-| `--keep-intermediates` | Retain intermediate files for inspection. |
-| `--verbose` | Show debug details and dependency output. |
+
+#### Execution
+
+Control intermediate files, cache reuse, and terminal output.
+
+| Option | Purpose |
+| --- | --- |
+| `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
+| `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
+| `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
+Run `multicuts --help` for the same option groups in the terminal. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ### Optional editorial context
 
