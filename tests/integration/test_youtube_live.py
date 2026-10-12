@@ -10,7 +10,6 @@ from pathlib import Path
 from threading import Thread
 
 import pytest
-from yt_dlp import YoutubeDL
 
 import multicuts.adapters.youtube as youtube_module
 from multicuts.adapters.multisubs import MultisubsAdapter
@@ -44,6 +43,8 @@ def test_youtube_adapter_against_explicit_fixture_source(tmp_path: Path) -> None
 def test_partial_download_with_real_ytdlp_and_ffmpeg(
     subtitles: bool, container: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from yt_dlp import YoutubeDL
+
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
     remote_file = tmp_path / f"remote.{container}"
