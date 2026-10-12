@@ -110,6 +110,11 @@ def test_prepare_source_range_preserves_source_and_maps_probed_streams(
     )
     extracted = prepared.local_path
     assert prepared.timeline_offset == 6.25
+    # Do not reuse ASR caches prepared with unconditional codec-delay correction.
+    assert (
+        prepared.fingerprint
+        != "sha256-v1:bf7be041ddfbab543d66e1549d22c95c3eff44f6308cba16f11d3a6c7c004ce5"
+    )
     assert prepared_media.duration == 2.5
     assert extracted.is_relative_to(tmp_path / "work")
     assert extracted.read_bytes() == b"partial media"
@@ -538,3 +543,107 @@ def test_probe_rejects_invalid_json(
 
     with pytest.raises(MediaError, match="invalid JSON"):
         probe_media(source)
+
+
+@pytest.mark.parametrize("libavformat_major", [58, 59, 60, 61, 62])
+@pytest.mark.parametrize("source_kind", ["local", "youtube"])
+def test_opus_remux_compensation_matches_installed_matroska_muxer(
+    libavformat_major: int,
+    source_kind: str,
+    probe_payload: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = tmp_path / "source.webm"
+    original.write_bytes(b"original")
+    streams = probe_payload["streams"]
+    assert isinstance(streams, list)
+    streams[1].update(
+        {
+            "codec_name": "opus",
+            "extradata": (
+                "00000000: 4f70 7573 4865 6164 0102 3801 80bb 0000  OpusHead........"
+            ),
+        }
+    )
+    youtube = source_kind == "youtube"
+    media = replace(
+        normalize_media_probe(probe_payload), start_time=6.25 if youtube else 0
+    )
+    source = AcquiredSource(
+        original,
+        "source",
+        source_kind=source_kind,
+        provider_id="abc123" if youtube else None,
+        title="Fixture source" if youtube else None,
+        original_url="https://youtu.be/abc123" if youtube else None,
+        acquired_range=TimeRange(6.25, 8.75) if youtube else None,
+        original_duration=12.5 if youtube else None,
+    )
+    copies: list[list[str]] = []
+    probes = 0
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal probes
+        if "-version" in command:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "ffmpeg version N-snapshot\n"
+                f"libavformat    {libavformat_major}.  1.100 / "
+                f"{libavformat_major}.  1.100",
+                "",
+            )
+        if command[0] == "ffmpeg":
+            copies.append(command)
+            Path(command[-1]).write_bytes(b"copied media")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        probes += 1
+        payload = dict(probe_payload)
+        payload["format"] = {
+            "duration": "2.5",
+            "start_time": "6.25" if probes == 1 and not youtube else "0",
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", run)
+    prepared, _ = prepare_source_range(
+        source, media, TimeRange(6.25, 8.75), tmp_path / "work"
+    )
+    assert prepared.acquired_range == TimeRange(6.25, 8.75)
+    assert len(copies) == (1 if youtube else 2)
+    for command in copies:
+        assert command[command.index("-c") + 1] == "copy"
+        if libavformat_major < 60:
+            expected_delay = "0.014000000" if youtube else "0.006500000"
+            assert command[command.index("-bsf:a") + 1] == (
+                f"setts=pts=PTS+{expected_delay}/TB:dts=DTS+{expected_delay}/TB"
+            )
+        else:
+            assert "-bsf:a" not in command
+
+
+def test_opus_remux_rejects_unknown_muxer_version_without_publishing_media(
+    probe_payload: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = tmp_path / "source.webm"
+    original.write_bytes(b"original")
+    media = replace(normalize_media_probe(probe_payload), audio_codec_delay=0.0065)
+    monkeypatch.setattr(
+        "multicuts.media.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, "unrecognized version; private-token", ""
+        ),
+    )
+    with pytest.raises(MediaError, match="FFmpeg Matroska timestamp support") as caught:
+        prepare_source_range(
+            AcquiredSource(original, "source"),
+            media,
+            TimeRange(6.25, 8.75),
+            tmp_path / "work",
+        )
+    assert "private-token" not in str(caught.value)
+    assert not list((tmp_path / "work").iterdir())
+    assert original.read_bytes() == b"original"

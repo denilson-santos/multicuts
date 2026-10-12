@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -225,7 +226,7 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
                         if not line.startswith("#")
                     ).encode()
                 decoded.append(data)
-            assert decoded[0] == decoded[1]
+            assert sha256(decoded[0]).digest() == sha256(decoded[1]).digest()
         return render_raw(source, media, clip, config, output=output, work=work)
 
     transcriber = Transcriber()

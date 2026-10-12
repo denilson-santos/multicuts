@@ -126,7 +126,7 @@ def test_range_source_preserves_frames_audio_and_original(
             ).stdout
         )
     assert decoded_video[0] and decoded_video[0] == decoded_video[1]
-    assert decoded_audio[0] == decoded_audio[1]
+    assert sha256(decoded_audio[0]).digest() == sha256(decoded_audio[1]).digest()
 
 
 @pytest.mark.integration

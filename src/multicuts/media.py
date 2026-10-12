@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import replace
@@ -159,7 +160,7 @@ def prepare_source_range(
                     float(interval.end),
                     start,
                     end,
-                    "stream-copy-v1",
+                    "stream-copy-v2",
                 ],
                 separators=(",", ":"),
             )
@@ -174,6 +175,23 @@ def prepare_source_range(
         return prepared_source, prepared_media
     except OSError as exc:
         raise MediaError("Could not prepare the source interval") from exc
+
+
+def _needs_opus_delay_compensation() -> bool:
+    """Older Matroska muxers omit the Opus CodecDelay timestamp restoration."""
+    result = subprocess.run(
+        ["ffmpeg", "-version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    match = re.search(r"^libavformat\s+(\d+)\.", result.stdout, re.MULTILINE)
+    if result.returncode or match is None:
+        raise MediaError("Could not determine FFmpeg Matroska timestamp support")
+    # libavformat 60 (FFmpeg 6.0) restored track->ts_offset for initial padding.
+    return int(match.group(1)) < 60
 
 
 def _copy_media(
@@ -200,15 +218,19 @@ def _copy_media(
         "-avoid_negative_ts",
         "disabled",
     ]
-    if output.suffix == ".mkv" and media.audio_codec_delay:
+    if (
+        output.suffix == ".mkv"
+        and media.audio_codec_delay
+        and _needs_opus_delay_compensation()
+    ):
         delay = media.audio_codec_delay + extra_audio_delay
         if extra_audio_delay:
             # Each Matroska mux pass rounds CodecDelay to millisecond ticks.
             delay = (
                 ceil(media.audio_codec_delay * 1000) + ceil(extra_audio_delay * 1000)
             ) / 1000
-        # Matroska subtracts CodecDelay when remuxing Opus. Restore packet
-        # timestamps without changing the encoded audio or its pre-skip header.
+        # Older Matroska muxers subtract CodecDelay when remuxing Opus. Restore
+        # packet timestamps without changing encoded audio or its pre-skip header.
         command += ["-bsf:a", f"setts=pts=PTS+{delay:.9f}/TB:dts=DTS+{delay:.9f}/TB"]
     command += ["-y", str(output)]
     result = subprocess.run(

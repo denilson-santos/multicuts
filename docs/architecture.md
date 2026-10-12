@@ -57,8 +57,11 @@ source timestamps during extraction. It probes the actual leading keyframe/audio
 packet time, then remuxes the segment to a local zero-based timeline. MP4/MOV
 retain their container to preserve display-matrix rotation; other sources use
 Matroska. Opus codec-delay metadata is normalized at this boundary so remuxing
-does not accumulate audio timestamp shifts. Both passes use stream copy; no
-resolution, FPS, audio sampling, or bitrate overrides are applied. The resulting
+does not accumulate audio timestamp shifts. Manual compensation applies only
+to libavformat versions below 60; newer Matroska muxers restore that delay
+natively. Stream-copy preparation version 2 isolates older range caches. Both
+passes use stream copy; no resolution, FPS, audio sampling, or bitrate overrides
+are applied. The resulting
 source is used by all final renderers, including runs without captions, and by
 ASR except for exact local custom cuts described below.
 
