@@ -281,55 +281,191 @@ Long clips preferably span 3–15 minutes, with no hard duration ceiling. The nu
 
 ## Usage
 
-Automatic discovery examples use the backend and model configured in `.env`.
+Every invocation needs a local video path or supported YouTube URL and an output
+directory:
 
-**Search within part of the source**
-
-```bash
-multicuts source.mp4 --output-dir out --search-range 00:05:00 00:12:30
+```text
+multicuts SOURCE --output-dir OUTPUT_DIR [OPTIONS]
 ```
 
-`--search-range START END` restricts discovery and editorial boundary adjustments
-to complete observed transcript units inside the interval. Times refer to the
-original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
-seconds. Units crossing either edge are excluded; an interval without complete
-units produces zero clips. Bounds must be ordered and within the source duration.
-Local files reuse a compatible full-source transcript when it is cached;
-otherwise, the prepared range source is transcribed, including any keyframe
-padding. YouTube acquisition also includes only the range and required padding.
+### Choose a mode
 
-**Render one interval**
+| Goal | Mode option | AI analysis |
+| --- | --- | --- |
+| Discover and rank clips across the source | None (default) | Required |
+| Discover and rank clips within an interval | `--search-range START END` | Required |
+| Render an interval you already selected | `--clip-range START END` | Skipped |
+| Use the entire source as one cut | `--clip-full` | Skipped |
+
+Choose one mode per run. `--search-range`, `--clip-range`, and `--clip-full` are
+mutually exclusive and must be supplied on the command line.
+
+### Automatic discovery
+
+Automatic discovery uses the AI backend and model configured in `.env` to find,
+review, rank, and render clips. It searches for both shorts and longs by default.
+
+For a local video:
 
 ```bash
-multicuts source.mp4 --output-dir out --clip-range 00:01:30.25 00:02:45
+multicuts ./podcast.mp4 --output-dir ./cuts --lang pt
 ```
 
-**Use the entire source as one cut**
+For a YouTube video:
 
 ```bash
-multicuts prepared-clip.mp4 --output-dir out --clip-full
+multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
 ```
 
-`--clip-range START END` and `--clip-full` render exactly one cut without AI
-discovery, boundary adjustments, ranking, or editorial rejection. No AI backend,
-model, or credentials are required. The full-video mode includes silence before
-and after speech, using the probed media duration. These options and
-`--search-range` are mutually exclusive and CLI-only.
+Set `--lang` when you know the spoken language, or omit it for automatic detection.
+See [AI configuration](#ai-configuration) to override the backend or provide
+editorial context.
 
-Local `--clip-range` cuts keep the exact requested bounds. For YouTube URLs, the
-final cut uses the entire acquired interval, including neighboring keyframe or
-codec packet data. Its start and end may differ from the requested times. The
-CLI reports both intervals before transcription/rendering, and the manifest
-records `requested_clip_range` separately from the effective `clip_range`.
-Clip metadata and subtitle timings describe the actual output interval.
+#### Search within an interval
 
-Direct cuts use the same subtitle, framing, and variant settings as automatic
-cuts. Their duration determines the class: up to 180 seconds is short; longer is
-long. That class must be enabled. Add `--no-variants` for one output file, or
-`--short-aspect-ratio original --long-aspect-ratio original --no-variants` to keep
-the source framing. With all published subtitles disabled, direct cuts skip ASR.
-Otherwise, they reuse one source transcript for all versions. Their title comes
-from the source filename or YouTube title; their metadata has no editorial score.
+Add `--search-range` to limit discovery and editorial boundary adjustments:
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --search-range 00:05:00 00:12:30
+```
+
+Only complete observed transcript units inside the interval are eligible. Units
+crossing either edge are excluded; an interval without complete units produces
+zero clips. This applies to local files and YouTube URLs.
+
+### Direct cuts
+
+Direct modes render your chosen interval or the entire source as one cut.
+They skip AI discovery, boundary adjustments, ranking, and rejection;
+no AI backend, model, or credentials are required.
+
+One cut can produce several formats. The examples below use `--no-variants` to
+produce one output video; omit it to include the configured additional formats.
+
+#### Render one interval
+
+```bash
+multicuts ./source.mp4 --output-dir ./cuts \
+  --clip-range 00:01:30.25 00:02:45 --no-variants
+```
+
+Local files use the exact requested bounds. YouTube cuts can include extra
+keyframe data; see [Range precision](#range-precision) before choosing an interval.
+
+#### Use the entire source as one cut
+
+```bash
+multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --no-variants
+```
+
+This includes silence before and after speech, using the probed video duration.
+
+Both direct modes use the same framing and subtitle controls as automatic cuts.
+The cut's duration determines its class: up to 180 seconds is short; longer is
+long. That class must be enabled. Titles come from the source filename or YouTube
+title, and metadata has no editorial score. Direct cuts transcribe once for all
+versions when subtitles are needed; disabling subtitles for every published
+version skips transcription.
+
+### Range precision
+
+`START` and `END` refer to the original source. Both range flags accept seconds,
+`MM:SS`, or `HH:MM:SS`, including decimal seconds. Bounds must be ordered and
+within the source duration.
+
+| Source | `--search-range` | `--clip-range` |
+| --- | --- | --- |
+| Local file | Discovery stays inside the requested interval. | The final cut uses the exact requested bounds. |
+| YouTube | Acquisition can include keyframe padding, but discovery stays inside the requested interval. | The final cut uses the entire acquired interval, including padding; its start and end can differ from the requested times. |
+
+Range preparation copies compressed video and audio streams without reducing
+their quality. This can retain neighboring keyframe or codec packet data. For
+YouTube ranges, the CLI reports the requested and acquired intervals before
+transcription and rendering. Clip metadata describes the actual output interval;
+subtitles use that output's local timeline.
+
+<details>
+<summary><strong>Range acquisition, transcription, and cache details</strong></summary>
+
+Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
+duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
+
+**Local files:** range requests prepare a temporary source by copying the original
+streams, preserving resolution, frame rate, and audio quality. The original file
+stays intact. The pipeline records the actual source offset and applies the
+requested bounds when selecting and rendering cuts.
+
+For `--search-range`, a compatible complete transcript cache is checked first,
+then the range cache. Fresh transcription reads the prepared range, including
+any keyframe padding.
+
+For `--clip-range` with subtitles, the exact raw cut is rendered before ASR and
+transcribed once. That raw video is reused for finalization, and all versions
+share its transcript. ASR hears the same interval as the output, so preceding
+keyframe padding does not affect word alignment. This cache is separate from
+full-source and padded-range transcripts; old runs are preserved, but their
+transcripts are not reused for this mode.
+
+**YouTube:** yt-dlp and FFmpeg request only the interval and required padding.
+Remote headers and adjacent fragments may also be transferred. The acquired
+streams are copied without reencoding or reducing their quality, and
+transcription processes the acquired interval. Repeating an interval can reuse
+its transcript; different intervals have separate caches. Without a range,
+including `--clip-full`, the entire video is acquired.
+
+For YouTube `--clip-range`, the manifest records `requested_clip_range` separately
+from the effective `clip_range`. CLI time arguments and clip metadata intervals
+refer to the original source.
+
+**Caches and temporary files:** `--force-recompute` bypasses cache reuse. Private
+sources are removed unless `--keep-intermediates` is enabled. Direct range cuts
+without published subtitles still prepare the range source but skip ASR.
+Unrestricted and `--clip-full` local requests use the original file.
+
+</details>
+
+### Formats and variants
+
+Use `--short-aspect-ratio` and `--long-aspect-ratio` to choose the primary format
+for each class. Use `--no-variants` for primary outputs only, or the class-specific
+variant flags to control additional formats. Square primary outputs have no
+variants, including square sources with `original` framing.
+
+To publish only primary short cuts:
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts \
+  --no-long-clips --no-short-variants
+```
+
+To keep the source framing and disable subtitles:
+
+```bash
+multicuts ./interview.mp4 --output-dir ./interview-cuts \
+  --short-aspect-ratio original --long-aspect-ratio original \
+  --no-variants --no-subtitles
+```
+
+### Subtitle controls
+
+Primary subtitles are enabled by default. Variants inherit their class setting
+unless a variant-specific flag overrides it. Choose the style with
+`--subtitle-template` (default: `yellow-pop`).
+
+To enable subtitles only for short cuts and their variants:
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
+  --short-subtitles --no-long-subtitles
+```
+
+Use `--subtitles` / `--no-subtitles` for both classes and their variants. For
+additional formats only, use `--short-variant-subtitles` /
+`--no-short-variant-subtitles` or `--long-variant-subtitles` /
+`--no-long-variant-subtitles`; these flags do not change primary subtitles.
+
+<details>
+<summary><strong>Transcript preservation and subtitle layout</strong></summary>
 
 Transcription retains the original ASR segments, text, and observed word times
 before subtitle grouping or visual layout. Multisubs organizes subtitles once,
@@ -340,91 +476,61 @@ and an unknown detected language stays null. When alignment is unavailable,
 multisubs uses its native segment fallback and warns about suppressed effects.
 Older transcript caches are recomputed once; completed runs remain available.
 
-**Use a YouTube source**
+A private foreground follows the subtitle decision of the horizontal output that
+consumes it. See [Output and reruns](#output-and-reruns) for subtitle sidecars and
+render metadata.
 
-```bash
-multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
-```
+</details>
 
-With `--search-range` or `--clip-range`, YouTube acquisition requests only that
-interval through yt-dlp and FFmpeg. Transcription, when needed, processes only
-the acquired interval. CLI times and clip metadata still refer to the original
-video. Repeating the same interval can reuse its transcript; different intervals
-have separate caches. Without a range, including `--clip-full`, the entire video
-is acquired.
+### AI configuration
 
-Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
-duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
-The downloaded streams are copied without reencoding or reducing resolution,
-frame rate, or audio quality. Remote headers and adjacent fragments may also be
-transferred.
-
-With YouTube `--search-range`, acquisition and transcription can also include
-keyframe padding. The CLI reports the requested and acquired intervals. Clip
-discovery stays inside the requested search range, and each final clip follows
-the boundaries selected by the analysis.
-
-Local `--search-range` and `--clip-range` requests also prepare one range source
-by copying the original video and audio streams. Copying compressed streams can
-retain neighboring keyframe data; the pipeline records the actual source offset
-and applies the requested bounds when selecting and rendering cuts. This
-preserves image detail for framing and computer vision without a low-quality
-transcription proxy.
-
-For local `--clip-range` with subtitles, the pipeline renders the exact raw cut
-from this source before ASR and transcribes it once. That raw video is reused for
-finalization, and all versions share its transcript. ASR therefore hears the
-same interval as the output, without preceding keyframe padding affecting word
-alignment. Its cache is separate from full-source and padded-range transcripts;
-old runs are preserved, but their transcripts are not reused for this mode.
-
-Local `--search-range` still checks compatible complete transcript caches first,
-then the range cache; fresh ASR reads the shared range source. The original stays
-intact, and private sources are removed unless `--keep-intermediates` is enabled.
-Different ranges have separate caches; `--force-recompute` bypasses cache reuse.
-Direct cuts without published subtitles skip ASR while still preparing the range
-source. Unrestricted and `--clip-full` local requests continue using the original
-file.
-
-**Keep the source framing and disable subtitles**
-
-```bash
-multicuts ./interview.mp4 --output-dir ./interview-cuts \
-  --short-aspect-ratio original --long-aspect-ratio original \
-  --no-variants --no-subtitles
-```
-
-**Enable subtitles only for short cuts**
-
-```bash
-multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
-  --short-subtitles --no-long-subtitles
-```
-
-Primary subtitles default to enabled. Use `--short-subtitles` / `--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles` / `--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, for separate control. Variants inherit their class setting unless overridden with `--short-variant-subtitles` / `--no-short-variant-subtitles` or `SHORT_VARIANT_SUBTITLES_ENABLED`, and `--long-variant-subtitles` / `--no-long-variant-subtitles` or `LONG_VARIANT_SUBTITLES_ENABLED`. These variant settings apply only to additional formats, while the aspect-ratio options choose the primary version. A private foreground follows the subtitle decision of the horizontal output that consumes it.
-
-CLI settings override process environment, which overrides `.env`, then defaults. Within each source, the more specific setting wins: variant subtitles over class subtitles, or class variants over the shared variant switch. `--subtitles` / `--no-subtitles` remain CLI shortcuts for both classes and their variants. More specific CLI flags take precedence regardless of argument order. For example, `--no-subtitles --short-variant-subtitles` captions only short variants, while `--no-variants --long-variants` adds formats only for longs. The shared `SUBTITLES_ENABLED` environment setting remains removed.
-
-**Publish only the primary short cuts**
-
-```bash
-multicuts ./podcast.mp4 --output-dir ./cuts \
-  --no-long-clips --no-short-variants
-```
-
-**Override the AI configuration for one run**
+Automatic discovery requires a backend, model, and the corresponding
+authentication. Use the values in `.env` or override them for one run:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
   --llm-backend codex --llm-model YOUR_MODEL --llm-effort high
 ```
 
-### Supported backends
+#### Supported backends
 
 | Access | `--llm-backend` | Authentication |
 | --- | --- | --- |
 | API | `openai`, `anthropic`, `gemini` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, respectively |
 | Installed CLI | `codex`, `claude`, `agy` | Authenticate the corresponding command |
+
+#### Optional editorial context
+
+Use `--context` to describe what the video is about:
+
+```bash
+multicuts ./interview.mp4 --output-dir ./cuts \
+  --context "A review of Pokémon games, covering mechanics, collecting, and the host's experience."
+```
+
+Context helps the AI interpret speakers, terms, references, and connections
+between ideas during discovery and editorial review. It does not impose a
+mandatory topic or keyword filter, and it cannot supply missing transcript
+evidence. Approval still depends on the actual content within the reviewed
+boundaries.
+
+Supply context for each invocation; omitting the flag or passing empty or
+whitespace-only text runs without additional context. The applied context is
+recorded in the manifest and each clip's JSON. Logs report that context is enabled
+without printing its contents.
+
+#### Configuration precedence
+
+Settings are resolved in this order: CLI flags, process environment, `.env`, then
+defaults. Within each source, more specific settings win: variant subtitles over
+class subtitles, or class variants over the shared variant switch. Specific CLI
+flags take precedence regardless of argument order. For example:
+
+- `--no-subtitles --short-variant-subtitles` captions only short variants.
+- `--no-variants --long-variants` adds formats only for longs.
+
+See the option tables below and `.env.example` for environment variable names.
+The shared `SUBTITLES_ENABLED` environment setting is not supported.
 
 ### Options
 
@@ -502,21 +608,6 @@ Control intermediate files, cache reuse, and terminal output.
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 Run `multicuts --help` for the same option groups in the terminal. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
-
-### Optional editorial context
-
-Use `--context` to describe what the video is about and help the AI understand its scope:
-
-```bash
-multicuts ./interview.mp4 --output-dir ./cuts \
-  --context "A review of Pokémon games, covering mechanics, collecting, and the host's experience."
-```
-
-Context helps the AI interpret speakers, terms, references, and connections between ideas. It guides the discovery of relevant complete clips and their editorial review. It does not impose a mandatory topic or keyword filter, and it cannot supply missing transcript evidence. Approval still depends on the actual content within the reviewed boundaries.
-
-Supply context through `--context` for each source invocation. Omitting the flag or passing empty or whitespace-only text runs without additional video context.
-
-The applied context is recorded in the run manifest and each clip's JSON. Logs report that video context is enabled without printing its contents.
 
 ## Output and reruns
 
