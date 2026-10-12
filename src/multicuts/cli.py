@@ -26,6 +26,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
+from multicuts.models import TimeRange
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 
 PipelineRunner = Callable[[AppConfig], RunResult]
@@ -150,6 +151,30 @@ def _safe_text(value: object) -> str:
     return (message[:500] + "...") if len(message) > 500 else message
 
 
+def _time_range(value: tuple[str, str] | None, option: str) -> TimeRange | None:
+    if value is None:
+        return None
+
+    def seconds(raw: str) -> float:
+        if re.fullmatch(r"\d+(?::\d{1,2}){0,2}(?:\.\d+)?", raw) is None:
+            raise ValueError("invalid timestamp")
+        parts = [float(part) for part in raw.split(":")]
+        if any(part >= 60 for part in parts[1:]):
+            raise ValueError("invalid clock component")
+        total = 0.0
+        for part in parts:
+            total = total * 60 + part
+        return total
+
+    try:
+        return TimeRange(seconds(value[0]), seconds(value[1]))
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{option} requires ordered START END within the source; "
+            "use nonnegative seconds, MM:SS, or HH:MM:SS (decimals allowed)"
+        ) from exc
+
+
 def _value(option: object | None, name: str, default: object) -> object:
     if option is not None:
         return option
@@ -241,6 +266,38 @@ def run_command(
         Path,
         typer.Option("--output-dir", help="Root for unique runs and shared caches."),
     ],
+    search_range: Annotated[
+        tuple[str, str] | None,
+        typer.Option(
+            "--search-range",
+            metavar="START END",
+            help=(
+                "Search only within these source times (seconds or HH:MM:SS). "
+                "YouTube acquisition may include extra keyframe data."
+            ),
+            rich_help_panel="Analysis",
+        ),
+    ] = None,
+    clip_range: Annotated[
+        tuple[str, str] | None,
+        typer.Option(
+            "--clip-range",
+            metavar="START END",
+            help=(
+                "Render one source interval without AI review. Local bounds are "
+                "exact; YouTube cuts include the acquired keyframe padding."
+            ),
+            rich_help_panel="Clips",
+        ),
+    ] = None,
+    clip_full: Annotated[
+        bool,
+        typer.Option(
+            "--clip-full",
+            help="Render the entire source as one cut without AI review.",
+            rich_help_panel="Clips",
+        ),
+    ] = False,
     llm_backend: Annotated[
         str | None,
         typer.Option(
@@ -516,13 +573,16 @@ def run_command(
         ),
     ] = None,
 ) -> None:
-    backend = _value(llm_backend, "LLM_BACKEND", "")
-    llm_model_value = _value(llm_model, "LLM_MODEL", "")
-    if not isinstance(backend, str) or not backend.strip():
+    direct = clip_range is not None or clip_full
+    backend = "" if direct else _value(llm_backend, "LLM_BACKEND", "")
+    llm_model_value = "" if direct else _value(llm_model, "LLM_MODEL", "")
+    if not isinstance(backend, str) or (not direct and not backend.strip()):
         raise ConfigurationError("Set LLM_BACKEND or pass --llm-backend")
-    if not isinstance(llm_model_value, str) or not llm_model_value.strip():
+    if not isinstance(llm_model_value, str) or (
+        not direct and not llm_model_value.strip()
+    ):
         raise ConfigurationError("Set LLM_MODEL or pass --llm-model")
-    effort_value = _value(llm_effort, "LLM_EFFORT", None)
+    effort_value = None if direct else _value(llm_effort, "LLM_EFFORT", None)
     if effort_value is not None and not isinstance(effort_value, str):
         raise ConfigurationError("LLM_EFFORT must be a string")
     template_dir = _value(subtitle_template_dir, "SUBTITLE_TEMPLATE_DIR", None)
@@ -533,6 +593,9 @@ def run_command(
         llm_model=llm_model_value,
         llm_effort=effort_value,
         editorial_context=context,
+        search_range=_time_range(search_range, "--search-range"),
+        clip_range=_time_range(clip_range, "--clip-range"),
+        full_video=clip_full,
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
         transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),

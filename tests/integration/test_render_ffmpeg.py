@@ -11,17 +11,176 @@ from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.clips import JudgedClip, Proposal
 from multicuts.media import inspect_media_path
-from multicuts.models import AcquiredSource, Transcript, TranscriptSegment, Word
+from multicuts.models import (
+    AcquiredSource,
+    TimeRange,
+    Transcript,
+    TranscriptSegment,
+    Word,
+)
 from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw, render_short_horizontal
 
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("interval", [None, TimeRange(0.64, 2.36)])
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_direct_cuts_render_exact_media_interval_without_ai(
+    interval: TimeRange | None, subtitles: bool, tmp_path: Path
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x180:r=25:d=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:d=3",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source_media = inspect_media_path(source_path)
+    provider_version = MultisubsAdapter().version() if subtitles else "unused"
+    transcription_inputs: list[Path] = []
+    rendering_inputs: list[Path] = []
+    rendering_outputs: list[Path] = []
+    first_word_times: list[tuple[float, float]] = []
+
+    class Transcriber:
+        calls = 0
+
+        def version(self) -> str:
+            assert subtitles, "Uncaptioned direct cuts must skip ASR"
+            return provider_version
+
+        def transcribe(
+            self,
+            video_path: Path,
+            *,
+            language: str | None,
+            backend: str,
+            model: str,
+            workspace: Path,
+        ) -> Transcript:
+            self.calls += 1
+            transcription_inputs.append(video_path)
+            factor = 1.0
+            if interval is not None:
+                assert video_path != source_path
+                actual_duration = inspect_media_path(video_path).duration
+                assert actual_duration == pytest.approx(
+                    interval.end - interval.start, abs=0.25
+                )
+                factor = actual_duration / 2.5
+            else:
+                assert video_path == source_path
+            first_word_times.append((0.6 * factor, 1.0 * factor))
+            return Transcript(
+                language,
+                "en",
+                2.5 * factor,
+                "A complete idea.",
+                (TranscriptSegment("A complete idea.", 0.5 * factor, 2.5 * factor),),
+                (
+                    Word("A", 0.6 * factor, 1.0 * factor),
+                    Word("complete", 1.1 * factor, 1.8 * factor),
+                    Word("idea.", 1.9 * factor, 2.4 * factor),
+                ),
+                "multisubs",
+                provider_version,
+            )
+
+    class Backend:
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            pytest.fail("Direct cuts must never call AI")
+
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        clip_range=interval,
+        full_video=interval is None,
+        subtitles_enabled=subtitles,
+        render_variants=False,
+        short_aspect_ratio="original",
+    )
+
+    def render(source, media, clip, current, *, output, work):
+        rendering_inputs.append(source.local_path)
+        result = render_raw(source, media, clip, current, output=output, work=work)
+        rendering_outputs.append(result[0])
+        return result
+
+    transcriber = Transcriber()
+    result = run_pipeline(
+        config, transcriber=transcriber, backend=Backend(), raw_renderer=render
+    )
+    assert len(rendering_inputs) == 1
+    assert (rendering_inputs[0] != source_path) == (interval is not None)
+    if subtitles:
+        assert transcription_inputs == (
+            rendering_outputs if interval is not None else rendering_inputs
+        )
+    assert transcriber.calls == int(subtitles)
+    (video,) = result.clip_paths
+    actual = inspect_media_path(video)
+    start = interval.start if interval else 0.0
+    end = interval.end if interval else source_media.duration
+    assert actual.duration == pytest.approx(end - start, abs=0.25)
+    assert (actual.presentation_width, actual.presentation_height) == (320, 180)
+    assert actual.has_audio
+    metadata = json.loads(video.with_suffix(".json").read_text())
+    assert metadata["start"] == pytest.approx(start, abs=0.000001)
+    assert metadata["end"] == pytest.approx(end, abs=0.000001)
+    assert metadata["viral_potential"] is None
+    assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
+    manifest = json.loads(result.manifest_path.read_text())
+    acquired_range = manifest["source"]["acquired_range"]
+    if interval is None:
+        assert acquired_range is None
+    else:
+        assert acquired_range["start"] < interval.start
+        assert acquired_range["end"] >= interval.end
+    if subtitles:
+        assert manifest["transcription"]["source_range"] == (
+            {"start": interval.start, "end": interval.end}
+            if interval is not None
+            else None
+        )
+        cues_path = next(
+            path
+            for path in metadata["subtitle_files"]
+            if path.endswith(".transcript.json")
+        )
+        cues = json.loads((result.manifest_path.parent / cues_path).read_text())
+        first_word = cues["segments"][0]["words"][0]
+        assert (first_word["start"], first_word["end"]) == pytest.approx(
+            first_word_times[0], abs=0.000001
+        )
+    assert not (result.manifest_path.parent / ".work").exists()
+
+
 @pytest.mark.parametrize("primary_ratio", ["9:16", "16:9"])
 @pytest.mark.parametrize("primary_subtitles", [False, True])
+@pytest.mark.parametrize("custom", [False, True])
 def test_pipeline_renders_different_primary_and_variant_subtitles(
-    primary_ratio: str, primary_subtitles: bool, tmp_path: Path
+    primary_ratio: str, primary_subtitles: bool, custom: bool, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -37,6 +196,11 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
             "lavfi",
             "-i",
             "color=c=blue:s=640x360:r=25:d=3",
+            *(
+                ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:d=3"]
+                if custom
+                else []
+            ),
             "-c:v",
             "mpeg4",
             str(source_path),
@@ -45,6 +209,8 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
     )
     source = AcquiredSource(source_path, "sha256-v1:subtitle-controls")
     provider_version = MultisubsAdapter().version()
+    transcription_inputs: list[Path] = []
+    rendering_outputs: list[Path] = []
 
     class Transcriber:
         calls = 0
@@ -62,16 +228,18 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
             workspace: Path,
         ) -> Transcript:
             self.calls += 1
+            transcription_inputs.append(video_path)
+            offset = -0.5 if custom else 0.0
             return Transcript(
                 language,
                 "en",
-                3.0,
+                2.0 if custom else 3.0,
                 "A complete idea.",
-                (TranscriptSegment("A complete idea.", 0.5, 2.5),),
+                (TranscriptSegment("A complete idea.", 0.5 + offset, 2.5 + offset),),
                 (
-                    Word("A", 0.6, 1.0),
-                    Word("complete", 1.1, 1.8),
-                    Word("idea.", 1.9, 2.4),
+                    Word("A", 0.6 + offset, 1.0 + offset),
+                    Word("complete", 1.1 + offset, 1.8 + offset),
+                    Word("idea.", 1.9 + offset, 2.4 + offset),
                 ),
                 "multisubs",
                 provider_version,
@@ -113,6 +281,7 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         tmp_path / "out",
         "codex",
         "test",
+        clip_range=TimeRange(0.5, 2.5) if custom else None,
         long_clips_enabled=False,
         short_aspect_ratio=primary_ratio,
         short_subtitles_enabled=primary_subtitles,
@@ -123,15 +292,25 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         horizontal_height=360,
         square_size=360,
     )
+
+    def render(source, media, clip, current, *, output, work):
+        rendered = render_raw(source, media, clip, current, output=output, work=work)
+        rendering_outputs.append(rendered[0])
+        return rendered
+
     transcriber = Transcriber()
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work: source,
+        acquire=lambda _source, _work, *, time_range=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
         transcriber=transcriber,
         backend=Backend(),
+        raw_renderer=render,
     )
     assert transcriber.calls == 1
+    # Vertical and square are encoded once; horizontal reuses the foreground.
+    assert len(rendering_outputs) == 2
+    assert transcription_inputs == ([rendering_outputs[0]] if custom else [source_path])
     root = result.manifest_path.parent
     assert not (root / ".work").exists()
     manifest = json.loads(result.manifest_path.read_text())
@@ -148,7 +327,7 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         assert all((root / path).is_file() for path in metadata["subtitle_files"])
         video = root / version["video"]
         media = inspect_media_path(video)
-        assert not media.has_audio
+        assert media.has_audio is custom
         assert media.duration == pytest.approx(2.0, abs=0.25)
         # Allow encoder delay, but reject losing a complete source frame.
         assert media.duration >= 2.0 - 0.5 / 25

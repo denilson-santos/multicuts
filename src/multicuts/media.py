@@ -1,12 +1,17 @@
 """FFprobe boundary and normalized media geometry."""
 
 import json
+import os
+import re
 import subprocess
-from math import isclose, isfinite
+import tempfile
+from dataclasses import replace
+from hashlib import sha256
+from math import ceil, isclose, isfinite
 from pathlib import Path
 
 from multicuts.errors import MediaError
-from multicuts.models import AcquiredSource, MediaInfo
+from multicuts.models import AcquiredSource, MediaInfo, TimeRange
 
 
 def check_media_tools() -> None:
@@ -55,6 +60,7 @@ def inspect_media_path(path: Path) -> MediaInfo:
         "error",
         "-show_format",
         "-show_streams",
+        "-show_data",
         "-of",
         "json",
         str(path),
@@ -91,6 +97,155 @@ def validate_media_for_transcription(media: MediaInfo) -> None:
     """Reject normalized media that cannot provide audio for transcription."""
     if not media.has_audio:
         raise MediaError("No usable audio stream found; source cannot be transcribed")
+
+
+def prepare_source_range(
+    source: AcquiredSource,
+    media: MediaInfo,
+    interval: TimeRange,
+    workspace: Path,
+) -> tuple[AcquiredSource, MediaInfo]:
+    """Copy a shared range source, retaining keyframe padding and its real offset."""
+    validate_media_for_transcription(media)
+    original_duration = source.original_duration or media.duration
+    if interval.end > original_duration:
+        raise MediaError("Requested interval exceeds source media duration")
+    check_media_tools()
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        # MP4/MOV retain display-matrix rotation; Matroska accepts the other
+        # source codecs without selecting a lossy fallback encoder.
+        suffix = source.local_path.suffix.lower()
+        suffix = suffix if suffix in {".mp4", ".mov"} else ".mkv"
+        output = workspace / source.local_path.with_suffix(suffix).name
+        with tempfile.TemporaryDirectory(dir=workspace) as private:
+            raw_path = source.local_path
+            raw_media = media
+            if source.acquired_range is None:
+                raw_path = Path(private) / f"source-timestamps{suffix}"
+                _copy_media(source.local_path, raw_path, media, interval=interval)
+                raw_media = inspect_media_path(raw_path)
+            # The first copy keeps source timestamps, so the preceding keyframe
+            # never becomes an unrecorded shift. Normalize only after probing it.
+            start = max(0.0, raw_media.start_time)
+            normalized = Path(private) / f"normalized{suffix}"
+            # yt-dlp's Matroska download also remuxes Opus once; compensate
+            # that codec-delay subtraction as well as this normalization pass.
+            extra_audio_delay = (
+                raw_media.audio_codec_delay
+                if source.source_kind == "youtube"
+                and raw_path.suffix.lower() in {".webm", ".mkv"}
+                else 0.0
+            )
+            _copy_media(
+                raw_path, normalized, raw_media, extra_audio_delay=extra_audio_delay
+            )
+            prepared_media = inspect_media_path(normalized)
+            validate_media_for_transcription(prepared_media)
+            if abs(prepared_media.start_time) > 0.001:
+                raise MediaError("Copied source timeline could not be normalized")
+            end = min(original_duration, start + prepared_media.duration)
+            if start > interval.start + 0.001 or end < interval.end - 0.001:
+                raise MediaError("Copied source does not cover the requested interval")
+            if (
+                prepared_media.presentation_width != media.presentation_width
+                or prepared_media.presentation_height != media.presentation_height
+            ):
+                raise MediaError("Copied source changed presentation geometry")
+            acquired_range = TimeRange(start, end)
+            identity = json.dumps(
+                [
+                    source.fingerprint,
+                    float(interval.start),
+                    float(interval.end),
+                    start,
+                    end,
+                    "stream-copy-v2",
+                ],
+                separators=(",", ":"),
+            )
+            prepared_source = replace(
+                source,
+                local_path=output,
+                fingerprint="sha256-v1:" + sha256(identity.encode("utf-8")).hexdigest(),
+                acquired_range=acquired_range,
+                original_duration=original_duration,
+            )
+            os.link(normalized, output)
+        return prepared_source, prepared_media
+    except OSError as exc:
+        raise MediaError("Could not prepare the source interval") from exc
+
+
+def _needs_opus_delay_compensation() -> bool:
+    """Older Matroska muxers omit the Opus CodecDelay timestamp restoration."""
+    result = subprocess.run(
+        ["ffmpeg", "-version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    match = re.search(r"^libavformat\s+(\d+)\.", result.stdout, re.MULTILINE)
+    if result.returncode or match is None:
+        raise MediaError("Could not determine FFmpeg Matroska timestamp support")
+    # libavformat 60 (FFmpeg 6.0) restored track->ts_offset for initial padding.
+    return int(match.group(1)) < 60
+
+
+def _copy_media(
+    source: Path,
+    output: Path,
+    media: MediaInfo,
+    *,
+    interval: TimeRange | None = None,
+    extra_audio_delay: float = 0.0,
+) -> None:
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if interval is not None:
+        if interval.start:
+            command += ["-ss", f"{interval.start:.6f}"]
+        command += ["-t", f"{interval.end - interval.start:.6f}"]
+    command += ["-i", str(source), "-map", f"0:{media.video_stream_index}"]
+    if media.audio_stream_index is not None:
+        command += ["-map", f"0:{media.audio_stream_index}"]
+    command += [
+        "-c",
+        "copy",
+        "-copyts",
+        "-start_at_zero",
+        "-avoid_negative_ts",
+        "disabled",
+    ]
+    if (
+        output.suffix == ".mkv"
+        and media.audio_codec_delay
+        and _needs_opus_delay_compensation()
+    ):
+        delay = media.audio_codec_delay + extra_audio_delay
+        if extra_audio_delay:
+            # Each Matroska mux pass rounds CodecDelay to millisecond ticks.
+            delay = (
+                ceil(media.audio_codec_delay * 1000) + ceil(extra_audio_delay * 1000)
+            ) / 1000
+        # Older Matroska muxers subtract CodecDelay when remuxing Opus. Restore
+        # packet timestamps without changing encoded audio or its pre-skip header.
+        command += ["-bsf:a", f"setts=pts=PTS+{delay:.9f}/TB:dts=DTS+{delay:.9f}/TB"]
+    command += ["-y", str(output)]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise MediaError(
+            "Could not copy the source interval with FFmpeg "
+            f"(exit code {result.returncode}); source streams must support remuxing"
+        )
 
 
 def normalize_media_probe(payload: object) -> MediaInfo:
@@ -145,9 +300,48 @@ def normalize_media_probe(payload: object) -> MediaInfo:
             video_stream_index=video_index,
             audio_stream_index=audio_index,
             rotation_degrees=rotation,
+            start_time=_media_start_time(media_format.get("start_time", "0")),
+            audio_codec_delay=_audio_codec_delay(streams, audio_index),
         )
     except ValueError as exc:
         raise MediaError("Media stream metadata is invalid") from exc
+
+
+def _media_start_time(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise MediaError("Media start time is invalid")
+    try:
+        start = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise MediaError("Media start time is invalid") from exc
+    if not isfinite(start):
+        raise MediaError("Media start time is invalid")
+    return start
+
+
+def _audio_codec_delay(streams: list[object], index: int | None) -> float:
+    for stream in streams:
+        if not isinstance(stream, dict) or stream.get("index") != index:
+            continue
+        if stream.get("codec_name") != "opus":
+            return 0.0
+        data = stream.get("extradata")
+        if not isinstance(data, str):
+            raise MediaError("Opus codec delay metadata is missing")
+        try:
+            header = bytes.fromhex(
+                "".join(
+                    line.split(":", 1)[1].split("  ", 1)[0].replace(" ", "")
+                    for line in data.splitlines()
+                    if ":" in line
+                )
+            )
+        except ValueError as exc:
+            raise MediaError("Opus codec delay metadata is invalid") from exc
+        if len(header) < 12 or header[:8] != b"OpusHead":
+            raise MediaError("Opus codec delay metadata is invalid")
+        return int.from_bytes(header[10:12], "little") / 48000
+    return 0.0
 
 
 def _select_video_stream(streams: list[object]) -> dict[str, object]:

@@ -6,10 +6,19 @@ from pathlib import Path
 
 
 def _validate_interval(
-    start: float | None, end: float | None, *, allow_zero_duration: bool = False
+    start: float | None,
+    end: float | None,
+    *,
+    allow_zero_duration: bool = False,
+    allow_partial: bool = False,
 ) -> None:
-    if (start is None) != (end is None):
+    if not allow_partial and (start is None) != (end is None):
         raise ValueError("start and end must both be present or absent")
+    if any(
+        value is not None and (not isfinite(value) or value < 0)
+        for value in (start, end)
+    ):
+        raise ValueError("timestamps must be finite, nonnegative seconds")
     if start is not None and end is not None:
         if (
             not isfinite(start)
@@ -31,10 +40,27 @@ def _validate_clip_local_interval(
     duration: float,
     *,
     allow_zero_duration: bool = False,
+    allow_partial: bool = False,
 ) -> None:
-    _validate_interval(start, end, allow_zero_duration=allow_zero_duration)
-    if start is not None and end is not None and (start < 0 or end > duration):
+    _validate_interval(
+        start, end, allow_zero_duration=allow_zero_duration, allow_partial=allow_partial
+    )
+    if any(value is not None and value > duration for value in (start, end)):
         raise ValueError("clip-local timestamps must stay within clip duration")
+
+
+@dataclass(frozen=True, slots=True)
+class TimeRange:
+    """A positive interval in absolute source seconds."""
+
+    start: float
+    end: float
+
+    def __post_init__(self) -> None:
+        for value in (self.start, self.end):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("range boundaries must be numbers")
+        _validate_interval(self.start, self.end)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +78,8 @@ class AcquiredSource:
     provider_id: str | None = None
     title: str | None = None
     original_url: str | None = None
+    acquired_range: TimeRange | None = None
+    original_duration: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.local_path, Path):
@@ -74,6 +102,25 @@ class AcquiredSource:
             self.provider_id is None or self.title is None or self.original_url is None
         ):
             raise ValueError("YouTube sources require ID, title, and original URL")
+        if (self.acquired_range is None) != (self.original_duration is None):
+            raise ValueError(
+                "partial sources require both a range and original duration"
+            )
+        if self.acquired_range is not None:
+            if not isinstance(self.acquired_range, TimeRange):
+                raise ValueError("acquired range must be a time range")
+            if (
+                isinstance(self.original_duration, bool)
+                or not isinstance(self.original_duration, (int, float))
+                or not isfinite(self.original_duration)
+                or self.original_duration < self.acquired_range.end
+            ):
+                raise ValueError("acquired range must be within the original duration")
+
+    @property
+    def timeline_offset(self) -> float:
+        """Original source time represented by zero in the acquired media."""
+        return 0.0 if self.acquired_range is None else self.acquired_range.start
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +135,8 @@ class MediaInfo:
     video_stream_index: int
     audio_stream_index: int | None
     rotation_degrees: float = 0.0
+    start_time: float = 0.0
+    audio_codec_delay: float = 0.0
 
     def __post_init__(self) -> None:
         if not isfinite(self.duration) or self.duration <= 0:
@@ -108,6 +157,10 @@ class MediaInfo:
             raise ValueError("stream indexes must be non-negative")
         if not isfinite(self.rotation_degrees):
             raise ValueError("media rotation must be finite")
+        if not isfinite(self.start_time):
+            raise ValueError("media start time must be finite")
+        if not isfinite(self.audio_codec_delay) or self.audio_codec_delay < 0:
+            raise ValueError("audio codec delay must be finite and nonnegative")
 
     @property
     def has_audio(self) -> bool:
@@ -128,7 +181,9 @@ class Word:
     def __post_init__(self) -> None:
         if not self.text.strip():
             raise ValueError("word text must not be empty")
-        _validate_interval(self.start, self.end, allow_zero_duration=True)
+        _validate_interval(
+            self.start, self.end, allow_zero_duration=True, allow_partial=True
+        )
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("word confidence must be finite")
         if self.source_segment_index is not None and (
@@ -148,7 +203,7 @@ class TranscriptSegment:
     def __post_init__(self) -> None:
         if not self.text.strip():
             raise ValueError("segment text must not be empty")
-        _validate_interval(self.start, self.end)
+        _validate_interval(self.start, self.end, allow_zero_duration=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +218,8 @@ class Transcript:
     words: tuple[Word, ...]
     provider: str
     provider_version: str
+    asr_backend: str = "whisperx"
+    asr_model: str = "turbo"
 
     def __post_init__(self) -> None:
         if not isfinite(self.duration) or self.duration <= 0:
@@ -171,6 +228,8 @@ class Transcript:
             raise ValueError("transcript text must not be empty")
         if not self.provider or not self.provider_version:
             raise ValueError("transcript provider and version must not be empty")
+        if not self.asr_backend.strip() or not self.asr_model.strip():
+            raise ValueError("transcript ASR backend and model must not be empty")
         if not isinstance(self.segments, tuple) or not isinstance(self.words, tuple):
             raise ValueError("transcript segments and words must be tuples")
 
@@ -228,7 +287,9 @@ class ClipTranscriptWord:
             raise ValueError(
                 "clip transcript word source segment index must be non-negative"
             )
-        _validate_interval(self.start, self.end, allow_zero_duration=True)
+        _validate_interval(
+            self.start, self.end, allow_zero_duration=True, allow_partial=True
+        )
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("clip transcript word confidence must be finite")
 
@@ -261,6 +322,8 @@ class ClipTranscript:
     provider: str
     provider_version: str
     word_timing_complete: bool = False
+    asr_backend: str = "whisperx"
+    asr_model: str = "turbo"
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -299,6 +362,8 @@ class ClipTranscript:
             raise ValueError("clip transcript provider version must not be empty")
         if type(self.word_timing_complete) is not bool:
             raise ValueError("clip transcript word timing flag must be boolean")
+        if not self.asr_backend.strip() or not self.asr_model.strip():
+            raise ValueError("clip transcript ASR backend and model must not be empty")
         for field_name in ("language_requested", "language_detected"):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -320,7 +385,11 @@ class ClipTranscript:
             if not isinstance(word, ClipTranscriptWord):
                 raise ValueError("clip transcript words must be structured values")
             _validate_clip_local_interval(
-                word.start, word.end, self.duration, allow_zero_duration=True
+                word.start,
+                word.end,
+                self.duration,
+                allow_zero_duration=True,
+                allow_partial=True,
             )
             if (
                 word.source_segment_index is not None
@@ -347,7 +416,7 @@ class ClipTranscript:
 class SubtitleArtifacts:
     """Normalized paths and provenance for one rendered clip subtitle set."""
 
-    cues_json_path: Path
+    transcript_json_path: Path
     srt_path: Path
     ass_path: Path
     video_path: Path

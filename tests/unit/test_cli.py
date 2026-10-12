@@ -14,6 +14,7 @@ from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.cli import main, parse_run_config
 from multicuts.errors import ConfigurationError, ScoringError
+from multicuts.models import TimeRange
 from multicuts.pipeline import RunOutcome, RunResult
 
 
@@ -27,6 +28,82 @@ def _args() -> list[str]:
         "--llm-model",
         "test-model",
     ]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        ("0", "90.5", TimeRange(0, 90.5)),
+        ("01:30", "02:45.25", TimeRange(90, 165.25)),
+        ("01:00:00", "01:02:30", TimeRange(3600, 3750)),
+    ],
+)
+def test_search_range_accepts_seconds_and_clock_times(
+    start: str, end: str, expected: TimeRange
+) -> None:
+    assert (
+        parse_run_config(_args() + ["--search-range", start, end]).search_range
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("10", "10"),
+        ("20", "10"),
+        ("-1", "10"),
+        ("nan", "10"),
+        ("0", "inf"),
+        ("0", "01:60"),
+        ("0", "1:2:3:4"),
+        ("oops", "10"),
+    ],
+)
+def test_search_range_rejects_invalid_timestamps(start: str, end: str) -> None:
+    with pytest.raises(ConfigurationError, match="--search-range"):
+        parse_run_config(_args() + ["--search-range", start, end])
+
+
+@pytest.mark.parametrize(
+    "flags", [["--clip-range", "01:30.25", "180.5"], ["--clip-full"]]
+)
+def test_direct_modes_do_not_require_ai_settings(
+    flags: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    # Irrelevant AI defaults must not prevent rendering a user-selected cut.
+    monkeypatch.setenv("LLM_BACKEND", "unused-backend")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("LLM_EFFORT", "unused-effort")
+    config = parse_run_config(["source.mp4", "--output-dir", "out", *flags])
+    assert config.direct_clip
+    assert config.llm_backend == config.llm_model == ""
+    assert config.llm_effort is None
+    if "--clip-range" in flags:
+        assert config.clip_range == TimeRange(90.25, 180.5)
+        assert config.selection_mode == "custom"
+    else:
+        assert config.full_video
+        assert config.selection_mode == "full_video"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--search-range", "0", "60", "--clip-range", "0", "30"],
+        ["--search-range", "0", "60", "--clip-full"],
+        ["--clip-range", "0", "30", "--clip-full"],
+    ],
+)
+def test_selection_modes_are_mutually_exclusive(flags: list[str]) -> None:
+    with pytest.raises(ConfigurationError, match="Choose only one"):
+        parse_run_config(_args() + flags)
+
+
+def test_custom_range_rejects_reversed_times() -> None:
+    with pytest.raises(ConfigurationError, match="--clip-range"):
+        parse_run_config(_args() + ["--clip-range", "60", "10"])
 
 
 @pytest.fixture(autouse=True)
@@ -543,7 +620,7 @@ def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
     monkeypatch.chdir(tmp_path)
     calls: list[str] = []
 
-    def generate(_source: Path, _output: Path, **_kwargs: object) -> None:
+    def generate(_source: Path, **_kwargs: object) -> None:
         calls.append("transcribe")
         try:
             raise RuntimeError(
@@ -553,7 +630,7 @@ def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
             raise RuntimeError("private input path; token=private-token") from error
 
     provider = ModuleType("multisubs")
-    provider.__dict__["generate_transcriptions"] = generate
+    provider.__dict__["transcribe_speech"] = generate
     monkeypatch.setitem(sys.modules, "multisubs", provider)
     monkeypatch.setattr(
         "multicuts.adapters.multisubs.importlib.metadata.version", lambda _name: "4.4.0"

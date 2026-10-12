@@ -13,7 +13,13 @@ from pathlib import Path
 
 from multicuts.clips import PROMPT_VERSION, SCORE_VERSION
 from multicuts.errors import ArtifactError, ScoringError
-from multicuts.models import AcquiredSource, Transcript, TranscriptSegment, Word
+from multicuts.models import (
+    AcquiredSource,
+    TimeRange,
+    Transcript,
+    TranscriptSegment,
+    Word,
+)
 
 
 def _digest(value: object) -> str:
@@ -29,7 +35,11 @@ def _digest(value: object) -> str:
 
 def transcript_content_fingerprint(transcript: Transcript) -> str:
     """Fingerprint normalized content, including observed timing and confidence."""
-    return "sha256-v1:" + _digest(asdict(_decode_transcript(asdict(transcript))))
+    content = asdict(_decode_transcript(asdict(transcript)))
+    # Resolved ASR provenance does not change the evidence sent to the AI.
+    content.pop("asr_backend")
+    content.pop("asr_model")
+    return "sha256-v1:" + _digest(content)
 
 
 def transcript_paths(
@@ -40,22 +50,27 @@ def transcript_paths(
     backend: str,
     model: str,
     language: str | None,
+    time_range: TimeRange | None = None,
 ) -> tuple[Path, str]:
     if not provider_version.strip() or not backend.strip() or not model.strip():
         raise ArtifactError("Transcription cache identity is incomplete")
-    key = "sha256-v1:" + _digest(
-        {
-            "source_fingerprint": source.fingerprint,
-            "provider": "multisubs",
-            "provider_version": provider_version,
-            "backend": backend,
-            "model": model,
-            "language_requested": language,
-            "task": "transcribe",
-            "stage_version": 2,
-            "schema_version": 1,
+    identity: dict[str, object] = {
+        "source_fingerprint": source.fingerprint,
+        "provider": "multisubs",
+        "provider_version": provider_version,
+        "backend": backend,
+        "model": model,
+        "language_requested": language,
+        "task": "transcribe",
+        "stage_version": 4,
+        "schema_version": 1,
+    }
+    if time_range is not None:
+        identity["source_range"] = {
+            "start": float(time_range.start),
+            "end": float(time_range.end),
         }
-    )
+    key = "sha256-v1:" + _digest(identity)
     path = (
         output_dir.expanduser().resolve(strict=False)
         / ".cache"
@@ -105,18 +120,21 @@ def _record(value: object, keys: set[str]) -> dict[str, object]:
 
 
 def _decode_transcript(value: object) -> Transcript:
+    keys = {
+        "language_requested",
+        "language_detected",
+        "duration",
+        "text",
+        "segments",
+        "words",
+        "provider",
+        "provider_version",
+    }
+    if isinstance(value, dict):
+        keys.update(key for key in ("asr_backend", "asr_model") if key in value)
     record = _record(
         value,
-        {
-            "language_requested",
-            "language_detected",
-            "duration",
-            "text",
-            "segments",
-            "words",
-            "provider",
-            "provider_version",
-        },
+        keys,
     )
     raw_segments, raw_words = record["segments"], record["words"]
     if (
@@ -166,6 +184,8 @@ def _decode_transcript(value: object) -> Transcript:
         tuple(words),
         _required_string(record["provider"]),
         _required_string(record["provider_version"]),
+        asr_backend=_required_string(record.get("asr_backend", "whisperx")),
+        asr_model=_required_string(record.get("asr_model", "turbo")),
     )
 
 

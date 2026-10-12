@@ -309,23 +309,23 @@ Because remote-site behavior changes independently from this project, yt-dlp fai
 Supported range:
 
 ```text
-multisubs >=4.4,<5
+multisubs >=5,<6
 ```
 
 During early implementation the environment may pin the official
-`multisubs[whisperx]` 4.4.1 wheel. Keep the selected extra aligned with the ASR
+`multisubs[whisperx]` 5.0.0 wheel. Keep the selected extra aligned with the ASR
 backend used by the adapter.
 
 Rules:
 
 - import only the public package API used by the supported contract;
 - do not import private renderer/transcriber/layout/animation modules;
-- normalize generated transcript JSON immediately into project-owned models;
+- normalize the public `SpeechTranscript` from `transcribe_speech()` immediately into project-owned models;
 - use automatic language detection by passing no explicit language when requested;
 - preserve provider/version metadata in the run manifest;
 - transcribe the source once;
 - do not retranscribe selected clips merely to generate subtitles;
-- generate subtitle layout against the final clip geometry;
+- call public `render_transcript()` with clip-local speech data so semantic selection and visual layout run once against final geometry;
 - use `multisubs` templates/fonts/animations rather than rebuilding equivalent presentation logic;
 - keep all provider-specific options inside `MultisubsAdapter`.
 

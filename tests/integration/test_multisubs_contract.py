@@ -1,4 +1,4 @@
-"""Opt-in real-media check of the public multisubs transcription JSON contract."""
+"""Opt-in real-media check of the public multisubs semantic transcript contract."""
 
 import os
 import subprocess
@@ -31,25 +31,25 @@ def test_faster_whisper_loads_cuda_wheels_in_a_fresh_process_without_library_pat
             pytest.skip("installed NVIDIA runtime shared libraries are required")
     script = """
 import ctypes
+import json
 import os
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from multicuts.adapters.multisubs import MultisubsAdapter
 
 assert 'LD_LIBRARY_PATH' not in os.environ
 provider = ModuleType('multisubs')
-def generate(source, output, **options):
-    json_path = output / 'source.json'
-    json_path.write_text(
-        Path(sys.argv[1]).read_text(encoding='utf-8'), encoding='utf-8',
+def transcribe(source, **options):
+    data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    return SimpleNamespace(
+        language=data['metadata']['language'], task=data['metadata']['task'],
+        duration=data['metadata']['duration'],
+        full_text=data['transcription']['text'],
+        segments=data['transcription']['segments'],
+        asr_backend='faster-whisper', model_name='turbo',
     )
-    srt_path = output / 'source.srt'
-    ass_path = output / 'source.ass'
-    srt_path.touch()
-    ass_path.touch()
-    return json_path, srt_path, ass_path
-provider.generate_transcriptions = generate
+provider.transcribe_speech = transcribe
 sys.modules['multisubs'] = provider
 transcript = MultisubsAdapter().transcribe(
     Path('source.mp4'), language='pt', backend='faster-whisper', model='turbo',
@@ -76,7 +76,7 @@ assert 'LD_LIBRARY_PATH' not in os.environ
 
 
 @pytest.mark.integration
-def test_real_transcription_normalizes_public_json(tmp_path: Path) -> None:
+def test_real_transcription_normalizes_public_semantic_document(tmp_path: Path) -> None:
     source_value = os.environ.get("MULTICUTS_MULTISUBS_CONTRACT_VIDEO")
     if not source_value:
         pytest.skip("set MULTICUTS_MULTISUBS_CONTRACT_VIDEO to a short local video")

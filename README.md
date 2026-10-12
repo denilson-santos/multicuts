@@ -112,7 +112,12 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **4.4.1** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **5.0.0** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+
+Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
+`render_transcript()` for subtitles. Multicuts uses these public APIs, with one
+source transcription and native subtitle layout for each final clip geometry.
+Upgrade an existing environment with `python -m pip install --upgrade --editable .`.
 
 <a id="asr-backends"></a>
 
@@ -171,7 +176,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -192,7 +197,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -207,7 +212,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v4.4.1/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.0/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -225,7 +230,7 @@ LLM_MODEL=YOUR_MODEL
 OPENAI_API_KEY=YOUR_API_KEY
 ```
 
-Replace the placeholders. Both the backend and model are required; neither has a built-in default. API backends need their corresponding key; CLI backends need an installed, authenticated command.
+Replace the placeholders. For automatic discovery, both the backend and model are required; neither has a built-in default. API backends need their corresponding key; CLI backends need an installed, authenticated command.
 
 ### 3. Generate clips
 
@@ -250,13 +255,110 @@ Long clips preferably span 3–15 minutes, with no hard duration ceiling. The nu
 
 ## Usage
 
-The following examples use the backend and model configured in `.env`.
+Automatic discovery examples use the backend and model configured in `.env`.
+
+**Search within part of the source**
+
+```bash
+multicuts source.mp4 --output-dir out --search-range 00:05:00 00:12:30
+```
+
+`--search-range START END` restricts discovery and editorial boundary adjustments
+to complete observed transcript units inside the interval. Times refer to the
+original source and accept seconds, `MM:SS`, or `HH:MM:SS`, including decimal
+seconds. Units crossing either edge are excluded; an interval without complete
+units produces zero clips. Bounds must be ordered and within the source duration.
+Local files reuse a compatible full-source transcript when it is cached;
+otherwise, the prepared range source is transcribed, including any keyframe
+padding. YouTube acquisition also includes only the range and required padding.
+
+**Render one interval**
+
+```bash
+multicuts source.mp4 --output-dir out --clip-range 00:01:30.25 00:02:45
+```
+
+**Use the entire source as one cut**
+
+```bash
+multicuts prepared-clip.mp4 --output-dir out --clip-full
+```
+
+`--clip-range START END` and `--clip-full` render exactly one cut without AI
+discovery, boundary adjustments, ranking, or editorial rejection. No AI backend,
+model, or credentials are required. The full-video mode includes silence before
+and after speech, using the probed media duration. These options and
+`--search-range` are mutually exclusive and CLI-only.
+
+Local `--clip-range` cuts keep the exact requested bounds. For YouTube URLs, the
+final cut uses the entire acquired interval, including neighboring keyframe or
+codec packet data. Its start and end may differ from the requested times. The
+CLI reports both intervals before transcription/rendering, and the manifest
+records `requested_clip_range` separately from the effective `clip_range`.
+Clip metadata and subtitle timings describe the actual output interval.
+
+Direct cuts use the same subtitle, framing, and variant settings as automatic
+cuts. Their duration determines the class: up to 180 seconds is short; longer is
+long. That class must be enabled. Add `--no-variants` for one output file, or
+`--short-aspect-ratio original --long-aspect-ratio original --no-variants` to keep
+the source framing. With all published subtitles disabled, direct cuts skip ASR.
+Otherwise, they reuse one source transcript for all versions. Their title comes
+from the source filename or YouTube title; their metadata has no editorial score.
+
+Transcription retains the original ASR segments, text, and observed word times
+before subtitle grouping or visual layout. Multisubs organizes subtitles once,
+using the final template and geometry. Published `.transcript.json` sidecars use
+the public speech schema version 1 and can be passed to `render_transcript()`.
+Point words retain their timestamps, partial alignment retains missing times,
+and an unknown detected language stays null. When alignment is unavailable,
+multisubs uses its native segment fallback and warns about suppressed effects.
+Older transcript caches are recomputed once; completed runs remain available.
 
 **Use a YouTube source**
 
 ```bash
 multicuts 'https://www.youtube.com/watch?v=VIDEO_ID' --output-dir ./youtube-cuts
 ```
+
+With `--search-range` or `--clip-range`, YouTube acquisition requests only that
+interval through yt-dlp and FFmpeg. Transcription, when needed, processes only
+the acquired interval. CLI times and clip metadata still refer to the original
+video. Repeating the same interval can reuse its transcript; different intervals
+have separate caches. Without a range, including `--clip-full`, the entire video
+is acquired.
+
+Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
+duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
+The downloaded streams are copied without reencoding or reducing resolution,
+frame rate, or audio quality. Remote headers and adjacent fragments may also be
+transferred.
+
+With YouTube `--search-range`, acquisition and transcription can also include
+keyframe padding. The CLI reports the requested and acquired intervals. Clip
+discovery stays inside the requested search range, and each final clip follows
+the boundaries selected by the analysis.
+
+Local `--search-range` and `--clip-range` requests also prepare one range source
+by copying the original video and audio streams. Copying compressed streams can
+retain neighboring keyframe data; the pipeline records the actual source offset
+and applies the requested bounds when selecting and rendering cuts. This
+preserves image detail for framing and computer vision without a low-quality
+transcription proxy.
+
+For local `--clip-range` with subtitles, the pipeline renders the exact raw cut
+from this source before ASR and transcribes it once. That raw video is reused for
+finalization, and all versions share its transcript. ASR therefore hears the
+same interval as the output, without preceding keyframe padding affecting word
+alignment. Its cache is separate from full-source and padded-range transcripts;
+old runs are preserved, but their transcripts are not reused for this mode.
+
+Local `--search-range` still checks compatible complete transcript caches first,
+then the range cache; fresh ASR reads the shared range source. The original stays
+intact, and private sources are removed unless `--keep-intermediates` is enabled.
+Different ranges have separate caches; `--force-recompute` bypasses cache reuse.
+Direct cuts without published subtitles skip ASR while still preparing the range
+source. Unrestricted and `--clip-full` local requests continue using the original
+file.
 
 **Keep the source framing and disable subtitles**
 
@@ -306,6 +408,9 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 | `--asr-model MODEL` | Choose the transcription model; default: `turbo`. |
 | `--asr-backend BACKEND` | Choose `whisperx`, `faster-whisper`, `parakeet`, or `qwen`; default: `whisperx`. |
 | `--context TEXT` | Describe the video's subject and scope to guide clip discovery and review. |
+| `--search-range START END` | Find clips only inside an absolute source interval. |
+| `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
+| `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
 | `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |
 | `--short-subtitles` / `--no-short-subtitles` | Set primary short subtitles and the default for short variants; environment: `SHORT_SUBTITLES_ENABLED`. |
@@ -325,7 +430,7 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
+Run `multicuts --help` for all options, including output dimensions, custom subtitle template directories, and overlap controls. Options are grouped under `Analysis`, `Clips`, `Subtitles`, and `Execution`, with descriptions of defaults and scope. `Analysis` includes AI and transcription settings; `Clips` includes formats, variants, and dimensions; `Subtitles` includes primary and variant captions. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ### Optional editorial context
 
@@ -343,6 +448,16 @@ Supply context through `--context` for each source invocation. Omitting the flag
 The applied context is recorded in the run manifest and each clip's JSON. Logs report that video context is enabled without printing its contents.
 
 ## Output and reruns
+
+Manifest schema 4 and clip metadata schema 2 record `selection_mode`
+(`automatic`, `custom`, or `full_video`). Direct cuts have null `viral_potential`
+and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
+editorially eligible counts. Their AI provenance fields are null. When ASR is
+skipped, manifest `transcription` is null and clip `transcript_text` is empty.
+Manifest source provenance includes `original_duration`, `acquired_duration`,
+and `acquired_range` (null for full-source acquisition).
+Manifest `transcription.source_range` records the actual transcription interval,
+or null when a full-source transcript was used.
 
 Pass `--output-dir` on every invocation. Each run gets a unique directory:
 
@@ -374,6 +489,8 @@ Reruns create fresh output files and preserve completed runs. Cached transcripts
 | Nothing, or only subtitles/framing | Reused | Reused |
 | AI model, reasoning effort, or editorial context | Reused | Recomputed |
 | ASR backend or model | Separate cache | Depends on transcript content |
+| YouTube acquisition interval | Separate cache | Recomputed |
+| Local search/custom interval | Reuse complete cache if available; otherwise separate interval cache | Depends on scoped transcript |
 | `--force-recompute` enabled | Recomputed | Recomputed |
 
 YouTube acquisition may download the source again before its media fingerprint is known.
@@ -404,7 +521,7 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <details>
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
-Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
 
 `--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
 

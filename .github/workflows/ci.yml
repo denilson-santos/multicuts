@@ -146,8 +146,7 @@ jobs:
           if (
               len(parts) < 2
               or not all(part.isdigit() for part in parts[:2])
-              or parts[0] != "4"
-              or int(parts[1]) < 3
+              or parts[0] != "5"
           ):
               raise SystemExit(f"unsupported provisioned multisubs version: {version}")
           print(f"multisubs {version} is provisioned")

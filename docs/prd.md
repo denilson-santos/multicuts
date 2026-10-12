@@ -7,7 +7,7 @@
 ## Accepted product behavior
 
 1. Acquire and probe the source before expensive processing. Use a content fingerprint for local media and normalized provider/media identity for YouTube. Do not alter the original file or bypass access controls.
-2. Transcribe the source once per relevant transcription configuration with the public `multisubs` interface. Preserve actual segment and word timestamps, including words whose start and end are equal, and their source segment association. Segments still require positive duration. `auto` means provider language detection.
+2. Transcribe the source once per relevant transcription configuration with the public `multisubs.transcribe_speech` interface, receiving original ASR segments before subtitle grouping or visual layout. Preserve actual segment and word timestamps, including words whose start and end are equal, and their source segment association. Preserve partial or missing word timings and unknown detected language without inventing values. Source segments retain observed point intervals; rendering fails explicitly if a retained segment has no usable positive interval. `auto` means provider language detection.
 3. Split the timed transcript into semantic units with stable IDs, then overlapping context blocks. The AI receives transcript text and timing, plus an optional creator-provided description of the video's subject and scope. This background helps interpret speakers, terminology, references, and relationships between ideas, and guides discovery and editorial focus. It is not a mandatory topic or keyword filter and cannot supply transcript evidence or override editorial quality, timing, scoring, or schema rules. The same context accompanies proposals and judgment; approval and scores remain grounded in the actual reviewed transcript. The AI proposes complete intervals anchored to observed IDs. A long interval may cross an ordinary block boundary through overlap. Context block size is configurable; model context still limits what one request can analyze.
 4. Propose both classes in every source; both are enabled by default. `--short-clips/--no-short-clips` and `--long-clips/--no-long-clips`, or `SHORT_CLIPS_ENABLED` and `LONG_CLIPS_ENABLED`, enable each class for judgment, selection, and publication. Disabling a class also suppresses its variants. At least one class must remain enabled. Shared proposal discovery and its cache still cover both classes. A **short** cut lasts at most 180 seconds. A **long** cut lasts more than 180 seconds, preferably 3–15 minutes, with no hard duration ceiling. Publish only classes with approved cuts. The same subject may yield one of each class.
 5. Align proposed boundaries to observed semantic units. During judgment, the AI may move each boundary to a nearby observed unit to improve the opening or ending; score the resulting interval. Reject nonexistent or out-of-window IDs, reversed or out-of-source intervals, and misclassified durations. Never invent timestamps.
@@ -15,16 +15,104 @@
 7. Publish every editorially approved proposal after merging identical reviewed intervals and suppressing redundant intervals within the same class using a configurable overlap threshold. The score ranks approved cuts and decides which overlapping cut to keep; no minimum score filters them. There is no fixed clip count, global candidate budget, or app-wide AI invocation limit. Zero output is a valid outcome. Technical retries for transient provider failures remain finite.
 8. Fail explicitly when the selected AI backend fails or returns invalid structured output. Editorial judgment requires a nonempty textual `reason` with no application-imposed character limit. The judgment prompt and schema field description request concise explanations while allowing additional detail when needed. Normalize surrounding whitespace and reject nontext or empty values with a precise error that does not include their contents. Artifacts preserve the complete normalized explanation; the cache preserves the full validated provider response. Do not switch providers or use heuristic scores as a fallback.
 9. By default, publish every selected cut in 9:16, 16:9, and 1:1. The primary version defaults to 9:16 for short cuts and 16:9 for long cuts; aspect-ratio options select the primary version from 9:16, 16:9, 1:1, and original. `--variants/--no-variants` or `RENDER_VARIANTS` sets the shared variant default. Optional `--short-variants/--no-short-variants` and `--long-variants/--no-long-variants`, or `SHORT_VARIANTS_ENABLED` and `LONG_VARIANTS_ENABLED`, override it per class. A class with variants disabled publishes only its primary version; disabled clip classes publish nothing. A 1:1 primary output or original output with square source presentation geometry has no variants, even when variants are enabled. A square source with 9:16 or 16:9 primary output still receives all three social formats when variants are enabled. Nonsquare original primary output produces four versions when variants are enabled. Square output defaults to 1080×1080, configurable with a positive, even `--square-size` or `SQUARE_SIZE`. Long cuts and square outputs use a centered crop. Horizontal short cuts keep the complete vertical short centered, filling the background with an enlarged, blurred copy of the same video without captions or mirroring. Render to temporary files, validate duration/geometry/audio, and publish completed files without overwriting earlier runs.
-10. Burn subtitles with `multisubs` against each cropped version's geometry using clip-local timestamps derived from the source transcription. Horizontal shorts reuse the completed vertical version as their foreground so its subtitle layout stays inside the central short. For rendering only, group zero-duration words with an adjacent positive-duration word using the group's observed outer bounds. If every word is a point, display the selected text as one group over the observed clip-local segment interval. Preserve original word timing in the transcript; do not fabricate individual timestamps or run ASR per cut. Subtitles default to enabled for both classes. `--short-subtitles/--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles/--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, control each class independently. The shared `SUBTITLES_ENABLED` environment setting is no longer read. `--subtitles/--no-subtitles` are CLI shortcuts for both classes, with class-specific CLI flags taking precedence. CLI settings override process environment, which overrides `.env`, then the enabled default. Variants inherit their class subtitle setting unless overridden by `--short-variant-subtitles/--no-short-variant-subtitles` or `SHORT_VARIANT_SUBTITLES_ENABLED`, and `--long-variant-subtitles/--no-long-variant-subtitles` or `LONG_VARIANT_SUBTITLES_ENABLED`. Within a source, variant settings override class settings, which override shared CLI shortcuts. A private horizontal-short foreground follows the horizontal output subtitle decision. Reuse the completed vertical video only when its subtitle setting matches that decision; otherwise use the raw vertical video for an uncaptioned foreground or privately subtitle it without new ASR. Outputs with subtitles disabled bypass subtitle generation and its word-animation timing requirements; clip discovery and review still use the source transcript.
+10. Burn subtitles with `multisubs` against each cropped version's geometry using clip-local timestamps derived from the source transcription. Horizontal shorts reuse the completed vertical version as their foreground so its subtitle layout stays inside the central short. Call the public `multisubs.render_transcript` API with clip-local speech data so the provider performs subtitle grouping and visual layout once. Preserve individual zero-duration words through rendering input; point-only groups retain observed segment bounds when they cannot form a positive cue. Preserve original word timing in the transcript; do not fabricate timestamps or run ASR per cut. Missing or partial word alignment uses the provider's native segment fallback, with warnings about suppressed word effects. Publish reusable `.transcript.json` speech sidecars (schema version 1) with SRT and ASS. Subtitles default to enabled for both classes. `--short-subtitles/--no-short-subtitles` or `SHORT_SUBTITLES_ENABLED`, and `--long-subtitles/--no-long-subtitles` or `LONG_SUBTITLES_ENABLED`, control each class independently. The shared `SUBTITLES_ENABLED` environment setting is no longer read. `--subtitles/--no-subtitles` are CLI shortcuts for both classes, with class-specific CLI flags taking precedence. CLI settings override process environment, which overrides `.env`, then the enabled default. Variants inherit their class subtitle setting unless overridden by `--short-variant-subtitles/--no-short-variant-subtitles` or `SHORT_VARIANT_SUBTITLES_ENABLED`, and `--long-variant-subtitles/--no-long-variant-subtitles` or `LONG_VARIANT_SUBTITLES_ENABLED`. Within a source, variant settings override class settings, which override shared CLI shortcuts. A private horizontal-short foreground follows the horizontal output subtitle decision. Reuse the completed vertical video only when its subtitle setting matches that decision; otherwise use the raw vertical video for an uncaptioned foreground or privately subtitle it without new ASR. Outputs with subtitles disabled bypass subtitle generation and its word-animation timing requirements; clip discovery and review still use the source transcript.
 11. Each invocation has a unique output directory, a concise run manifest with distinct editorially eligible and selected counts, and detailed JSON beside every rendered version. The manifest lists each cut's variants; clip counts continue to represent editorial cuts rather than files. A completed run is never silently overwritten.
 
 Each proposal includes a social-media title in the language of its transcript, preserved in the clip JSON. Title guidance requests simple everyday words, a casual conversational tone, short sentences, and direct active verbs, as if recommending the clip to a friend. Put a concrete hook in the first words: a specific subject with a surprising point, relatable problem, consequence, or question supported by the proposed interval. Avoid formal, academic, or corporate wording, complex vocabulary, abstract phrases, generic introductions, and forced slang. Preserve essential names and technical terms when needed for clarity without copying a speaker's formal register. Tone examples illustrate simpler wording but cannot supply title facts. Request one readable line, preferably 40–80 characters; shorter titles are welcome and must not be padded to reach a target. Titles must be nonempty text of at most 120 characters. Surrounding transcript and editorial context cannot supply title facts. Avoid misleading clickbait, invented claims or quotes, exaggerated promises, generic teasers, hashtags, emojis, and all-caps wording. Editorial approval and scores continue to evaluate the transcript without the generated title.
 
 ## Configuration and integrations
 
-`multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
+`--search-range START END` optionally limits automatic discovery and editorial
+boundary refinement to complete observed transcript units contained in an
+absolute source interval. Units crossing its edges are excluded. An interval
+without complete units yields zero clips. Accept nonnegative seconds, `MM:SS`,
+or `HH:MM:SS` with optional fractional seconds. Reject unordered, empty,
+nonfinite, or out-of-source intervals before ASR when media duration is known.
+Local files reuse a compatible full-source transcript when cached; otherwise,
+transcribe the prepared interval, including required padding, and cache it separately.
+For YouTube, acquire and transcribe only the requested interval and required
+keyframe/codec packet padding; different intervals have separate caches.
+Repeated identical intervals can reuse ASR.
+Record the interval in `analysis.search_range` (null when unrestricted).
 
-Source, output directory, editorial context, transcription language, verbosity, forced recomputation, and intermediate-file retention are CLI-only. `--output-dir` is required. With no `--lang`, `multisubs` detects language automatically. `--asr-model` or `ASR_MODEL` selects its transcription model, defaulting explicitly to `turbo`; the former `TRANSCRIPTION_MODEL` name is no longer read. `--asr-backend` or `ASR_BACKEND` selects `whisperx` (default), `faster-whisper`, `parakeet`, or `qwen`. The model default remains `turbo` for every backend; users must select a compatible model and install the matching optional `multisubs` dependencies for other engines. The public provider validates model and language compatibility. Logs and `transcription.backend` / `transcription.model` in the manifest record the selected settings. Other result-affecting options are available as CLI flags and environment variables without a `MULTICUTS_` prefix. CLI values override process environment, which overrides current-directory `.env`, which overrides built-in defaults. Config validation does not require opening the source file.
+`--clip-range START END` renders one user-selected interval, and
+`--clip-full` renders one interval from zero through the probed media duration,
+including any silence outside ASR coverage. Both bypass automatic discovery,
+boundary refinement, judgment, and ranking; neither requires AI configuration.
+The three interval/mode options are mutually exclusive and CLI-only. Validate
+custom bounds and the duration-derived enabled class before transcription. Up to
+180 seconds is short; longer is long. Apply existing class-specific geometry,
+subtitle, and variant settings. Skip transcription when all published versions
+have subtitles disabled; otherwise share one transcript across all versions.
+Local cuts preserve exact requested media boundaries without inventing ASR
+timestamps. YouTube custom cuts use the complete acquired interval, including
+keyframe/codec packet padding, without forcing the final output to the requested
+bounds. Class, subtitles, and variant settings use the actual cut duration.
+Before transcription/rendering, show a warning that YouTube custom boundaries
+are approximate and report the requested and actual intervals.
+Direct titles use the source filename or YouTube title, truncated to 120 characters.
+
+Local and YouTube range requests prepare one private source segment by copying
+the selected video and audio streams without reencoding, scaling, frame-rate
+reduction, or bitrate overrides. Final rendering uses this shared segment.
+Fresh transcription uses it too, except for exact local custom cuts described
+below. Preserve the original local file. Keyframe and codec packet padding may
+extend the acquired segment beyond the requested
+range; record its actual source offset. Local custom cuts keep the user's bounds;
+YouTube custom cuts keep the acquired bounds. Automatic discovery and editorial
+refinement remain inside the user's search range for both source types.
+Preserve presentation geometry, rotation, and audio sync.
+
+For local search ranges, check a compatible complete transcript cache first,
+then the shared segment cache, using provider version, backend, model, and language.
+Fresh search ASR transcribes the shared range source once. Store file-local ASR
+timings and restore original times after reading or writing the cache. Never satisfy a
+full-source request with a partial transcript. Direct cuts without published
+captions still prepare the range source but skip ASR. Validate the segment before
+processing and remove it with other intermediates unless retention is requested.
+Unrestricted and full-video requests continue using the complete source.
+
+For local `--clip-range` with published captions, render the first required raw
+version before transcription and reuse that video during finalization. Transcribe
+this exact cut once so preceding keyframe padding cannot affect ASR alignment.
+All published versions share this transcript; automatic clips are never
+retranscribed individually. Cache the exact-cut transcript separately from full
+and padded source transcripts, preserving existing artifacts. Cache identity
+includes the preparation version and exact requested bounds. Store file-local
+timings and restore the requested source offset for artifacts. The copied source
+remains unchanged, and this ordering adds no extra video encode.
+
+YouTube ranges use yt-dlp's public download-ranges API without forced keyframe
+reencoding. For `--search-range`, warn that acquisition/transcription can include
+padding, report requested/acquired bounds, and state that discovery stays inside
+the requested search range. Validate FFmpeg/ffprobe before partial acquisition
+and reject live, unfinished, unknown-duration, or out-of-source intervals before
+downloading.
+Validate provider section metadata and copied media coverage before ASR; never
+silently fall back to full download or lossy encoding. Media headers and
+neighboring fragments may also be transferred. Preserve original source times
+in AI input and artifacts while rendering from file-local times. Unrestricted
+YouTube and `--clip-full` still acquire the full video.
+
+Manifest schema 4 records `selection_mode` (`automatic`, `custom`, `full_video`)
+and the effective direct `clip_range` (null for automatic runs).
+`requested_clip_range` records the exact custom CLI request, or null for automatic
+and full-video runs. Clip JSON bounds and clip-local subtitle timings describe
+the actual rendered interval, including padding in YouTube custom cuts. Direct
+runs have zero proposals/editorial eligibility and one selected cut; AI provenance
+and clip scores are null. Manifest `transcription` is null when skipped. Clip JSON
+schema 2 records the same selection mode and uses null `viral_potential` and
+`transcript_unit_ids` for direct cuts, with empty transcript text when ASR is
+skipped. Automatic scoring meaning and composition remain unchanged.
+Manifest source provenance records original and acquired durations plus the
+actual acquired interval, including keyframe padding, using null for a
+full-source acquisition.
+`transcription.source_range` records the actual ASR source interval, or null for
+a full-source transcript, including a reused complete local cache.
+
+`multicuts SOURCE --output-dir PATH` is the main command. `LLM_BACKEND` and `LLM_MODEL` are required for automatic discovery by environment or CLI flag. Supported backends are OpenAI, Anthropic, and Gemini APIs plus the `codex`, `claude`, and `agy` CLIs. The corresponding standard API key or an authenticated CLI installation is required. No backend is selected silently. `--llm-effort` or `LLM_EFFORT` optionally selects a backend-supported reasoning level; omitted or `auto` uses the provider default. Gemini 2.5 does not accept explicit effort because it uses a thinking budget.
+
+Source, output directory, search/custom intervals, full-video mode, editorial context, transcription language, verbosity, forced recomputation, and intermediate-file retention are CLI-only. `--output-dir` is required. With no `--lang`, `multisubs` detects language automatically. `--asr-model` or `ASR_MODEL` selects its transcription model, defaulting explicitly to `turbo`; the former `TRANSCRIPTION_MODEL` name is no longer read. `--asr-backend` or `ASR_BACKEND` selects `whisperx` (default), `faster-whisper`, `parakeet`, or `qwen`. The model default remains `turbo` for every backend; users must select a compatible model and install the matching optional `multisubs` dependencies for other engines. The public provider validates model and language compatibility. Logs and `transcription.backend` / `transcription.model` in the manifest record the selected settings. Other result-affecting options are available as CLI flags and environment variables without a `MULTICUTS_` prefix. CLI values override process environment, which overrides current-directory `.env`, which overrides built-in defaults. Config validation does not require opening the source file.
 
 For Faster-Whisper on Linux/WSL, installed NVIDIA CUDA 12/cuDNN 9 libraries are loaded automatically when needed from the active Python environment. Users do not need to export a library-path variable before each command. GPU execution still requires compatible runtime packages and an NVIDIA driver; CPU transcription does not require NVIDIA packages.
 
@@ -38,7 +126,7 @@ Normal CLI output reports only `multicuts` progress and errors, including stages
 
 Only two reusable caches are part of the active pipeline:
 
-- **Transcript:** keyed by source fingerprint, `multisubs` provider/version, ASR backend, transcription model, requested language, task, and stage/schema versions. Read and validate the cached transcript before ASR. Backend or model changes use separate caches. The backend-aware identity recomputes older transcript caches once without changing completed runs.
+- **Transcript:** keyed by source fingerprint, `multisubs` provider/version, ASR backend, transcription model, requested language, task, and stage/schema versions. Read and validate the cached transcript before ASR. Backend or model changes use separate caches. Transcript stage version 4 recomputes older caches of display or subtitle-grouped segments once, preserving completed runs and independence from style/geometry. The normalized cache preserves resolved ASR backend/model provenance.
 - **AI response:** keyed by source and full transcript fingerprints, backend/model/effort, prompt and scoring contract version, task, prompt content, and structured schema. Validate cached responses before reuse. Do not cache failures or malformed responses.
 
 Caches are separate from unique run results. A second execution of the same source and settings may reuse ASR and AI results, while selection and rendering run again. Changes to AI model, effort, prompt, or editorial context invalidate AI but not ASR. Changes to geometry or subtitle template invalidate neither. YouTube may download again before media identity can be checked. Boundary review happens in the cached AI judgment request; there are no separate selection, refinement, render, or subtitle caches in the active path.

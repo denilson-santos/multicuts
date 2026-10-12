@@ -6,9 +6,9 @@ import importlib.metadata
 import json
 import logging
 import re
-import subprocess
 import sys
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict
 from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
@@ -60,29 +60,20 @@ def _preload_cuda_libraries(backend: str) -> tuple[ctypes.CDLL, ...]:
     return tuple(handles)
 
 
-@dataclass(frozen=True, slots=True)
-class _TranscriptionArtifact:
-    """Validated provider JSON location and source-transcription provenance."""
-
-    json_path: Path
-    provider_version: str
-    language_requested: str | None
-
-
 def _invalid_field(field: str) -> NoReturn:
-    raise TranscriptionError(f"multisubs JSON transcript has invalid {field}")
+    raise TranscriptionError(f"multisubs speech transcript has invalid {field}")
 
 
 def _record(value: object, field: str) -> dict[str, object]:
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+    if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
         _invalid_field(field)
-    return cast(dict[str, object], value)
+    return dict(cast(Mapping[str, object], value))
 
 
 def _items(value: object, field: str) -> list[object]:
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         _invalid_field(field)
-    return cast(list[object], value)
+    return list(cast(list[object] | tuple[object, ...], value))
 
 
 def _text(value: object, field: str) -> str:
@@ -98,7 +89,7 @@ def _number(value: object, field: str) -> float:
         number = float(value)
     except (OverflowError, ValueError) as exc:
         raise TranscriptionError(
-            f"multisubs JSON transcript has invalid {field}"
+            f"multisubs speech transcript has invalid {field}"
         ) from exc
     if not isfinite(number):
         _invalid_field(field)
@@ -106,19 +97,18 @@ def _number(value: object, field: str) -> float:
 
 
 def _interval(
-    record: dict[str, object], field: str
+    record: dict[str, object], field: str, *, allow_partial: bool = False
 ) -> tuple[float | None, float | None]:
     start = record.get("start")
     end = record.get("end")
     if start is None and end is None:
         return None, None
-    if start is None or end is None:
+    if not allow_partial and (start is None or end is None):
         _invalid_field(f"{field} timing")
-    return _number(start, f"{field} start"), _number(end, f"{field} end")
-
-
-def _reject_json_constant(_value: str) -> NoReturn:
-    raise ValueError("non-finite JSON number")
+    return (
+        None if start is None else _number(start, f"{field} start"),
+        None if end is None else _number(end, f"{field} end"),
+    )
 
 
 def _transcription_failure_message(error: Exception) -> str:
@@ -164,30 +154,21 @@ def _transcription_failure_message(error: Exception) -> str:
     )
 
 
-def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
-    try:
-        with artifact.json_path.open(encoding="utf-8") as artifact_file:
-            payload: object = json.load(
-                artifact_file, parse_constant=_reject_json_constant
-            )
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise TranscriptionError(
-            "multisubs did not produce a readable JSON transcript"
-        ) from exc
-
-    root = _record(payload, "root object")
-    if root.get("schema_version") != 3 or isinstance(root.get("schema_version"), bool):
-        _invalid_field("schema version")
-    metadata = _record(root.get("metadata"), "metadata")
-    if metadata.get("task") != "transcribe":
+def _normalize_transcription(
+    document: object, *, provider_version: str, language_requested: str | None
+) -> Transcript:
+    """Consume public speech fields before semantic selection or visual layout."""
+    if getattr(document, "task", None) != "transcribe":
         _invalid_field("task")
-    detected_language = _text(metadata.get("language"), "detected language")
-    duration = _number(metadata.get("duration"), "duration")
+    raw_language = getattr(document, "language", None)
+    detected_language = (
+        None if raw_language is None else _text(raw_language, "detected language")
+    )
+    duration = _number(getattr(document, "duration", None), "duration")
     if duration <= 0:
         _invalid_field("duration")
-    transcription = _record(root.get("transcription"), "transcription")
-    full_text = _text(transcription.get("text"), "transcription text")
-    raw_segments = _items(transcription.get("segments"), "segments")
+    full_text = _text(getattr(document, "full_text", None), "transcription text")
+    raw_segments = _items(getattr(document, "segments", None), "segments")
     if not raw_segments:
         _invalid_field("segments")
 
@@ -205,14 +186,15 @@ def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
             )
         except ValueError as exc:
             raise TranscriptionError(
-                f"multisubs JSON transcript has invalid {field}"
+                f"multisubs speech transcript has invalid {field}"
             ) from exc
+        raw_words = segment.get("words")
         for word_index, raw_word in enumerate(
-            _items(segment.get("words", []), f"{field} words")
+            _items([] if raw_words is None else raw_words, f"{field} words")
         ):
             word_field = f"{field} word {word_index}"
             word = _record(raw_word, word_field)
-            word_start, word_end = _interval(word, word_field)
+            word_start, word_end = _interval(word, word_field, allow_partial=True)
             raw_score = word.get("score")
             confidence = (
                 None if raw_score is None else _number(raw_score, f"{word_field} score")
@@ -229,22 +211,24 @@ def _normalize_artifact(artifact: _TranscriptionArtifact) -> Transcript:
                 )
             except ValueError as exc:
                 raise TranscriptionError(
-                    f"multisubs JSON transcript has invalid {word_field}"
+                    f"multisubs speech transcript has invalid {word_field}"
                 ) from exc
 
     try:
         return Transcript(
-            language_requested=artifact.language_requested,
+            language_requested=language_requested,
             language_detected=detected_language,
             duration=duration,
             text=full_text,
             segments=tuple(segments),
             words=tuple(words),
             provider="multisubs",
-            provider_version=artifact.provider_version,
+            provider_version=provider_version,
+            asr_backend=_text(getattr(document, "asr_backend", None), "ASR backend"),
+            asr_model=_text(getattr(document, "model_name", None), "ASR model"),
         )
     except ValueError as exc:
-        raise TranscriptionError("multisubs JSON transcript is invalid") from exc
+        raise TranscriptionError("multisubs speech transcript is invalid") from exc
 
 
 def _require_provider_version() -> str:
@@ -252,16 +236,26 @@ def _require_provider_version() -> str:
         version = importlib.metadata.version("multisubs")
     except importlib.metadata.PackageNotFoundError as exc:
         raise RenderingError(
-            "multisubs is unavailable; install the configured multisubs 4.4 release"
+            "multisubs is unavailable; install the configured multisubs 5 release"
         ) from exc
     try:
         major, minor = (int(part) for part in version.split(".")[:2])
     except (ValueError, TypeError) as exc:
         raise RenderingError(f"Unsupported multisubs version: {version}") from exc
-    if major != 4 or minor < 4:
+    if major != 5 or minor < 0:
+        raise RenderingError(f"Unsupported multisubs {version}; install version 5.x")
+    try:
+        provider = importlib.import_module("multisubs")
+        speech_api = getattr(provider, "render_transcript", None)
+    except Exception as exc:
         raise RenderingError(
-            f"multisubs {version} cannot split timed cues to fit the clip; "
-            "install version 4.4 or newer"
+            "multisubs speech transcript support is unavailable; "
+            "install the configured multisubs 5 release"
+        ) from exc
+    if not callable(speech_api):
+        raise RenderingError(
+            "multisubs speech transcript support is unavailable; "
+            "install the configured multisubs 5 release"
         )
     return version
 
@@ -280,105 +274,75 @@ def _source_text_for_words(segment_text: str, words: list[ClipTranscriptWord]) -
                 break
             cursor += len(token)
         else:
-            return segment_text[offset:cursor]
+            left = offset
+            while left > 0 and segment_text[left - 1].isspace():
+                left -= 1
+            while cursor < len(segment_text) and segment_text[cursor].isspace():
+                cursor += 1
+            return segment_text[left:cursor]
         offset = segment_text.find(first, offset + 1)
     return " ".join(tokens)
 
 
-def _subtitle_word_groups(
-    words: list[ClipTranscriptWord], text: str, cue_start: float, cue_end: float
-) -> list[dict[str, object]]:
-    """Group observed point words because the public cue API requires duration.
-
-    Original word timestamps stay in the transcript. Each rendering group uses
-    its observed outer word bounds, or the observed segment bounds when every
-    word is a point; no individual word receives fabricated timing.
-    """
-    groups: list[tuple[int, int]] = []
-    pending_start = 0
-    spans: list[tuple[int, int]] = []
-    cursor = 0
-    for index, word in enumerate(words):
-        token = word.text.strip()
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-        spans.append((cursor, cursor + len(token)))
-        cursor += len(token)
-        if word.start is None or word.end is None:
-            raise RenderingError("Clip subtitle word timing is incomplete")
-        if word.end > word.start:
-            groups.append((pending_start, index + 1))
-            pending_start = index + 1
-        elif groups:
-            first, _ = groups[-1]
-            groups[-1] = (first, index + 1)
-            pending_start = index + 1
-    if not groups:
-        return [{"start": cue_start, "end": cue_end, "text": text}]
-    return [
-        {
-            "start": words[first].start,
-            "end": words[stop - 1].end,
-            "text": text[spans[first][0] : spans[stop - 1][1]],
-        }
-        for first, stop in groups
-    ]
-
-
-def _timed_cues(clip: ClipTranscript) -> dict[str, object]:
-    if not clip.word_animation_safe:
-        raise RenderingError(
-            "Clip subtitles require complete observed word timing; "
-            "multisubs cannot infer missing word times"
-        )
+def _speech_transcript(clip: ClipTranscript) -> dict[str, object]:
+    """Build the public v5 speech input without imposing visual cue boundaries."""
     language = clip.language_detected or clip.language_requested
-    if (
-        language is None
-        or len(language) > 35
+    if language is not None and (
+        len(language) > 35
         or re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", language) is None
     ):
-        raise RenderingError("Clip subtitle language is unavailable or invalid")
-
+        raise RenderingError("Clip subtitle language is invalid")
     assigned: set[int] = set()
-    cues: list[dict[str, object]] = []
+    segments: list[dict[str, object]] = []
     for segment in clip.segments:
+        if segment.start is None or segment.end is None:
+            raise RenderingError("Clip subtitle segment has no observed interval")
         words = [
             word
             for word in clip.words
             if word.source_segment_index == segment.source_index
         ]
-        if not words or segment.start is None or segment.end is None:
-            raise RenderingError(
-                f"Clip segment {segment.source_index} has no timed words or interval"
-            )
-        previous_end = -1.0
-        for word in words:
-            if word.start is None or word.end is None or word.start < previous_end:
-                raise RenderingError(
-                    f"Clip segment {segment.source_index} has overlapping word times"
-                )
-            previous_end = word.end
-            assigned.add(word.source_index)
-        first_start = words[0].start
-        last_end = words[-1].end
-        if first_start is None or last_end is None:
-            raise RenderingError("Clip subtitle word timing is incomplete")
-        cue_start = min(segment.start, first_start)
-        cue_end = max(segment.end, last_end)
-        text = _source_text_for_words(segment.text, words)
-        cues.append(
+        # Partial alignment keeps the source text for the provider's coarse fallback.
+        text = (
+            _source_text_for_words(segment.text, words)
+            if words and all(word.is_timed for word in words)
+            else segment.text
+        )
+        segments.append(
             {
-                "start": cue_start,
-                "end": cue_end,
+                "start": segment.start,
+                "end": segment.end,
                 "text": text,
-                "words": _subtitle_word_groups(words, text, cue_start, cue_end),
+                "words": [
+                    {
+                        "word": word.text,
+                        "start": word.start,
+                        "end": word.end,
+                        "score": word.confidence,
+                    }
+                    for word in words
+                ],
             }
         )
-    if not cues or len(assigned) != len(clip.words):
+        assigned.update(word.source_index for word in words)
+    if not segments or len(assigned) != len(clip.words):
         raise RenderingError(
-            "Clip words cannot be mapped to timed source segments for subtitles"
+            "Clip words cannot be mapped to source segments for subtitles"
         )
-    return {"schema_version": 1, "language": language, "cues": cues}
+    return {
+        "schema_version": 1,
+        "language": language,
+        "task": "transcribe",
+        "asr_backend": clip.asr_backend,
+        "model_name": clip.asr_model,
+        "full_text": " ".join(str(segment["text"]) for segment in segments),
+        "segments": segments,
+    }
+
+
+def _subtitle_progress(message: str) -> None:
+    if message.startswith("Warning:"):
+        logger.warning("%s", message)
 
 
 def _render_subtitles(
@@ -389,7 +353,7 @@ def _render_subtitles(
     template_dir: Path | None,
     workspace: Path,
 ) -> SubtitleArtifacts:
-    """Use the public timed-cue CLI to generate SRT, ASS, and a subtitled video."""
+    """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
     if not isinstance(clip, ClipTranscript):
         raise RenderingError("Clip subtitles require a ClipTranscript")
@@ -399,76 +363,70 @@ def _render_subtitles(
         raise RenderingError("Raw clip video is unavailable for subtitles") from exc
     if not video.is_file():
         raise RenderingError("Raw clip video is unavailable for subtitles")
-    cues = _timed_cues(clip)
-
+    speech = _speech_transcript(clip)
     workspace_root = workspace.expanduser().resolve(strict=False)
     output_dir = workspace_root / "rendered"
-    cues_path = workspace_root / "cues.json"
+    transcript_path = workspace_root / "transcript.json"
     try:
         workspace_root.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(exist_ok=False)
-        with cues_path.open("x", encoding="utf-8") as stream:
-            json.dump(cues, stream, ensure_ascii=False, allow_nan=False)
+        with transcript_path.open("x", encoding="utf-8") as stream:
+            json.dump(speech, stream, ensure_ascii=False, allow_nan=False)
     except (OSError, ValueError) as exc:
         raise RenderingError(
             "Could not prepare a fresh workspace for clip subtitles"
         ) from exc
-
-    executable = Path(sys.executable).with_name("multisubs")
-    if not executable.is_file():
-        raise RenderingError(
-            "multisubs CLI is unavailable beside the active Python interpreter"
-        )
-    command = [
-        str(executable),
-        "-i",
-        str(video),
-        "--cues-json",
-        str(cues_path),
-        "-o",
-        str(output_dir),
-    ]
-    if template is not None:
-        command.extend(("--template", template))
-    if template_dir is not None:
-        command.extend(("--template-dir", str(template_dir)))
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    except OSError as exc:
-        raise RenderingError("Could not start the multisubs subtitle renderer") from exc
-    if completed.returncode != 0:
-        if (
-            completed.stderr
-            and "exceeds the subtitle layout envelope" in completed.stderr
+        provider = importlib.import_module("multisubs")
+        generated = provider.render_transcript(
+            speech,
+            video,
+            output_dir,
+            template=template,
+            template_dir=template_dir,
+            progress=_subtitle_progress,
+        )
+    except Exception as exc:
+        if any(
+            term in str(exc).lower()
+            for term in ("max-width", "max-height", "layout envelope")
         ):
             raise RenderingError(
                 "multisubs subtitle text does not fit the selected template; "
                 "try a template with more space or a smaller font"
-            )
+            ) from exc
         raise RenderingError(
             "multisubs could not render this clip; check the selected template, "
-            "word timing, video, fonts, and FFmpeg availability"
-        )
-
+            "observed timing, video, fonts, and FFmpeg availability"
+        ) from exc
     try:
-        files = [path.resolve(strict=True) for path in output_dir.iterdir()]
-        if (
-            len(files) != 3
-            or any(not path.is_file() or path.stat().st_size == 0 for path in files)
-            or any(not path.is_relative_to(output_dir) for path in files)
+        paths = []
+        for name, suffix in (
+            ("srt_path", ".srt"),
+            ("ass_path", ".ass"),
+            ("video_path", video.suffix),
         ):
-            raise ValueError("unexpected subtitle artifacts")
-        srt_path = next(path for path in files if path.suffix == ".srt")
-        ass_path = next(path for path in files if path.suffix == ".ass")
-        rendered_video = next(path for path in files if path.suffix == video.suffix)
-        if len({path.stem for path in files}) != 1:
+            raw_path = getattr(generated, name, None)
+            if not isinstance(raw_path, (str, Path)):
+                raise ValueError("invalid artifact path")
+            path = Path(raw_path).resolve(strict=True)
+            if (
+                not path.is_relative_to(output_dir)
+                or not path.is_file()
+                or path.stat().st_size == 0
+                or path.suffix != suffix
+            ):
+                raise ValueError("invalid subtitle artifact")
+            paths.append(path)
+        if len({path.stem for path in paths}) != 1:
             raise ValueError("subtitle artifacts do not share a stem")
-    except (OSError, ValueError, StopIteration) as exc:
+        srt_path, ass_path, rendered_video = paths
+    except (OSError, ValueError) as exc:
         raise RenderingError(
             "multisubs did not produce a complete SRT, ASS, and video set"
         ) from exc
     return SubtitleArtifacts(
-        cues_json_path=cues_path.resolve(strict=True),
+        transcript_json_path=transcript_path.resolve(strict=True),
         srt_path=srt_path,
         ass_path=ass_path,
         video_path=rendered_video,
@@ -517,35 +475,17 @@ class MultisubsAdapter:
         workspace: Path,
         backend: str = "whisperx",
     ) -> Transcript:
-        """Return a project-owned transcript from one public provider call."""
-        artifact = self._transcribe_to_artifact(
-            video_path,
-            language=language,
-            model=model,
-            workspace=workspace,
-            backend=backend,
-        )
-        return _normalize_artifact(artifact)
-
-    def _transcribe_to_artifact(
-        self,
-        video_path: Path,
-        *,
-        language: str | None,
-        model: str,
-        workspace: Path,
-        backend: str,
-    ) -> _TranscriptionArtifact:
-        """Generate source artifacts inside the workspace and verify the JSON."""
+        """Normalize one public speech result before subtitle grouping or layout."""
         try:
             provider = importlib.import_module("multisubs")
-            generate = provider.generate_transcriptions
+            transcribe = provider.transcribe_speech
         except Exception as exc:
             raise TranscriptionError(
-                "multisubs public transcription API is unavailable; "
-                "check the multisubs installation"
+                "multisubs public semantic transcription API is unavailable; "
+                "install the configured multisubs 5 release with "
+                "transcribe_speech support"
             ) from exc
-        if not callable(generate):
+        if not callable(transcribe):
             raise TranscriptionError("multisubs public transcription API is invalid")
         version = self.version()
 
@@ -567,9 +507,8 @@ class MultisubsAdapter:
         try:
             # Retain native handles for the lifetime of the public ASR call.
             _cuda_handles = _preload_cuda_libraries(backend)
-            generated = generate(
+            document = transcribe(
                 video_path,
-                actual_output_dir,
                 lang=language,
                 task="transcribe",
                 asr_backend=backend,
@@ -578,38 +517,18 @@ class MultisubsAdapter:
         except Exception as exc:
             raise TranscriptionError(_transcription_failure_message(exc)) from exc
 
-        if (
-            not isinstance(generated, tuple)
-            or len(generated) != 3
-            or any(not isinstance(path, (str, Path)) for path in generated)
-        ):
-            raise TranscriptionError("multisubs returned invalid artifact paths")
-
-        try:
-            artifact_paths = tuple(
-                Path(path).resolve(strict=True) for path in generated
-            )
-            if any(
-                not path.is_relative_to(actual_output_dir) or not path.is_file()
-                for path in artifact_paths
-            ):
-                raise TranscriptionError(
-                    "multisubs artifacts must be files inside its workspace"
-                )
-            resolved_json = artifact_paths[0]
-            with resolved_json.open(encoding="utf-8") as artifact_file:
-                payload = json.load(artifact_file)
-        except (OSError, UnicodeError, ValueError) as exc:
-            raise TranscriptionError(
-                "multisubs did not produce a readable JSON transcript"
-            ) from exc
-        if not isinstance(payload, dict) or not payload:
-            raise TranscriptionError(
-                "multisubs produced an empty or invalid JSON transcript"
-            )
-
-        return _TranscriptionArtifact(
-            json_path=resolved_json,
-            provider_version=version,
-            language_requested=language,
+        transcript = _normalize_transcription(
+            document, provider_version=version, language_requested=language
         )
+        try:
+            with (actual_output_dir / "transcript.json").open(
+                "x", encoding="utf-8"
+            ) as stream:
+                json.dump(
+                    asdict(transcript), stream, ensure_ascii=False, allow_nan=False
+                )
+        except (OSError, ValueError) as exc:
+            raise TranscriptionError(
+                "Could not save the normalized transcript"
+            ) from exc
+        return transcript
