@@ -112,14 +112,12 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **4.4.1** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **5.0.0** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
 
-This development branch's transcription and subtitle flow requires a multisubs
-release with the public `transcribe_video` API and schema-2 semantic rendering.
-The pinned 4.4.1 release does not include that contract. This integration is
-waiting for the provider update; after it is published, update the release URL
-and verified SHA-256 in `pyproject.toml` before merging or releasing multicuts.
-Earlier provider releases fail explicitly when this flow is requested.
+Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
+`render_transcript()` for subtitles. Multicuts uses these public APIs, with one
+source transcription and native subtitle layout for each final clip geometry.
+Upgrade an existing environment with `python -m pip install --upgrade --editable .`.
 
 <a id="asr-backends"></a>
 
@@ -178,7 +176,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -199,7 +197,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v4.4.1/multisubs-4.4.1-py3-none-any.whl#sha256=ab36895e6c9326da7bd3e4ff5a9e04227d0c3b6536ea9ca3fe04c3c3a88624a3'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -214,7 +212,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v4.4.1/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.0/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -307,11 +305,14 @@ the source framing. With all published subtitles disabled, direct cuts skip ASR.
 Otherwise, they reuse one source transcript for all versions. Their title comes
 from the source filename or YouTube title; their metadata has no editorial score.
 
-Transcription retains semantic text and observed word times without visual
-formatting. Multisubs organizes subtitles once, using the final template and
-geometry. Published `.cues.json` sidecars use schema version 2 with `segments`,
-including unchanged individual point-word times. Older display-block transcript
-caches are recomputed once; completed runs remain available.
+Transcription retains the original ASR segments, text, and observed word times
+before subtitle grouping or visual layout. Multisubs organizes subtitles once,
+using the final template and geometry. Published `.transcript.json` sidecars use
+the public speech schema version 1 and can be passed to `render_transcript()`.
+Point words retain their timestamps, partial alignment retains missing times,
+and an unknown detected language stays null. When alignment is unavailable,
+multisubs uses its native segment fallback and warns about suppressed effects.
+Older transcript caches are recomputed once; completed runs remain available.
 
 **Use a YouTube source**
 

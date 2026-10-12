@@ -132,8 +132,6 @@ def test_transcript_model_serializes_project_owned_values_as_json() -> None:
 @pytest.mark.parametrize(
     ("start", "end"),
     [
-        (None, 1.0),
-        (0.0, None),
         (-1.0, 1.0),
         (2.0, 1.0),
         (0.0, float("nan")),
@@ -150,13 +148,12 @@ def test_timed_text_models_reject_impossible_intervals(
         ClipTranscriptWord("word", start, end, None, 0)
 
 
-def test_point_words_preserve_observed_timing_but_segments_require_duration() -> None:
+def test_point_words_and_source_segments_preserve_observed_timing() -> None:
     word = Word("não", 31.5, 31.5, 0.99609375, source_segment_index=6)
     assert word.start == word.end == 31.5
     local = ClipTranscriptWord("não", 1.5, 1.5, word.confidence, 12, 6)
     assert local.is_timed
-    with pytest.raises(ValueError):
-        TranscriptSegment("não", 31.5, 31.5)
+    assert TranscriptSegment("não", 31.5, 31.5).start == 31.5
     with pytest.raises(ValueError):
         ClipTranscriptSegment("não", 1.5, 1.5, 6)
 
@@ -172,3 +169,27 @@ def test_media_and_transcript_models_reject_invalid_duration(duration: float) ->
 def test_transcript_model_requires_immutable_collections() -> None:
     with pytest.raises(ValueError, match="must be tuples"):
         Transcript(None, "pt", 1.0, "Olá", [], (), "multisubs", "4.1.0")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("start,end", [(None, 1.0), (0.0, None), (None, None)])
+def test_partial_word_timings_preserve_observed_values(
+    start: float | None, end: float | None
+) -> None:
+    word = Word(" Olá", start, end)
+    local = ClipTranscriptWord(" Olá", start, end, None, 0, 0)
+    assert (word.start, word.end) == (local.start, local.end) == (start, end)
+    if (start is None) != (end is None):
+        with pytest.raises(ValueError):
+            TranscriptSegment("Olá", start, end)
+
+
+@pytest.mark.parametrize(
+    "start,end", [(None, -1.0), (float("nan"), None), (None, float("inf"))]
+)
+def test_partial_word_timings_still_reject_invalid_observed_values(
+    start: float | None, end: float | None
+) -> None:
+    with pytest.raises(ValueError):
+        Word("Olá", start, end)
+    with pytest.raises(ValueError):
+        ClipTranscriptWord("Olá", start, end, None, 0, 0)

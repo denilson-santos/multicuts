@@ -286,8 +286,23 @@ def test_trailing_point_belongs_to_the_clip_ending_at_its_observed_segment() -> 
 
 
 @pytest.mark.parametrize("general_subtitles", [False, True])
+@pytest.mark.parametrize(
+    "words",
+    [
+        (
+            Word("Hello", 1.0, 2.0, source_segment_index=0),
+            Word("world.", 2.0, 3.0, source_segment_index=0),
+        ),
+        (
+            Word("Hello", 1.0, None, source_segment_index=0),
+            Word("world.", None, 3.0, source_segment_index=0),
+        ),
+        (),
+    ],
+    ids=["complete", "partial", "missing"],
+)
 def test_subtitles_use_clip_local_timing_and_publish_complete_set(
-    general_subtitles: bool, tmp_path, monkeypatch
+    general_subtitles: bool, words: tuple[Word, ...], tmp_path, monkeypatch
 ) -> None:
     from pathlib import Path
 
@@ -302,7 +317,7 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
         duration=5.0,
         text="Hello world.",
         segments=(TranscriptSegment("Hello world.", 0.0, 5.0),),
-        words=(Word("Hello", 1.0, 2.0), Word("world.", 2.0, 3.0)),
+        words=words,
         provider="multisubs",
         provider_version="4.3.0",
     )
@@ -343,10 +358,15 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             workspace: Path,
         ) -> SubtitleArtifacts:
             assert video_path == raw
-            assert clip.word_animation_safe
-            assert [word.start for word in clip.words] == [1.0, 2.0]
+            assert clip.word_animation_safe == (
+                bool(words)
+                and all(w.start is not None and w.end is not None for w in words)
+            )
+            assert [(w.start, w.end) for w in clip.words] == [
+                (w.start, w.end) for w in words
+            ]
             workspace.mkdir(parents=True)
-            cues = workspace / "cues.json"
+            cues = workspace / "transcript.json"
             srt = workspace / "clip.srt"
             ass = workspace / "clip.ass"
             video = workspace / "clip.mp4"
@@ -369,4 +389,54 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
     )
     assert final.is_file()
     assert len(sidecars) == 3 and all(path.is_file() for path in sidecars)
+    assert sidecars[0].name == "final.transcript.json"
     assert template == "yellow-pop"
+
+
+def test_clip_preserves_partial_word_alignment_and_resolved_asr_provenance() -> None:
+    transcript = Transcript(
+        None,
+        None,
+        12.0,
+        " Olá mundo.",
+        (TranscriptSegment(" Olá mundo.", 9.0, 12.0),),
+        (
+            Word(" Olá", 9.5, None, source_segment_index=0),
+            Word(" mundo.", None, 11.8, source_segment_index=0),
+        ),
+        "multisubs",
+        "5.0.0",
+        asr_backend="parakeet",
+        asr_model="source-model",
+    )
+    local = clip_transcript(transcript, 10.0, 12.0)
+    assert [(w.text, w.start, w.end) for w in local.words] == [
+        (" Olá", 0.0, None),
+        (" mundo.", None, pytest.approx(1.8)),
+    ]
+    assert local.language_detected is None
+    assert (local.asr_backend, local.asr_model) == ("parakeet", "source-model")
+    assert not local.word_timing_complete
+    assert transcript.words[0].start == 9.5
+
+
+@pytest.mark.parametrize("point", [0.0, 0.2])
+def test_point_source_segment_inside_cut_fails_instead_of_losing_its_text(
+    point: float,
+) -> None:
+    transcript = Transcript(
+        None,
+        "pt",
+        3.0,
+        "Antes. Agora.",
+        (
+            TranscriptSegment("Antes.", point, point),
+            TranscriptSegment("Agora.", 1.0, 3.0),
+        ),
+        (),
+        "multisubs",
+        "5.0.0",
+    )
+    with pytest.raises(ValueError, match="positive observed interval"):
+        clip_transcript(transcript, 0.0, 3.0)
+    assert clip_transcript(transcript, 1.0, 3.0).text == "Agora."

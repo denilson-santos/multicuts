@@ -35,7 +35,11 @@ def _digest(value: object) -> str:
 
 def transcript_content_fingerprint(transcript: Transcript) -> str:
     """Fingerprint normalized content, including observed timing and confidence."""
-    return "sha256-v1:" + _digest(asdict(_decode_transcript(asdict(transcript))))
+    content = asdict(_decode_transcript(asdict(transcript)))
+    # Resolved ASR provenance does not change the evidence sent to the AI.
+    content.pop("asr_backend")
+    content.pop("asr_model")
+    return "sha256-v1:" + _digest(content)
 
 
 def transcript_paths(
@@ -58,7 +62,7 @@ def transcript_paths(
         "model": model,
         "language_requested": language,
         "task": "transcribe",
-        "stage_version": 3,
+        "stage_version": 4,
         "schema_version": 1,
     }
     if time_range is not None:
@@ -116,18 +120,21 @@ def _record(value: object, keys: set[str]) -> dict[str, object]:
 
 
 def _decode_transcript(value: object) -> Transcript:
+    keys = {
+        "language_requested",
+        "language_detected",
+        "duration",
+        "text",
+        "segments",
+        "words",
+        "provider",
+        "provider_version",
+    }
+    if isinstance(value, dict):
+        keys.update(key for key in ("asr_backend", "asr_model") if key in value)
     record = _record(
         value,
-        {
-            "language_requested",
-            "language_detected",
-            "duration",
-            "text",
-            "segments",
-            "words",
-            "provider",
-            "provider_version",
-        },
+        keys,
     )
     raw_segments, raw_words = record["segments"], record["words"]
     if (
@@ -177,6 +184,8 @@ def _decode_transcript(value: object) -> Transcript:
         tuple(words),
         _required_string(record["provider"]),
         _required_string(record["provider_version"]),
+        asr_backend=_required_string(record.get("asr_backend", "whisperx")),
+        asr_model=_required_string(record.get("asr_model", "turbo")),
     )
 
 

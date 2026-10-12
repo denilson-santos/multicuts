@@ -2,7 +2,6 @@
 
 import json
 import os
-import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import replace
@@ -37,7 +36,8 @@ TRANSCRIPT_FIXTURE = (
 @pytest.fixture(autouse=True)
 def _semantic_provider_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ModuleType("multisubs")
-    provider.__dict__["transcribe_video"] = lambda *_args, **_kwargs: None
+    provider.__dict__["transcribe_speech"] = lambda *_args, **_kwargs: None
+    provider.__dict__["render_transcript"] = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "multisubs", provider)
 
 
@@ -71,7 +71,7 @@ def _install_provider(
     monkeypatch.setattr(metadata, "version", lambda _name: version)
     provider.__dict__["__version__"] = version
     if transcribe is not None:
-        provider.__dict__["transcribe_video"] = transcribe
+        provider.__dict__["transcribe_speech"] = transcribe
     monkeypatch.setitem(sys.modules, "multisubs", provider)
 
     def missing_distribution(name: str) -> metadata.Distribution:
@@ -89,6 +89,8 @@ def _semantic_document(payload: dict) -> SimpleNamespace:
         language=payload.get("metadata", {}).get("language"),
         task=payload.get("metadata", {}).get("task"),
         duration=payload.get("metadata", {}).get("duration"),
+        asr_backend="whisperx",
+        model_name="turbo",
         full_text=payload.get("transcription", {}).get("text"),
         segments=payload.get("transcription", {}).get("segments"),
     )
@@ -257,7 +259,7 @@ def test_missing_segment_timing_remains_absent(
         ("segments", "segments"),
         ("segment_interval", "segment 0"),
         ("partial_segment_interval", "segment 0 timing"),
-        ("word_interval", "word 0 timing"),
+        ("word_interval", "word 0 end"),
         ("reversed_word_interval", "word 0"),
         ("word_text", "word 0 text"),
         ("word_score", "word 0 score"),
@@ -288,7 +290,7 @@ def test_rejects_invalid_consumed_semantic_fields(
         elif case == "partial_segment_interval":
             del segment["end"]
         elif case == "word_interval":
-            del word["end"]
+            word["end"] = "invalid"
         elif case == "reversed_word_interval":
             word["end"] = 0.0
         elif case == "word_text":
@@ -711,7 +713,7 @@ def test_invalid_provider_return_is_rejected(
 
     _install_provider(monkeypatch, transcribe)
 
-    with pytest.raises(TranscriptionError, match="semantic transcript"):
+    with pytest.raises(TranscriptionError, match="speech transcript"):
         MultisubsAdapter().transcribe(
             tmp_path / "source.mp4",
             language=None,
@@ -752,7 +754,7 @@ def _clip(*, complete: bool = True) -> ClipTranscript:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, 0),
         ),
         provider="multisubs",
-        provider_version="4.4.0",
+        provider_version="5.0.0",
         word_timing_complete=complete,
     )
 
@@ -814,14 +816,14 @@ def test_semantic_segments_preserve_every_point_word_and_its_observed_timing(
         segments=(ClipTranscriptSegment(text, 0.2, 1.8, 0),),
         words=words,
     )
-    cues = multisubs._timed_cues(clip)["segments"]
+    cues = multisubs._speech_transcript(clip)["segments"]
     assert cues == [
         {
             "start": 0.2,
             "end": 1.8,
             "text": text,
             "words": [
-                {"start": start, "end": end, "text": token}
+                {"start": start, "end": end, "word": token, "score": 0.9}
                 for token, (start, end) in zip(tokens, intervals, strict=True)
             ],
         }
@@ -829,32 +831,29 @@ def test_semantic_segments_preserve_every_point_word_and_its_observed_timing(
     assert clip.words == words
 
 
-def test_public_cli_receives_clip_local_json_and_template(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _rendered_artifacts(output_dir: Path) -> SimpleNamespace:
+    paths = [output_dir / f"raw-pt{suffix}" for suffix in (".srt", ".ass", ".mp4")]
+    for path in paths:
+        path.write_bytes(b"rendered")
+    return SimpleNamespace(srt_path=paths[0], ass_path=paths[1], video_path=paths[2])
+
+
+def test_public_render_api_receives_clip_local_speech_and_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw video")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
-    (tmp_path / "multisubs").write_text("", encoding="utf-8")
-    monkeypatch.setattr(
-        multisubs.sys,
-        "executable",
-        str(tmp_path / "python"),
-    )
-    commands: list[list[str]] = []
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.0.0")
+    calls = []
 
-    def fake_run(
-        command: list[str], *, capture_output: bool, text: bool, check: bool
-    ) -> subprocess.CompletedProcess[str]:
-        assert capture_output and text and not check
-        commands.append(command)
-        output_dir = Path(command[command.index("-o") + 1])
-        (output_dir / "raw-pt.srt").write_text("caption", encoding="utf-8")
-        (output_dir / "raw-pt.ass").write_text("[Script Info]", encoding="utf-8")
-        (output_dir / "raw-pt.mp4").write_bytes(b"rendered")
-        return subprocess.CompletedProcess(command, 0)
+    def render(speech, video, output_dir, **options):
+        calls.append((speech, video, options))
+        options["progress"]("Warning: word effects suppressed.")
+        return _rendered_artifacts(output_dir)
 
-    monkeypatch.setattr(multisubs.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys.modules["multisubs"], "render_transcript", render)
     template_dir = tmp_path / "templates"
     result = MultisubsAdapter().subtitle_clip(
         raw_video,
@@ -863,35 +862,25 @@ def test_public_cli_receives_clip_local_json_and_template(
         template_dir=template_dir,
         workspace=tmp_path / "work",
     )
-
-    payload = json.loads(result.cues_json_path.read_text(encoding="utf-8"))
-    assert payload == {
-        "schema_version": 2,
-        "language": "pt",
-        "segments": [
-            {
-                "start": 0.2,
-                "end": 1.8,
-                "text": "Olá mundo.",
-                "words": [
-                    {"start": 0.2, "end": 0.7, "text": "Olá"},
-                    {"start": 0.8, "end": 1.8, "text": "mundo."},
-                ],
-            }
-        ],
+    payload = json.loads(result.transcript_json_path.read_text())
+    assert payload == multisubs._speech_transcript(_clip())
+    assert payload["schema_version"] == 1 and payload["task"] == "transcribe"
+    assert payload["asr_backend"] == "whisperx" and payload["model_name"] == "turbo"
+    assert payload["segments"][0]["words"][0] == {
+        "word": "Olá",
+        "start": 0.2,
+        "end": 0.7,
+        "score": None,
     }
-    assert commands[0][:2] == [str(tmp_path / "multisubs"), "-i"]
-    assert commands[0][commands[0].index("--cues-json") + 1] == str(
-        result.cues_json_path
+    assert len(calls) == 1
+    speech, video, options = calls[0]
+    assert speech == payload and video == raw_video
+    assert (
+        options["template"] == "amber-word" and options["template_dir"] == template_dir
     )
-    assert commands[0][-4:] == [
-        "--template",
-        "amber-word",
-        "--template-dir",
-        str(template_dir),
-    ]
+    assert "word effects suppressed" in caplog.text
     assert result.video_path.read_bytes() == b"rendered"
-    assert result.provider_version == "4.4.0"
+    assert result.provider_version == "5.0.0"
     assert result.template_resolved == "amber-word"
 
 
@@ -907,16 +896,16 @@ def test_partial_segment_keeps_selected_word_text_without_outside_words() -> Non
         segments=(ClipTranscriptSegment("Olá mundo. Adeus", 0.0, 1.0, 0),),
         words=(ClipTranscriptWord("mundo.", 0.1, 0.8, None, 1, 0),),
         provider="multisubs",
-        provider_version="4.4.0",
+        provider_version="5.0.0",
         word_timing_complete=True,
     )
 
-    assert multisubs._timed_cues(clip)["segments"] == [
+    assert multisubs._speech_transcript(clip)["segments"] == [
         {
             "start": 0.0,
             "end": 1.0,
-            "text": "mundo.",
-            "words": [{"start": 0.1, "end": 0.8, "text": "mundo."}],
+            "text": " mundo. ",
+            "words": [{"start": 0.1, "end": 0.8, "word": "mundo.", "score": None}],
         }
     ]
 
@@ -940,11 +929,11 @@ def test_long_asr_segment_is_submitted_as_one_timed_cue() -> None:
         segments=(ClipTranscriptSegment(" ".join(tokens), 0.0, 5.0, 0),),
         words=words,
         provider="multisubs",
-        provider_version="4.4.0",
+        provider_version="5.0.0",
         word_timing_complete=True,
     )
 
-    cues = multisubs._timed_cues(clip)["segments"]
+    cues = multisubs._speech_transcript(clip)["segments"]
 
     assert cues == [
         {
@@ -952,36 +941,65 @@ def test_long_asr_segment_is_submitted_as_one_timed_cue() -> None:
             "end": 5.0,
             "text": " ".join(tokens),
             "words": [
-                {"start": word.start, "end": word.end, "text": word.text}
+                {
+                    "start": word.start,
+                    "end": word.end,
+                    "word": word.text,
+                    "score": word.confidence,
+                }
                 for word in words
             ],
         }
     ]
 
 
-def test_missing_word_timing_fails_before_renderer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "words",
+    [
+        (),
+        (
+            ClipTranscriptWord(" Olá", 0.2, None, None, 0, 0),
+            ClipTranscriptWord(" mundo.", None, 1.8, None, 1, 0),
+        ),
+    ],
+)
+def test_missing_word_timing_and_language_reach_native_fallback(
+    words,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.0.0")
 
-    with pytest.raises(RenderingError, match="complete observed word timing"):
-        MultisubsAdapter().subtitle_clip(
-            raw_video,
-            _clip(complete=False),
-            template=None,
-            template_dir=None,
-            workspace=tmp_path / "work",
-        )
-    assert not (tmp_path / "work").exists()
+    def render(speech, video, output_dir, **options):
+        assert speech["language"] is None
+        assert speech["segments"][0]["text"] == " Olá mundo."
+        assert len(speech["segments"][0]["words"]) == len(words)
+        return _rendered_artifacts(output_dir)
+
+    monkeypatch.setattr(sys.modules["multisubs"], "render_transcript", render)
+    clip = replace(
+        _clip(complete=False),
+        language_detected=None,
+        words=words,
+        segments=(ClipTranscriptSegment(" Olá mundo.", 0.2, 1.8, 0),),
+    )
+    result = MultisubsAdapter().subtitle_clip(
+        raw_video,
+        clip,
+        template=None,
+        template_dir=None,
+        workspace=tmp_path / "work",
+    )
+    assert result.video_path.is_file()
 
 
 def test_provider_without_semantic_api_fails_before_subtitle_rendering(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _install_provider(monkeypatch, None, version="4.4.1")
-    with pytest.raises(RenderingError, match="semantic transcript support"):
+    _install_provider(monkeypatch, None, version="5.0.0")
+    with pytest.raises(RenderingError, match="speech transcript support"):
         MultisubsAdapter().subtitle_clip(
             tmp_path / "raw.mp4",
             _clip(),
@@ -996,7 +1014,7 @@ def test_old_provider_fails_with_compatibility_message(
 ) -> None:
     monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
 
-    with pytest.raises(RenderingError, match="install version 4.4"):
+    with pytest.raises(RenderingError, match="install version 5"):
         MultisubsAdapter().subtitle_clip(
             tmp_path / "raw.mp4",
             _clip(),
@@ -1007,26 +1025,19 @@ def test_old_provider_fails_with_compatibility_message(
 
 
 def test_layout_failure_identifies_template_space_without_raw_provider_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
-    (tmp_path / "multisubs").write_text("", encoding="utf-8")
-    monkeypatch.setattr(multisubs.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.0.0")
 
-    def fake_run(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            command,
-            1,
-            "",
-            "private input path: cue 0 exceeds the subtitle layout envelope",
+    def render(*args, **options):
+        raise ValueError(
+            "private input path: cue 0 exceeds the subtitle layout envelope"
         )
 
-    monkeypatch.setattr(multisubs.subprocess, "run", fake_run)
-
+    monkeypatch.setattr(sys.modules["multisubs"], "render_transcript", render)
     with pytest.raises(
         RenderingError, match="does not fit the selected template"
     ) as caught:
@@ -1040,24 +1051,30 @@ def test_layout_failure_identifies_template_space_without_raw_provider_output(
     assert "private input path" not in str(caught.value)
 
 
-def test_incomplete_provider_output_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("invalid", ["missing", "outside", "empty", "mismatched"])
+def test_incomplete_or_escaped_provider_output_is_rejected(
+    invalid,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.4.0")
-    (tmp_path / "multisubs").write_text("", encoding="utf-8")
-    monkeypatch.setattr(multisubs.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.0.0")
 
-    def fake_run(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        output_dir = Path(command[command.index("-o") + 1])
-        (output_dir / "raw-pt.ass").write_text("[Script Info]", encoding="utf-8")
-        return subprocess.CompletedProcess(command, 0)
+    def render(speech, video, output_dir, **options):
+        artifacts = _rendered_artifacts(output_dir)
+        if invalid == "missing":
+            artifacts.srt_path.unlink()
+        elif invalid == "empty":
+            artifacts.ass_path.write_bytes(b"")
+        elif invalid == "outside":
+            artifacts.srt_path = tmp_path / "outside.srt"
+            artifacts.srt_path.write_text("caption")
+        else:
+            artifacts.ass_path = artifacts.ass_path.rename(output_dir / "different.ass")
+        return artifacts
 
-    monkeypatch.setattr(multisubs.subprocess, "run", fake_run)
-
+    monkeypatch.setattr(sys.modules["multisubs"], "render_transcript", render)
     with pytest.raises(RenderingError, match="complete SRT, ASS, and video"):
         MultisubsAdapter().subtitle_clip(
             raw_video,
@@ -1091,8 +1108,70 @@ def test_unassigned_words_fail_instead_of_disappearing() -> None:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, None),
         ),
         provider="multisubs",
-        provider_version="4.4.0",
+        provider_version="5.0.0",
         word_timing_complete=True,
     )
     with pytest.raises(RenderingError, match="cannot be mapped"):
-        multisubs._timed_cues(clip)
+        multisubs._speech_transcript(clip)
+
+
+@pytest.mark.parametrize("word_field", ["absent", "null", "empty", "partial"])
+def test_public_speech_normalization_and_cache_preserve_missing_alignment(
+    word_field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    segment = {"text": " Olá mundo.", "start": 0.2, "end": 1.8}
+    if word_field == "null":
+        segment["words"] = None
+    elif word_field == "empty":
+        segment["words"] = []
+    elif word_field == "partial":
+        segment["words"] = [
+            {"word": " Olá", "start": 0.2},
+            {"word": " mundo.", "end": 1.8, "score": None},
+        ]
+    document = SimpleNamespace(
+        language=None,
+        task="transcribe",
+        duration=1.8,
+        full_text=segment["text"],
+        segments=(segment,),
+        asr_backend="parakeet",
+        model_name="source-model",
+    )
+    _install_provider(monkeypatch, lambda *_args, **_kwargs: document, version="5.0.0")
+    transcript = MultisubsAdapter().transcribe(
+        tmp_path / "source.mp4",
+        language=None,
+        backend="parakeet",
+        model="source-model",
+        workspace=tmp_path / "asr",
+    )
+    assert transcript.language_detected is None
+    assert transcript.segments[0].text == " Olá mundo."
+    assert (transcript.asr_backend, transcript.asr_model) == (
+        "parakeet",
+        "source-model",
+    )
+    if word_field == "partial":
+        assert [(w.text, w.start, w.end) for w in transcript.words] == [
+            (" Olá", 0.2, None),
+            (" mundo.", None, 1.8),
+        ]
+    else:
+        assert transcript.words == ()
+    cache = tmp_path / "cache.json"
+    save_transcript(cache, transcript, "test-key")
+    assert load_transcript(cache, "test-key") == transcript
+    assert transcript_content_fingerprint(transcript) == transcript_content_fingerprint(
+        replace(transcript, asr_backend="faster-whisper", asr_model="turbo")
+    )
+
+
+@pytest.mark.parametrize("bad_words", [False, 0, "", {}])
+def test_invalid_falsy_word_collection_is_not_treated_as_missing_alignment(
+    bad_words: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = json.loads(TRANSCRIPT_FIXTURE.read_text(encoding="utf-8"))
+    payload["transcription"]["segments"][0]["words"] = bad_words
+    with pytest.raises(TranscriptionError, match="segment 0 words"):
+        _transcribe_json(json.dumps(payload), tmp_path, monkeypatch)

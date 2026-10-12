@@ -47,8 +47,9 @@ def transcribe(source, **options):
         duration=data['metadata']['duration'],
         full_text=data['transcription']['text'],
         segments=data['transcription']['segments'],
+        asr_backend='faster-whisper', model_name='turbo',
     )
-provider.transcribe_video = transcribe
+provider.transcribe_speech = transcribe
 sys.modules['multisubs'] = provider
 transcript = MultisubsAdapter().transcribe(
     Path('source.mp4'), language='pt', backend='faster-whisper', model='turbo',

@@ -269,10 +269,10 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             cues_path = next(
                 path
                 for path in metadata["subtitle_files"]
-                if path.endswith(".cues.json")
+                if path.endswith(".transcript.json")
             )
             document = json.loads((result.manifest_path.parent / cues_path).read_text())
-            assert document["schema_version"] == 2
+            assert document["schema_version"] == 1
             cues = document["segments"]
             assert cues[0]["start"] == pytest.approx(0.5)
             assert cues[0]["words"][0]["start"] == pytest.approx(0.5)

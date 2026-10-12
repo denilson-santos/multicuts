@@ -73,6 +73,8 @@ class FakeTranscriber:
             words=(),
             provider="multisubs",
             provider_version=self.version(),
+            asr_backend=backend,
+            asr_model=model,
         )
 
 
@@ -926,7 +928,7 @@ def _run(
         subtitle_dir.mkdir(exist_ok=True)
         sidecars = tuple(
             subtitle_dir / f"{output.stem}{suffix}"
-            for suffix in (".cues.json", ".srt", ".ass")
+            for suffix in (".transcript.json", ".srt", ".ass")
         )
         for path in sidecars:
             path.write_bytes(b"subtitle")
@@ -1774,16 +1776,23 @@ def test_language_change_invalidates_transcript_cache(tmp_path: Path) -> None:
     )
 
 
-def test_legacy_display_block_cache_is_not_reused_for_semantic_asr(
+@pytest.mark.parametrize(
+    "legacy_digest",
+    [
+        "a07e72a63150a17781b04e1e2da11a19a129bf7701252a245c37a6be86560c24",
+        "b7df89fcaf19b368f32399708a47ed1f15d77524ead267dab48a68f516c8301f",
+    ],
+)
+def test_legacy_subtitle_grouped_cache_is_not_reused_for_raw_speech(
     tmp_path: Path,
+    legacy_digest: str,
 ) -> None:
     asr = FakeTranscriber()
     _run(tmp_path, asr, FakeBackend(empty=True))
     cache_dir = tmp_path / "out" / ".cache" / "transcripts"
     (current,) = cache_dir.glob("*.json")
     payload = json.loads(current.read_text())
-    # Golden identity from transcript stage 2 for this source/configuration.
-    legacy_digest = "a07e72a63150a17781b04e1e2da11a19a129bf7701252a245c37a6be86560c24"
+    # Golden identities from transcript stages 2 and 3 for this configuration.
     legacy = cache_dir / f"{legacy_digest}.json"
     payload["key"] = f"sha256-v1:{legacy_digest}"
     current.rename(legacy)

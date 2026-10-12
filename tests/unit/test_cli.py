@@ -630,7 +630,7 @@ def test_cli_reports_wrapped_cuda_loading_failure_without_private_details(
             raise RuntimeError("private input path; token=private-token") from error
 
     provider = ModuleType("multisubs")
-    provider.__dict__["transcribe_video"] = generate
+    provider.__dict__["transcribe_speech"] = generate
     monkeypatch.setitem(sys.modules, "multisubs", provider)
     monkeypatch.setattr(
         "multicuts.adapters.multisubs.importlib.metadata.version", lambda _name: "4.4.0"

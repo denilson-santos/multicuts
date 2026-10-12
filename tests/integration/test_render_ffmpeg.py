@@ -164,7 +164,9 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
             else None
         )
         cues_path = next(
-            path for path in metadata["subtitle_files"] if path.endswith(".cues.json")
+            path
+            for path in metadata["subtitle_files"]
+            if path.endswith(".transcript.json")
         )
         cues = json.loads((result.manifest_path.parent / cues_path).read_text())
         first_word = cues["segments"][0]["words"][0]

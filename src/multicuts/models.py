@@ -6,10 +6,19 @@ from pathlib import Path
 
 
 def _validate_interval(
-    start: float | None, end: float | None, *, allow_zero_duration: bool = False
+    start: float | None,
+    end: float | None,
+    *,
+    allow_zero_duration: bool = False,
+    allow_partial: bool = False,
 ) -> None:
-    if (start is None) != (end is None):
+    if not allow_partial and (start is None) != (end is None):
         raise ValueError("start and end must both be present or absent")
+    if any(
+        value is not None and (not isfinite(value) or value < 0)
+        for value in (start, end)
+    ):
+        raise ValueError("timestamps must be finite, nonnegative seconds")
     if start is not None and end is not None:
         if (
             not isfinite(start)
@@ -31,9 +40,12 @@ def _validate_clip_local_interval(
     duration: float,
     *,
     allow_zero_duration: bool = False,
+    allow_partial: bool = False,
 ) -> None:
-    _validate_interval(start, end, allow_zero_duration=allow_zero_duration)
-    if start is not None and end is not None and (start < 0 or end > duration):
+    _validate_interval(
+        start, end, allow_zero_duration=allow_zero_duration, allow_partial=allow_partial
+    )
+    if any(value is not None and value > duration for value in (start, end)):
         raise ValueError("clip-local timestamps must stay within clip duration")
 
 
@@ -169,7 +181,9 @@ class Word:
     def __post_init__(self) -> None:
         if not self.text.strip():
             raise ValueError("word text must not be empty")
-        _validate_interval(self.start, self.end, allow_zero_duration=True)
+        _validate_interval(
+            self.start, self.end, allow_zero_duration=True, allow_partial=True
+        )
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("word confidence must be finite")
         if self.source_segment_index is not None and (
@@ -189,7 +203,7 @@ class TranscriptSegment:
     def __post_init__(self) -> None:
         if not self.text.strip():
             raise ValueError("segment text must not be empty")
-        _validate_interval(self.start, self.end)
+        _validate_interval(self.start, self.end, allow_zero_duration=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +218,8 @@ class Transcript:
     words: tuple[Word, ...]
     provider: str
     provider_version: str
+    asr_backend: str = "whisperx"
+    asr_model: str = "turbo"
 
     def __post_init__(self) -> None:
         if not isfinite(self.duration) or self.duration <= 0:
@@ -212,6 +228,8 @@ class Transcript:
             raise ValueError("transcript text must not be empty")
         if not self.provider or not self.provider_version:
             raise ValueError("transcript provider and version must not be empty")
+        if not self.asr_backend.strip() or not self.asr_model.strip():
+            raise ValueError("transcript ASR backend and model must not be empty")
         if not isinstance(self.segments, tuple) or not isinstance(self.words, tuple):
             raise ValueError("transcript segments and words must be tuples")
 
@@ -269,7 +287,9 @@ class ClipTranscriptWord:
             raise ValueError(
                 "clip transcript word source segment index must be non-negative"
             )
-        _validate_interval(self.start, self.end, allow_zero_duration=True)
+        _validate_interval(
+            self.start, self.end, allow_zero_duration=True, allow_partial=True
+        )
         if self.confidence is not None and not isfinite(self.confidence):
             raise ValueError("clip transcript word confidence must be finite")
 
@@ -302,6 +322,8 @@ class ClipTranscript:
     provider: str
     provider_version: str
     word_timing_complete: bool = False
+    asr_backend: str = "whisperx"
+    asr_model: str = "turbo"
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -340,6 +362,8 @@ class ClipTranscript:
             raise ValueError("clip transcript provider version must not be empty")
         if type(self.word_timing_complete) is not bool:
             raise ValueError("clip transcript word timing flag must be boolean")
+        if not self.asr_backend.strip() or not self.asr_model.strip():
+            raise ValueError("clip transcript ASR backend and model must not be empty")
         for field_name in ("language_requested", "language_detected"):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -361,7 +385,11 @@ class ClipTranscript:
             if not isinstance(word, ClipTranscriptWord):
                 raise ValueError("clip transcript words must be structured values")
             _validate_clip_local_interval(
-                word.start, word.end, self.duration, allow_zero_duration=True
+                word.start,
+                word.end,
+                self.duration,
+                allow_zero_duration=True,
+                allow_partial=True,
             )
             if (
                 word.source_segment_index is not None
@@ -388,7 +416,7 @@ class ClipTranscript:
 class SubtitleArtifacts:
     """Normalized paths and provenance for one rendered clip subtitle set."""
 
-    cues_json_path: Path
+    transcript_json_path: Path
     srt_path: Path
     ass_path: Path
     video_path: Path

@@ -278,13 +278,14 @@ def clip_transcript(
             segment.start is None
             or segment.end is None
             or segment.start >= end
-            or segment.end <= start
+            or segment.end < start
+            or (segment.end == start and segment.start != segment.end)
         ):
             continue
         local_start = max(0.0, segment.start - start)
         local_end = min(duration, segment.end - start)
         if local_end <= local_start:
-            continue
+            raise ValueError("subtitle segment has no positive observed interval")
         segments.append(
             ClipTranscriptSegment(segment.text, local_start, local_end, index)
         )
@@ -292,6 +293,27 @@ def clip_transcript(
     words: list[ClipTranscriptWord] = []
     for index, word in enumerate(transcript.words):
         if word.start is None or word.end is None:
+            parent = word.source_segment_index
+            if not any(segment.source_index == parent for segment in segments):
+                continue
+            if (word.start is not None and word.start >= end) or (
+                word.end is not None and word.end <= start
+            ):
+                continue
+            words.append(
+                ClipTranscriptWord(
+                    word.text,
+                    None
+                    if word.start is None
+                    else min(duration, max(0.0, word.start - start)),
+                    None
+                    if word.end is None
+                    else min(duration, max(0.0, word.end - start)),
+                    word.confidence,
+                    index,
+                    parent,
+                )
+            )
             continue
         is_point = word.start == word.end
         if (
@@ -362,6 +384,7 @@ def clip_transcript(
             for segment in segments
         )
         and all(word.source_segment_index is not None for word in words)
+        and all(word.is_timed for word in words)
     )
     return ClipTranscript(
         language_requested=transcript.language_requested,
@@ -378,6 +401,8 @@ def clip_transcript(
         provider=transcript.provider,
         provider_version=transcript.provider_version,
         word_timing_complete=complete,
+        asr_backend=transcript.asr_backend,
+        asr_model=transcript.asr_model,
     )
 
 
@@ -390,7 +415,7 @@ def publish_subtitle_sidecars(
         for path in paths:
             target = output.parent / "subtitles" / f"{output.stem}{path.suffix}"
             if path.suffix == ".json":
-                target = output.parent / "subtitles" / f"{output.stem}.cues.json"
+                target = output.parent / "subtitles" / f"{output.stem}.transcript.json"
             target.parent.mkdir(parents=True, exist_ok=True)
             publish_without_overwrite(path, target)
             published.append(target)
@@ -439,10 +464,6 @@ def render_final(
         )
     except ValueError as exc:
         raise RenderingError("Could not derive clip-local transcript") from exc
-    if not local.word_animation_safe:
-        raise RenderingError(
-            "Selected clip lacks complete observed word timings for subtitles"
-        )
     artifacts = provider.subtitle_clip(
         raw_path,
         local,
@@ -461,7 +482,7 @@ def render_final(
     ):
         raise RenderingError("Subtitled clip does not match validated raw clip")
     sidecars = publish_subtitle_sidecars(
-        (artifacts.cues_json_path, artifacts.srt_path, artifacts.ass_path), output
+        (artifacts.transcript_json_path, artifacts.srt_path, artifacts.ass_path), output
     )
     try:
         publish_without_overwrite(artifacts.video_path, output)
