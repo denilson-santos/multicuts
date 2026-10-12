@@ -12,7 +12,7 @@ from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.clips import DirectClip, JudgedClip
 from multicuts.errors import MediaError, RenderingError
-from multicuts.media import inspect_media_path
+from multicuts.media import ffmpeg_format_major, inspect_media_path
 from multicuts.models import (
     AcquiredSource,
     ClipTranscript,
@@ -106,10 +106,15 @@ def _encode_and_publish(
     work: Path,
 ) -> tuple[Path, MediaInfo]:
     temporary = work / f"encode-{output.stem}.mp4"
+    try:
+        # FFmpeg 6+ supports per-stream fps_mode; FFmpeg 9 removed vsync.
+        sync_option = "-fps_mode:v" if ffmpeg_format_major() >= 60 else "-vsync"
+    except MediaError as exc:
+        raise RenderingError("Could not determine FFmpeg frame rate mode") from exc
     # Cuts between source frames must retain their full duration for subtitle cues.
     command.extend(
         [
-            "-vsync",
+            sync_option,
             "cfr",
             "-c:v",
             "libx264",
@@ -185,8 +190,6 @@ def render_raw(
         "-loglevel",
         "error",
         "-nostdin",
-        "-autorotate",
-        "1",
         "-i",
         str(source.local_path),
         "-ss",

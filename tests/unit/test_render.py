@@ -71,6 +71,7 @@ def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
         return subprocess.CompletedProcess(command, 1 if failure == "ffmpeg" else 0)
 
     monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 58)
     monkeypatch.setattr(
         "multicuts.render.inspect_media_path",
         lambda path: vertical_media if path == foreground else horizontal_media,

@@ -112,7 +112,7 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **5.0.0** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **5.0.1** release wheel, including compatibility fixes for current FFmpeg. The default ASR configuration is **WhisperX + `turbo`**.
 
 Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
 `render_transcript()` for subtitles. Multicuts uses these public APIs, with one
@@ -176,7 +176,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.1/multisubs-5.0.1-py3-none-any.whl#sha256=e2f133c9eb0c8e2130e4aeb122aeb00b25be5bcdf8d0cc73fbcae75f86838c46'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -197,7 +197,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.1/multisubs-5.0.1-py3-none-any.whl#sha256=e2f133c9eb0c8e2130e4aeb122aeb00b25be5bcdf8d0cc73fbcae75f86838c46'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -212,7 +212,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.0/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.1/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 

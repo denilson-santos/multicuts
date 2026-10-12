@@ -545,7 +545,7 @@ def test_probe_rejects_invalid_json(
         probe_media(source)
 
 
-@pytest.mark.parametrize("libavformat_major", [58, 59, 60, 61, 62])
+@pytest.mark.parametrize("libavformat_major", [58, 59, 60, 61, 62, 63])
 @pytest.mark.parametrize("source_kind", ["local", "youtube"])
 def test_opus_remux_compensation_matches_installed_matroska_muxer(
     libavformat_major: int,
@@ -623,7 +623,9 @@ def test_opus_remux_compensation_matches_installed_matroska_muxer(
             assert "-bsf:a" not in command
 
 
-def test_opus_remux_rejects_unknown_muxer_version_without_publishing_media(
+@pytest.mark.parametrize("failure", ["unknown", "exit", "missing", "timeout"])
+def test_opus_remux_rejects_unavailable_muxer_version_without_publishing_media(
+    failure: str,
     probe_payload: dict[str, object],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -631,13 +633,20 @@ def test_opus_remux_rejects_unknown_muxer_version_without_publishing_media(
     original = tmp_path / "source.webm"
     original.write_bytes(b"original")
     media = replace(normalize_media_probe(probe_payload), audio_codec_delay=0.0065)
-    monkeypatch.setattr(
-        "multicuts.media.subprocess.run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command, 0, "unrecognized version; private-token", ""
-        ),
-    )
-    with pytest.raises(MediaError, match="FFmpeg Matroska timestamp support") as caught:
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if kwargs.get("check") is True:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if failure == "missing":
+            raise FileNotFoundError("private-token")
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 5, output="private-token")
+        return subprocess.CompletedProcess(
+            command, 1 if failure == "exit" else 0, "private-token", ""
+        )
+
+    monkeypatch.setattr("multicuts.media.subprocess.run", run)
+    with pytest.raises(MediaError, match="FFmpeg libavformat version") as caught:
         prepare_source_range(
             AcquiredSource(original, "source"),
             media,

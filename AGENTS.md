@@ -75,7 +75,7 @@ Ruff
 Pyright
 ```
 
-Early development may pin the official `multisubs[whisperx]` 5.0.0 wheel.
+Early development may pin the official `multisubs[whisperx]` 5.0.1 wheel.
 
 Do not silently raise the minimum Python version.
 
