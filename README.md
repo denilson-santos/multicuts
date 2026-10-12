@@ -51,7 +51,7 @@ One source is processed per invocation. The selected AI backend analyzes transcr
 
 Use **Python 3.10–3.13** and have **FFmpeg/ffprobe** on your PATH. Subtitle rendering requires FFmpeg's `subtitles` filter (libass). The CPU/CUDA commands below target **x86_64 Linux and WSL**.
 
-**Installation order:** create the environment → prepare CPU or GPU → install the app → follow the selected ASR backend's instructions.
+**Installation order:** create the environment → install media tools → prepare CPU or GPU → install the app → follow the selected ASR backend's instructions.
 
 | ASR backend | Additional installation after the shared setup | Model example |
 | --- | --- | --- |
@@ -70,6 +70,32 @@ cd multicuts
 python3.10 -m venv .venv
 source .venv/bin/activate
 ```
+
+#### Install FFmpeg and ffprobe
+
+On **x86_64 Linux/WSL** with glibc 2.28 or newer, install the same pinned FFmpeg
+9.0.2 release-branch build used by CI, including libass and libx264:
+
+```bash
+python scripts/install_ffmpeg.py
+export PATH="$VIRTUAL_ENV/bin:$HOME/.local/bin:$PATH"
+ffmpeg -version
+ffprobe -version
+```
+
+Keep `$HOME/.local/bin` before system directories on PATH in subsequent shells.
+The installer downloads the [BtbN monthly build from September 30, 2026](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08),
+verifies its pinned SHA-256, and checks both binaries and the subtitles filter
+before publishing them to `~/.local/bin`. Its exact version is
+`n9.0.2-17-g2a571b6068-20260930`; this includes release-branch fixes after the
+9.0.2 tag. Monthly builds are retained upstream for two years; update the pin
+before that period expires. The binaries' provenance is saved in
+`~/.local/bin/ffmpeg-build.json`.
+
+Use `--replace` explicitly to update an existing installation, `--bin-dir` for
+another destination, or `--archive` for an already downloaded archive (its
+checksum is still required). On other platforms, install FFmpeg/ffprobe with
+libass and libx264 through a suitable platform package.
 
 #### Prepare CPU or GPU
 
@@ -112,7 +138,7 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **5.0.0** release wheel. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **5.0.1** release wheel, including compatibility fixes for current FFmpeg. The default ASR configuration is **WhisperX + `turbo`**.
 
 Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
 `render_transcript()` for subtitles. Multicuts uses these public APIs, with one
@@ -176,7 +202,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.1/multisubs-5.0.1-py3-none-any.whl#sha256=e2f133c9eb0c8e2130e4aeb122aeb00b25be5bcdf8d0cc73fbcae75f86838c46'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -197,7 +223,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.0/multisubs-5.0.0-py3-none-any.whl#sha256=83eb92a5afc3f7654734d07653a6d378750e094ed4a240eafd1adce3b031e0b8'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.0.1/multisubs-5.0.1-py3-none-any.whl#sha256=e2f133c9eb0c8e2130e4aeb122aeb00b25be5bcdf8d0cc73fbcae75f86838c46'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -212,7 +238,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.0/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.0.1/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -684,7 +710,8 @@ distributions, and interpreter record for the final `main` commit. The
 provisioned pull-request job uploads `release-provisioned-<commit>` with its
 provider, media, and build evidence.
 
-For the separate provisioned checks, install FFmpeg/ffprobe with libass and
+For the separate provisioned checks, use the pinned FFmpeg/ffprobe installation
+above (CI installs it in a runner-local directory and records its checksum) and
 make the following environment from the compared wheel. Installation resolves
 the complete runtime dependency set, including the official `multisubs`
 WhisperX extra, and can require substantial downloads/disk space:

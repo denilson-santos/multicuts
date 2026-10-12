@@ -177,21 +177,24 @@ def prepare_source_range(
         raise MediaError("Could not prepare the source interval") from exc
 
 
-def _needs_opus_delay_compensation() -> bool:
-    """Older Matroska muxers omit the Opus CodecDelay timestamp restoration."""
-    result = subprocess.run(
-        ["ffmpeg", "-version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+def ffmpeg_format_major() -> int:
+    """Read the libavformat major version from the installed FFmpeg binary."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise MediaError("Could not determine FFmpeg libavformat version") from exc
     match = re.search(r"^libavformat\s+(\d+)\.", result.stdout, re.MULTILINE)
     if result.returncode or match is None:
-        raise MediaError("Could not determine FFmpeg Matroska timestamp support")
-    # libavformat 60 (FFmpeg 6.0) restored track->ts_offset for initial padding.
-    return int(match.group(1)) < 60
+        raise MediaError("Could not determine FFmpeg libavformat version")
+    return int(match.group(1))
 
 
 def _copy_media(
@@ -221,7 +224,8 @@ def _copy_media(
     if (
         output.suffix == ".mkv"
         and media.audio_codec_delay
-        and _needs_opus_delay_compensation()
+        # libavformat 60 (FFmpeg 6.0) restores initial padding natively.
+        and ffmpeg_format_major() < 60
     ):
         delay = media.audio_codec_delay + extra_audio_delay
         if extra_audio_delay:

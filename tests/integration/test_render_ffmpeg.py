@@ -24,6 +24,149 @@ from multicuts.render import render_final, render_raw, render_short_horizontal
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize(
+    ("rotation", "corners"),
+    [
+        (90, ("green", "yellow", "red", "blue")),
+        (180, ("yellow", "blue", "green", "red")),
+        (270, ("blue", "red", "yellow", "green")),
+    ],
+)
+def test_rotated_source_pixels_and_subtitles_follow_presentation_geometry(
+    rotation: int, corners: tuple[str, ...], tmp_path: Path
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    encoded = tmp_path / "encoded.mp4"
+    source_path = tmp_path / "rotated.mp4"
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    subprocess.run(
+        [
+            *command,
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=640x360:r=25:d=2,"
+            "drawbox=x=320:y=0:w=320:h=180:color=lime:t=fill,"
+            "drawbox=x=0:y=180:w=320:h=180:color=blue:t=fill,"
+            "drawbox=x=320:y=180:w=320:h=180:color=yellow:t=fill",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:d=2",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(encoded),
+        ],
+        check=True,
+    )
+    help_text = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-h", "full"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # Modern FFmpeg sets display matrices through input-side rotation options.
+    modern_rotation = "-display_rotation" in help_text.stdout
+    subprocess.run(
+        [
+            *command,
+            *(["-display_rotation:v:0", str(rotation)] if modern_rotation else []),
+            "-i",
+            str(encoded),
+            "-c",
+            "copy",
+            *([] if modern_rotation else ["-metadata:s:v:0", f"rotate={rotation}"]),
+            str(source_path),
+        ],
+        check=True,
+    )
+    media = inspect_media_path(source_path)
+    assert media.rotation_degrees % 360 == rotation
+    proposal = Proposal(
+        "rotated", "short", "u0", "u0", 0.0, 2.0, "Hello.", "Title", "Reason"
+    )
+    clip = JudgedClip(proposal, {}, 80.0, True, "Good", "u0", "u0")
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        full_video=True,
+        short_aspect_ratio="original",
+        render_variants=False,
+    )
+    raw, raw_media, _ = render_raw(
+        AcquiredSource(source_path, "rotation-fixture"),
+        media,
+        clip,
+        config,
+        output=tmp_path / "raw.mp4",
+        work=tmp_path / "work",
+    )
+    transcript = Transcript(
+        None,
+        "en",
+        2.0,
+        "Hello.",
+        (TranscriptSegment("Hello.", 0.2, 1.8),),
+        (Word("Hello.", 0.2, 1.8),),
+        "multisubs",
+        MultisubsAdapter().version(),
+    )
+    final, sidecars, _ = render_final(
+        raw,
+        raw_media,
+        transcript,
+        clip,
+        config,
+        output=tmp_path / "captioned.mp4",
+        work=tmp_path / "subtitles",
+    )
+    assert len(sidecars) == 3 and all(path.is_file() for path in sidecars)
+    width, height = (640, 360) if rotation == 180 else (360, 640)
+    colors = {
+        "red": (255, 0, 0),
+        "green": (0, 255, 0),
+        "blue": (0, 0, 255),
+        "yellow": (255, 255, 0),
+    }
+    positions = [(1, 1), (3, 1), (1, 3), (3, 3)]
+    for path in (raw, final):
+        actual = inspect_media_path(path)
+        assert (actual.presentation_width, actual.presentation_height) == (
+            width,
+            height,
+        )
+        assert actual.rotation_degrees == 0 and actual.has_audio
+        assert actual.duration == pytest.approx(2.0, abs=0.25)
+        frame = subprocess.run(
+            [
+                *command,
+                "-ss",
+                "0.8",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert len(frame) == width * height * 3
+        for (x, y), color in zip(positions, corners, strict=True):
+            offset = ((height * y // 4) * width + width * x // 4) * 3
+            assert tuple(frame[offset : offset + 3]) == pytest.approx(
+                colors[color], abs=20
+            )
+
+
 @pytest.mark.parametrize("interval", [None, TimeRange(0.64, 2.36)])
 @pytest.mark.parametrize("subtitles", [False, True])
 def test_direct_cuts_render_exact_media_interval_without_ai(

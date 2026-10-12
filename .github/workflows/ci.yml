@@ -31,7 +31,7 @@ jobs:
       - name: Install project and development tools
         run: |
           .venv/bin/python -m pip install --editable ".[dev]" --no-deps
-          .venv/bin/python -m pip install "pyright>=1.1,<2" "pytest>=8,<9" "ruff>=0.9,<1" "typer>=0.27.2,<0.28"
+          .venv/bin/python -m pip install "pyright>=1.1,<2" "pytest>=8,<9" "ruff>=0.9,<1" "typer>=0.27.3,<0.28"
 
       - name: Check formatting
         run: .venv/bin/ruff format --check .
@@ -67,7 +67,7 @@ jobs:
       - name: Install project and test dependencies
         run: |
           .venv/bin/python -m pip install --editable ".[dev]" --no-deps
-          .venv/bin/python -m pip install "pytest>=8,<9" "typer>=0.27.2,<0.28"
+          .venv/bin/python -m pip install "pytest>=8,<9" "typer>=0.27.3,<0.28"
 
       - name: Run hermetic tests including recovery and acceptance
         run: .venv/bin/python -m pytest -m "not integration" -ra
@@ -87,10 +87,10 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install media tools
+      - name: Install pinned FFmpeg 9.0.2 and ffprobe
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+          python scripts/install_ffmpeg.py --bin-dir "$RUNNER_TEMP/ffmpeg/bin"
+          echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
 
       - name: Generate the small real-media fixture
         run: |
@@ -162,6 +162,7 @@ jobs:
           "$PROVISIONED_VENV/bin/python" -m pip freeze --all > release-evidence/packages.txt
           ffmpeg -version > release-evidence/ffmpeg.txt
           ffprobe -version > release-evidence/ffprobe.txt
+          cp "$RUNNER_TEMP/ffmpeg/bin/ffmpeg-build.json" release-evidence/ffmpeg-build.json
           ffmpeg -filters > release-evidence/ffmpeg-filters.txt
           grep -q ' subtitles ' release-evidence/ffmpeg-filters.txt
 

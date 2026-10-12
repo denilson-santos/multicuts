@@ -49,6 +49,9 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
     remote_file = tmp_path / f"remote.{container}"
+    # Keep the MP4 interval beyond current FFmpeg's HTTP read-ahead window.
+    duration = 48 if container == "mp4" else 24
+    interval = TimeRange(duration - 5.75, duration - 3.25)
     subprocess.run(
         [
             "ffmpeg",
@@ -59,11 +62,11 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=s=320x180:r=25:d=24",
+            f"testsrc2=s=320x180:r=25:d={duration}",
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:sample_rate=48000:d=24",
+            f"sine=frequency=440:sample_rate=48000:d={duration}",
             "-c:v",
             "libx264" if container == "mp4" else "libvpx-vp9",
             *(
@@ -181,8 +184,6 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
                 provider_version,
             )
 
-    interval = TimeRange(18.25, 20.75)
-
     def render(source, media, clip, config, *, output, work):
         rendering_inputs.append(source.local_path)
         # Both stages use the same source with the downloaded video/audio streams.
@@ -249,7 +250,10 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         metadata = json.loads(video.with_suffix(".json").read_text())
         assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
         manifest = json.loads(result.manifest_path.read_text())
-        assert manifest["requested_clip_range"] == {"start": 18.25, "end": 20.75}
+        assert manifest["requested_clip_range"] == {
+            "start": interval.start,
+            "end": interval.end,
+        }
         assert manifest["source"]["original_duration"] == original_media.duration
         assert 2.5 <= manifest["source"]["acquired_duration"] < 4
         actual_range = manifest["source"]["acquired_range"]
