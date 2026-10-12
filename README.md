@@ -51,7 +51,7 @@ One source is processed per invocation. The selected AI backend analyzes transcr
 
 Use **Python 3.10–3.13** and have **FFmpeg/ffprobe** on your PATH. Subtitle rendering requires FFmpeg's `subtitles` filter (libass). The CPU/CUDA commands below target **x86_64 Linux and WSL**.
 
-**Installation order:** create the environment → prepare CPU or GPU → install the app → follow the selected ASR backend's instructions.
+**Installation order:** create the environment → install media tools → prepare CPU or GPU → install the app → follow the selected ASR backend's instructions.
 
 | ASR backend | Additional installation after the shared setup | Model example |
 | --- | --- | --- |
@@ -70,6 +70,32 @@ cd multicuts
 python3.10 -m venv .venv
 source .venv/bin/activate
 ```
+
+#### Install FFmpeg and ffprobe
+
+On **x86_64 Linux/WSL** with glibc 2.28 or newer, install the same pinned FFmpeg
+9.0.2 release-branch build used by CI, including libass and libx264:
+
+```bash
+python scripts/install_ffmpeg.py
+export PATH="$VIRTUAL_ENV/bin:$HOME/.local/bin:$PATH"
+ffmpeg -version
+ffprobe -version
+```
+
+Keep `$HOME/.local/bin` before system directories on PATH in subsequent shells.
+The installer downloads the [BtbN monthly build from September 30, 2026](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08),
+verifies its pinned SHA-256, and checks both binaries and the subtitles filter
+before publishing them to `~/.local/bin`. Its exact version is
+`n9.0.2-17-g2a571b6068-20260930`; this includes release-branch fixes after the
+9.0.2 tag. Monthly builds are retained upstream for two years; update the pin
+before that period expires. The binaries' provenance is saved in
+`~/.local/bin/ffmpeg-build.json`.
+
+Use `--replace` explicitly to update an existing installation, `--bin-dir` for
+another destination, or `--archive` for an already downloaded archive (its
+checksum is still required). On other platforms, install FFmpeg/ffprobe with
+libass and libx264 through a suitable platform package.
 
 #### Prepare CPU or GPU
 
@@ -684,7 +710,8 @@ distributions, and interpreter record for the final `main` commit. The
 provisioned pull-request job uploads `release-provisioned-<commit>` with its
 provider, media, and build evidence.
 
-For the separate provisioned checks, install FFmpeg/ffprobe with libass and
+For the separate provisioned checks, use the pinned FFmpeg/ffprobe installation
+above (CI installs it in a runner-local directory and records its checksum) and
 make the following environment from the compared wheel. Installation resolves
 the complete runtime dependency set, including the official `multisubs`
 WhisperX extra, and can require substantial downloads/disk space:

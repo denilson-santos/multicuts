@@ -260,6 +260,15 @@ JSON should be human-readable enough for diagnostics and stable enough for fixtu
 
 FFmpeg is an external boundary.
 
+The x86_64 Linux/WSL installation and provisioned CI use the same FFmpeg 9.0.2
+release-branch build pinned by URL, SHA-256, and exact version in
+`scripts/install_ffmpeg.py`. Use the retained monthly GPL build for libass and
+libx264; do not use a floating `latest` URL or a daily build that expires after
+14 days. Update the monthly pin before its two-year upstream retention ends.
+The installer checks the archive and staged binaries before publication and
+requires `--replace` to overwrite an existing installation. Record its
+`ffmpeg-build.json` alongside media version evidence.
+
 ### Process execution
 
 - never use `shell=True`;
