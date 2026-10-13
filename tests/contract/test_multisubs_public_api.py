@@ -83,6 +83,42 @@ def test_multisubs_public_speech_renderer_signature_and_artifacts() -> None:
     )
 
 
+def test_public_subtitle_builder_preserves_sparse_overrides() -> None:
+    provider = _installed_provider()
+    builder = getattr(provider, "build_subtitle_config", None)
+    assert callable(builder), "multisubs.build_subtitle_config is unavailable"
+    inspect.signature(builder).bind(
+        template="yellow-pop", template_dir=None, overrides={}
+    )
+    baseline = provider.build_subtitle_config(template="yellow-pop")
+    overrides = {"font_size": "4.5%", "margin_bottom": "8%", "italic": False}
+    configured = provider.build_subtitle_config(
+        template="yellow-pop", overrides=overrides
+    )
+    assert type(configured) is provider.SubtitleConfig
+    assert configured.style.typography.font_size.original == "4.5%"
+    assert configured.layout.margin_bottom.original == "8%"
+    assert configured.style.typography.italic is False
+    assert configured.style.typography.font == baseline.style.typography.font
+    assert configured.animation == baseline.animation
+    assert builder(template="yellow-pop") == baseline
+    assert overrides == {"font_size": "4.5%", "margin_bottom": "8%", "italic": False}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"unknown_option": None},
+        {"font_weight": "bold", "bold": False},
+        {"position": "middle-center", "margin_bottom": "0%"},
+    ],
+)
+def test_public_subtitle_builder_rejects_invalid_settings(overrides) -> None:
+    provider = _installed_provider()
+    with pytest.raises(provider.ValidationError):
+        provider.build_subtitle_config(template="yellow-pop", overrides=overrides)
+
+
 def test_public_speech_interchange_preserves_optional_alignment_and_language() -> None:
     provider = _installed_provider()
     document = provider.SpeechTranscript.from_dict(
