@@ -2,11 +2,14 @@
 
 import importlib
 import inspect
+from dataclasses import fields
 from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+
+from multicuts.subtitles import SubtitleOptions
 
 
 def _installed_provider() -> ModuleType:
@@ -81,6 +84,65 @@ def test_multisubs_public_speech_renderer_signature_and_artifacts() -> None:
     assert {"srt_path", "ass_path", "video_path"}.issubset(
         artifacts.__dataclass_fields__
     )
+
+
+def test_public_subtitle_builder_preserves_sparse_overrides() -> None:
+    provider = _installed_provider()
+    builder = getattr(provider, "build_subtitle_config", None)
+    assert callable(builder), "multisubs.build_subtitle_config is unavailable"
+    inspect.signature(builder).bind(
+        template="yellow-pop", template_dir=None, overrides={}
+    )
+    baseline = provider.build_subtitle_config(template="yellow-pop")
+    overrides = {"font_size": "4.5%", "margin_bottom": "8%", "italic": False}
+    configured = provider.build_subtitle_config(
+        template="yellow-pop", overrides=overrides
+    )
+    assert type(configured) is provider.SubtitleConfig
+    assert configured.style.typography.font_size.original == "4.5%"
+    assert configured.layout.margin_bottom.original == "8%"
+    assert configured.style.typography.italic is False
+    assert configured.style.typography.font == baseline.style.typography.font
+    assert configured.animation == baseline.animation
+    assert builder(template="yellow-pop") == baseline
+    assert overrides == {"font_size": "4.5%", "margin_bottom": "8%", "italic": False}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"unknown_option": None},
+        {"font_weight": "bold", "bold": False},
+        {"position": "middle-center", "margin_bottom": "0%"},
+    ],
+)
+def test_public_subtitle_builder_rejects_invalid_settings(overrides) -> None:
+    provider = _installed_provider()
+    with pytest.raises(provider.ValidationError):
+        provider.build_subtitle_config(template="yellow-pop", overrides=overrides)
+
+
+def test_public_subtitle_builder_supports_every_owned_presentation_field() -> None:
+    provider = _installed_provider()
+    overrides = {field.name: None for field in fields(SubtitleOptions)}
+    assert len(overrides) == 57
+    assert provider.build_subtitle_config(
+        template="yellow-pop", overrides=overrides
+    ) == provider.build_subtitle_config(template="yellow-pop")
+
+
+def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None:
+    provider = _installed_provider()
+    (tmp_path / "custom.json").write_text(
+        '{"schema_version":1,"name":"custom","base":"yellow-pop",'
+        '"layout":{"margins":{"bottom":"15%"}}}',
+        encoding="utf-8",
+    )
+    configured = provider.build_subtitle_config(
+        template="custom", template_dir=tmp_path, overrides={"font_size": "4.5%"}
+    )
+    assert configured.layout.margin_bottom.original == "15%"
+    assert configured.style.typography.font_size.original == "4.5%"
 
 
 def test_public_speech_interchange_preserves_optional_alignment_and_language() -> None:

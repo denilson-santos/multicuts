@@ -4,6 +4,7 @@ import pytest
 
 from multicuts.models import ClipTranscript, Transcript, TranscriptSegment, Word
 from multicuts.render import clip_transcript
+from multicuts.subtitles import SubtitleOptions
 
 
 def test_explicit_media_duration_preserves_silence_beyond_asr_coverage() -> None:
@@ -343,6 +344,7 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
         "test-model",
         subtitles_enabled=general_subtitles,
         short_subtitles_enabled=True if not general_subtitles else None,
+        subtitle_options=SubtitleOptions(font_size="4.5%", margin_bottom="8%"),
     )
 
     class FakeProvider:
@@ -357,8 +359,10 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             template: str | None,
             template_dir: Path | None,
             workspace: Path,
+            options=None,
         ) -> SubtitleArtifacts:
             assert video_path == raw
+            assert options == config.subtitle_options
             assert clip.word_animation_safe == (
                 bool(words)
                 and all(w.start is not None and w.end is not None for w in words)

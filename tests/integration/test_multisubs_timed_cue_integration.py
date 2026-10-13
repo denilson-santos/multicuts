@@ -19,13 +19,15 @@ from multicuts.models import (
     Word,
 )
 from multicuts.render import clip_transcript
+from multicuts.subtitles import SubtitleOptions
 
 
 @pytest.fixture
-def raw_video(tmp_path: Path) -> Path:
+def raw_video(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg and ffprobe are required")
     raw = tmp_path / "raw.mp4"
+    width, height = getattr(request, "param", (360, 640))
     subprocess.run(
         [
             "ffmpeg",
@@ -35,7 +37,7 @@ def raw_video(tmp_path: Path) -> Path:
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=360x640:d=2:r=25",
+            f"color=c=black:s={width}x{height}:d=2:r=25",
             "-c:v",
             "mpeg4",
             "-y",
@@ -204,3 +206,103 @@ def test_adapter_matches_native_speech_layout_without_asr(
     for warning in native_warnings:
         if warning.startswith("Warning:"):
             assert warning in caplog.messages
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "raw_video", [(360, 640), (640, 360), (360, 360)], indirect=True
+)
+def test_presentation_overrides_match_native_rendering_in_each_geometry(
+    raw_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = importlib.import_module("multisubs")
+    monkeypatch.setattr(
+        provider,
+        "transcribe_speech",
+        lambda *_args, **_kwargs: pytest.fail("Presentation must not run ASR"),
+    )
+    source = Transcript(
+        None,
+        "pt",
+        2.0,
+        " Olá mundo.",
+        (TranscriptSegment(" Olá mundo.", 0.2, 1.8),),
+        (
+            Word(" Olá", 0.2, 0.7, source_segment_index=0),
+            Word(" mundo.", 0.8, 1.8, source_segment_index=0),
+        ),
+        "multisubs",
+        "5.1.0",
+    )
+    options = SubtitleOptions(
+        position="bottom-center",
+        margin_bottom="8%",
+        font_size="4.5%",
+        text_case="original",
+        italic=False,
+        disable_word_animations=True,
+    )
+    adapter = MultisubsAdapter()
+    adapter.validate_subtitle_options(
+        template="yellow-pop", template_dir=None, options=options
+    )
+    before = asdict(source)
+    actual = adapter.subtitle_clip(
+        raw_video,
+        clip_transcript(source, 0, 2),
+        template="yellow-pop",
+        template_dir=None,
+        workspace=tmp_path / "adapter",
+        options=options,
+    )
+    speech = json.loads(actual.transcript_json_path.read_text())
+    native = provider.render_transcript(
+        speech,
+        raw_video,
+        tmp_path / "native",
+        subtitle_config=provider.build_subtitle_config(
+            template="yellow-pop", overrides=options.overrides()
+        ),
+    )
+    assert actual.srt_path.read_text() == native.srt_path.read_text()
+    assert actual.ass_path.read_text() == native.ass_path.read_text()
+    assert actual.template_requested == actual.template_resolved == "yellow-pop"
+    assert asdict(source) == before
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            str(raw_video),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    width, height = map(int, probe.stdout.strip().split(","))
+    ass = actual.ass_path.read_text()
+    assert f"PlayResX: {width}" in ass and f"PlayResY: {height}" in ass
+    video_probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            str(actual.video_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert video_probe.stdout.strip() == probe.stdout.strip()

@@ -325,7 +325,7 @@ multisubs >=5,<6
 ```
 
 During early implementation the environment may pin the official
-`multisubs[whisperx]` 5.0.1 wheel. Keep the selected extra aligned with the ASR
+`multisubs[whisperx]` 5.1.0 wheel. Keep the selected extra aligned with the ASR
 backend used by the adapter.
 
 Rules:
@@ -338,6 +338,7 @@ Rules:
 - transcribe the source once;
 - do not retranscribe selected clips merely to generate subtitles;
 - call public `render_transcript()` with clip-local speech data so semantic selection and visual layout run once against final geometry;
+- compose explicit presentation overrides with public `build_subtitle_config()`; keep its provider object inside the adapter and preserve template defaults for omitted fields;
 - use `multisubs` templates/fonts/animations rather than rebuilding equivalent presentation logic;
 - keep all provider-specific options inside `MultisubsAdapter`.
 

@@ -29,6 +29,7 @@ from multicuts.models import (
 )
 from multicuts.pipeline import run_pipeline
 from multicuts.render import clip_transcript
+from multicuts.subtitles import SubtitleOptions
 
 
 class FakeTranscriber:
@@ -1726,6 +1727,72 @@ def test_geometry_change_reuses_both_expensive_caches(tmp_path: Path) -> None:
     )
     assert asr.calls == 0
     assert ai.calls == 0
+
+
+def test_subtitle_changes_reuse_asr_and_ai_and_preserve_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    validated = []
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda _self, **settings: validated.append(settings),
+    )
+    config = AppConfig("source.mp4", tmp_path / "out", "codex", "model-a")
+    _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    options = SubtitleOptions(
+        position="bottom-center",
+        margin_bottom="8%",
+        font_size="4.5%",
+        fonts_dir=tmp_path / "private-fonts",
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path,
+        asr,
+        ai,
+        config=replace(
+            config, subtitle_template="amber-word", subtitle_options=options
+        ),
+    )
+    assert asr.calls == ai.calls == 0
+    assert validated == [
+        {"template": "amber-word", "template_dir": None, "options": options}
+    ]
+    manifest = json.loads(result.manifest_path.read_text())
+    for clip in manifest["clips"]:
+        for version in clip["variants"]:
+            data = json.loads(
+                (result.manifest_path.parent / version["metadata"]).read_text()
+            )
+            assert data["render"]["subtitle_overrides"] == options.metadata()
+            assert "private-fonts" not in json.dumps(data)
+
+
+def test_invalid_subtitle_settings_fail_before_acquisition(
+    tmp_path, monkeypatch
+) -> None:
+    import sys
+    from types import ModuleType
+
+    provider = ModuleType("multisubs")
+
+    def reject(**_settings):
+        raise ValueError("inactive bottom margin")
+
+    provider.__dict__["build_subtitle_config"] = reject
+    provider.__dict__["MultisubsError"] = ValueError
+    monkeypatch.setitem(sys.modules, "multisubs", provider)
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        subtitle_options=SubtitleOptions(position="top-center", margin_bottom="0%"),
+    )
+    with pytest.raises(ConfigurationError, match="inactive bottom margin"):
+        run_pipeline(
+            config, acquire=lambda *_args, **_kwargs: pytest.fail("acquisition started")
+        )
+    assert not config.output_dir.exists()
 
 
 @pytest.mark.parametrize(

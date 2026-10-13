@@ -8,6 +8,7 @@ from pathlib import Path
 
 from multicuts.errors import ConfigurationError
 from multicuts.models import TimeRange
+from multicuts.subtitles import SubtitleOptions
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -60,8 +61,11 @@ class AppConfig:
     search_range: TimeRange | None = None
     clip_range: TimeRange | None = None
     full_video: bool = False
+    subtitle_options: SubtitleOptions = SubtitleOptions()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.subtitle_options, SubtitleOptions):
+            raise ConfigurationError("Subtitle options must use SubtitleOptions")
         for name in ("search_range", "clip_range"):
             value = getattr(self, name)
             if value is not None and not isinstance(value, TimeRange):

@@ -18,7 +18,7 @@ from multicuts.cache import (
     save_transcript,
     transcript_content_fingerprint,
 )
-from multicuts.errors import RenderingError, TranscriptionError
+from multicuts.errors import ConfigurationError, RenderingError, TranscriptionError
 from multicuts.models import (
     ClipTranscript,
     ClipTranscriptSegment,
@@ -27,6 +27,7 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
+from multicuts.subtitles import SubtitleOptions
 
 TRANSCRIPT_FIXTURE = (
     Path(__file__).parent.parent / "fixtures" / "multisubs_v4_1_transcript.json"
@@ -38,6 +39,7 @@ def _semantic_provider_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ModuleType("multisubs")
     provider.__dict__["transcribe_speech"] = lambda *_args, **_kwargs: None
     provider.__dict__["render_transcript"] = lambda *_args, **_kwargs: None
+    provider.__dict__["MultisubsError"] = ValueError
     monkeypatch.setitem(sys.modules, "multisubs", provider)
 
 
@@ -882,6 +884,87 @@ def test_public_render_api_receives_clip_local_speech_and_template(
     assert result.video_path.read_bytes() == b"rendered"
     assert result.provider_version == "5.0.0"
     assert result.template_resolved == "amber-word"
+
+
+def test_public_builder_configures_rendering_without_template_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    configured = object()
+    calls = []
+    options = SubtitleOptions(font_size="4.5%", italic=False, shadow_size="0px")
+
+    def build(**kwargs):
+        calls.append(kwargs)
+        return configured
+
+    def render(speech, video, output_dir, **kwargs):
+        assert speech == multisubs._speech_transcript(_clip())
+        assert video == raw
+        assert kwargs["subtitle_config"] is configured
+        assert "template" not in kwargs and "template_dir" not in kwargs
+        return _rendered_artifacts(output_dir)
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(provider, "build_subtitle_config", build, raising=False)
+    monkeypatch.setattr(provider, "render_transcript", render)
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.1.0")
+    adapter = MultisubsAdapter()
+    adapter.validate_subtitle_options(
+        template="yellow-pop", template_dir=None, options=options
+    )
+    result = adapter.subtitle_clip(
+        raw,
+        _clip(),
+        template="yellow-pop",
+        template_dir=None,
+        workspace=tmp_path / "work",
+        options=options,
+    )
+    assert (
+        calls
+        == [
+            {
+                "template": "yellow-pop",
+                "template_dir": None,
+                "overrides": {
+                    "font_size": "4.5%",
+                    "italic": False,
+                    "shadow_size": "0px",
+                },
+            }
+        ]
+        * 2
+    )
+    assert result.template_requested == result.template_resolved == "yellow-pop"
+
+
+def test_public_builder_failure_becomes_configuration_error(monkeypatch) -> None:
+    def reject(**_kwargs):
+        raise ValueError("font-weight cannot be combined with --bold or --no-bold")
+
+    monkeypatch.setattr(
+        sys.modules["multisubs"], "build_subtitle_config", reject, raising=False
+    )
+    with pytest.raises(
+        ConfigurationError, match="font-weight cannot be combined"
+    ) as error:
+        MultisubsAdapter().validate_subtitle_options(
+            template="yellow-pop",
+            template_dir=None,
+            options=SubtitleOptions(font_weight="700", bold=False),
+        )
+    assert "--subtitle-bold or --no-subtitle-bold" in str(error.value)
+
+
+def test_missing_public_builder_requires_provider_upgrade() -> None:
+    with pytest.raises(ConfigurationError, match="requires multisubs 5.1"):
+        MultisubsAdapter().validate_subtitle_options(
+            template="yellow-pop",
+            template_dir=None,
+            options=SubtitleOptions(font_size="4%"),
+        )
 
 
 def test_partial_segment_keeps_selected_word_text_without_outside_words() -> None:

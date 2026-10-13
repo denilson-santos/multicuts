@@ -149,6 +149,17 @@ The manifest's `analysis.editorial_context` and per-clip `viral_potential.editor
 
 ## Media and subtitles
 
+`subtitles.py` defines immutable project-owned `SubtitleOptions` with sparse
+presentation fields. The CLI resolves `--subtitle-*` / `SUBTITLE_*` precedence
+without loading the provider. When overrides are supplied, the pipeline asks
+`MultisubsAdapter` to validate them before acquisition. The adapter uses the
+public `build_subtitle_config()` to compose the selected template and overrides,
+and passes the resulting provider object only internally to `render_transcript`
+through `subtitle_config`, without also supplying template arguments. Relative
+units resolve during rendering against final geometry. The clip's
+`render.subtitle_overrides` records explicit values, replacing a local font
+directory with `custom_fonts: true`. Presentation never enters ASR or AI keys.
+
 Encoding keeps constant frame rate with per-stream `-fps_mode:v cfr` on
 FFmpeg 6+ and legacy `-vsync cfr` on older versions. Both encoding and Opus
 remuxing select compatibility behavior from FFmpeg's libavformat version.

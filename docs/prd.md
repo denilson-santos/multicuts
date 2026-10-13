@@ -22,6 +22,16 @@ Each proposal includes a social-media title in the language of its transcript, p
 
 ## Configuration and integrations
 
+Subtitle presentation settings available in multisubs are exposed individually
+through `--subtitle-*` flags and matching `SUBTITLE_*` environment variables.
+CLI values override process environment, then `.env`; omitted fields inherit
+the selected built-in or custom template. Explicit false and valid zero values
+are preserved. The public `multisubs.build_subtitle_config()` composes and
+validates these settings before source acquisition or ASR. Geometry-dependent
+checks run during rendering against each final frame. Presentation changes
+invalidate neither transcript nor AI caches. Clip metadata records supplied
+overrides without absolute font-directory paths.
+
 `--search-range START END` optionally limits automatic discovery and editorial
 boundary refinement to complete observed transcript units contained in an
 absolute source interval. Units crossing its edges are excluded. An interval

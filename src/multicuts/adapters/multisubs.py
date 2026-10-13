@@ -13,7 +13,7 @@ from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
 
-from multicuts.errors import RenderingError, TranscriptionError
+from multicuts.errors import ConfigurationError, RenderingError, TranscriptionError
 from multicuts.models import (
     ClipTranscript,
     ClipTranscriptWord,
@@ -22,6 +22,7 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
+from multicuts.subtitles import SubtitleOptions
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +346,35 @@ def _subtitle_progress(message: str) -> None:
         logger.warning("%s", message)
 
 
+def _build_subtitle_config(
+    template: str | None, template_dir: Path | None, options: SubtitleOptions
+) -> object:
+    try:
+        provider = importlib.import_module("multisubs")
+    except ImportError as exc:
+        raise ConfigurationError(
+            "Subtitle presentation requires multisubs 5.1+; check its installation"
+        ) from exc
+    builder = getattr(provider, "build_subtitle_config", None)
+    if not callable(builder):
+        raise ConfigurationError(
+            "Subtitle presentation requires multisubs 5.1+; update its installation"
+        )
+    try:
+        return builder(
+            template=template,
+            template_dir=template_dir,
+            overrides=options.overrides(),
+        )
+    except provider.MultisubsError as exc:
+        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", r"--\1subtitle-\2", str(exc))
+        raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
+    except Exception as exc:
+        raise ConfigurationError(
+            "Could not prepare subtitle settings; check the multisubs 5.1+ installation"
+        ) from exc
+
+
 def _render_subtitles(
     video_path: Path,
     clip: ClipTranscript,
@@ -352,9 +382,11 @@ def _render_subtitles(
     template: str | None,
     template_dir: Path | None,
     workspace: Path,
+    options: SubtitleOptions | None = None,
 ) -> SubtitleArtifacts:
     """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
+    options = options or SubtitleOptions()
     if not isinstance(clip, ClipTranscript):
         raise RenderingError("Clip subtitles require a ClipTranscript")
     try:
@@ -378,12 +410,16 @@ def _render_subtitles(
         ) from exc
     try:
         provider = importlib.import_module("multisubs")
+        presentation = (
+            {"subtitle_config": _build_subtitle_config(template, template_dir, options)}
+            if options.overrides()
+            else {"template": template, "template_dir": template_dir}
+        )
         generated = provider.render_transcript(
             speech,
             video,
             output_dir,
-            template=template,
-            template_dir=template_dir,
+            **presentation,
             progress=_subtitle_progress,
         )
     except Exception as exc:
@@ -447,6 +483,7 @@ class MultisubsAdapter:
         template: str | None,
         template_dir: Path | None,
         workspace: Path,
+        options: SubtitleOptions | None = None,
     ) -> SubtitleArtifacts:
         """Render existing clip words without starting a new ASR pass."""
         return _render_subtitles(
@@ -455,7 +492,18 @@ class MultisubsAdapter:
             template=template,
             template_dir=template_dir,
             workspace=workspace,
+            options=options,
         )
+
+    def validate_subtitle_options(
+        self,
+        *,
+        template: str | None,
+        template_dir: Path | None,
+        options: SubtitleOptions,
+    ) -> None:
+        """Validate presentation without media, models, or provider object leakage."""
+        _build_subtitle_config(template, template_dir, options)
 
     def version(self) -> str:
         """Read installed provider metadata without loading a transcription model."""
