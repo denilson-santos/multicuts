@@ -73,29 +73,16 @@ source .venv/bin/activate
 
 #### Install FFmpeg and ffprobe
 
-On **x86_64 Linux/WSL** with glibc 2.28 or newer, install the same pinned FFmpeg
-9.0.2 release-branch build used by CI, including libass and libx264:
+Install FFmpeg and ffprobe through your platform's package manager or a prebuilt
+package listed on the [FFmpeg download page](https://ffmpeg.org/download.html).
+Choose a build with libass (the `subtitles` filter) and libx264, and make both
+executables available on PATH. If they are already installed, verify that both
+commands are available and continue:
 
 ```bash
-python scripts/install_ffmpeg.py
-export PATH="$VIRTUAL_ENV/bin:$HOME/.local/bin:$PATH"
 ffmpeg -version
 ffprobe -version
 ```
-
-Keep `$HOME/.local/bin` before system directories on PATH in subsequent shells.
-The installer downloads the [BtbN monthly build from September 30, 2026](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08),
-verifies its pinned SHA-256, and checks both binaries and the subtitles filter
-before publishing them to `~/.local/bin`. Its exact version is
-`n9.0.2-17-g2a571b6068-20260930`; this includes release-branch fixes after the
-9.0.2 tag. Monthly builds are retained upstream for two years; update the pin
-before that period expires. The binaries' provenance is saved in
-`~/.local/bin/ffmpeg-build.json`.
-
-Use `--replace` explicitly to update an existing installation, `--bin-dir` for
-another destination, or `--archive` for an already downloaded archive (its
-checksum is still required). On other platforms, install FFmpeg/ffprobe with
-libass and libx264 through a suitable platform package.
 
 #### Prepare CPU or GPU
 
@@ -846,10 +833,10 @@ distributions, and interpreter record for the final `main` commit. The
 provisioned pull-request job uploads `release-provisioned-<commit>` with its
 provider, media, and build evidence.
 
-For the separate provisioned checks, use the pinned FFmpeg/ffprobe installation
-above (CI installs it in a runner-local directory and records its checksum) and
-make the following environment from the compared wheel. Installation resolves
-the complete runtime dependency set, including the official `multisubs`
+For the separate provisioned checks, ensure FFmpeg/ffprobe with libass and
+libx264 are available on PATH, then make the following environment from the
+compared wheel. Installation resolves the complete runtime dependency set,
+including the official `multisubs`
 WhisperX extra, and can require substantial downloads/disk space:
 
 ```bash
