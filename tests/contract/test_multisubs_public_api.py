@@ -2,11 +2,14 @@
 
 import importlib
 import inspect
+from dataclasses import fields
 from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+
+from multicuts.subtitles import SubtitleOptions
 
 
 def _installed_provider() -> ModuleType:
@@ -117,6 +120,29 @@ def test_public_subtitle_builder_rejects_invalid_settings(overrides) -> None:
     provider = _installed_provider()
     with pytest.raises(provider.ValidationError):
         provider.build_subtitle_config(template="yellow-pop", overrides=overrides)
+
+
+def test_public_subtitle_builder_supports_every_owned_presentation_field() -> None:
+    provider = _installed_provider()
+    overrides = {field.name: None for field in fields(SubtitleOptions)}
+    assert len(overrides) == 57
+    assert provider.build_subtitle_config(
+        template="yellow-pop", overrides=overrides
+    ) == provider.build_subtitle_config(template="yellow-pop")
+
+
+def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None:
+    provider = _installed_provider()
+    (tmp_path / "custom.json").write_text(
+        '{"schema_version":1,"name":"custom","base":"yellow-pop",'
+        '"layout":{"margins":{"bottom":"15%"}}}',
+        encoding="utf-8",
+    )
+    configured = provider.build_subtitle_config(
+        template="custom", template_dir=tmp_path, overrides={"font_size": "4.5%"}
+    )
+    assert configured.layout.margin_bottom.original == "15%"
+    assert configured.style.typography.font_size.original == "4.5%"
 
 
 def test_public_speech_interchange_preserves_optional_alignment_and_language() -> None:

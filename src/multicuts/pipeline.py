@@ -298,6 +298,9 @@ def _clip_metadata(
             "height": height,
             "subtitles_enabled": subtitles_enabled,
             "subtitle_template": template,
+            "subtitle_overrides": config.subtitle_options.metadata()
+            if subtitles_enabled
+            else {},
             "subtitle_provider": "multisubs" if subtitles_enabled else None,
             "subtitle_provider_version": transcript.provider_version
             if subtitles_enabled and transcript is not None
@@ -391,6 +394,12 @@ def run_pipeline(
     ] = render_short_horizontal,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
+    if config.subtitle_options.overrides():
+        MultisubsAdapter().validate_subtitle_options(
+            template=config.subtitle_template,
+            template_dir=config.subtitle_template_dir,
+            options=config.subtitle_options,
+        )
     started = perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")

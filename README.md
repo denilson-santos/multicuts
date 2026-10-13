@@ -451,6 +451,30 @@ additional formats only, use `--short-variant-subtitles` /
 `--no-short-variant-subtitles` or `--long-variant-subtitles` /
 `--no-long-variant-subtitles`; these flags do not change primary subtitles.
 
+Adjust a template directly from the command line. Only supplied fields replace
+template values; omitted settings inherit. For example:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --no-variants \
+  --subtitle-template yellow-pop \
+  --subtitle-position bottom-center --subtitle-margin-bottom 8% \
+  --subtitle-font-size 4.5% --subtitle-text-case original \
+  --subtitle-animation-word-text-emphasis none
+```
+
+All presentation options use the `--subtitle-` prefix and have matching
+`SUBTITLE_` environment variables: `--subtitle-font-size` corresponds to
+`SUBTITLE_FONT_SIZE`. CLI values override process environment, then `.env`, then
+the selected template. Explicit false values and valid zero lengths/opacity
+replace inherited values. Changing presentation reuses transcription and AI
+caches and does not run ASR again.
+
+Lengths accept `%` or `px`; percentages resolve against each final render's
+geometry or the corresponding font/layout metric. Horizontal shorts retain
+placement inside their vertical foreground. See [presentation options](#subtitle-positioning)
+and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#subtitle-configuration-reference)
+for units, valid values, and combinations.
+
 <details>
 <summary><strong>Transcript preservation and subtitle layout</strong></summary>
 
@@ -582,6 +606,107 @@ Choose the subtitle style and control captions for primary outputs and variants.
 | `--short-variant-subtitles` / `--no-short-variant-subtitles` | Override captions only for additional short formats; environment: `SHORT_VARIANT_SUBTITLES_ENABLED`. |
 | `--long-variant-subtitles` / `--no-long-variant-subtitles` | Override captions only for additional long formats; environment: `LONG_VARIANT_SUBTITLES_ENABLED`. |
 
+#### Subtitle positioning
+
+Only explicitly supplied settings override the selected template.
+
+| Option | Purpose |
+| --- | --- |
+| `--subtitle-position POSITION` | Subtitle position, such as bottom-center: top/middle/bottom with left/center/right. |
+| `--subtitle-margin-left LENGTH` | Left margin as a percentage of width or pixels. |
+| `--subtitle-margin-right LENGTH` | Right margin as a percentage of width or pixels. |
+| `--subtitle-margin-top LENGTH` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
+| `--subtitle-margin-bottom LENGTH` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
+| `--subtitle-max-width LENGTH` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
+| `--subtitle-max-height LENGTH` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
+| `--subtitle-position-x LENGTH` | Horizontal anchor coordinate from the left edge of the final frame. |
+| `--subtitle-position-y LENGTH` | Vertical anchor coordinate from the top edge of the final frame. |
+| `--subtitle-anchor POSITION` | Required subtitle-box anchor for custom coordinates. |
+
+Only top positions accept `--subtitle-margin-top`; only bottom positions accept
+`--subtitle-margin-bottom`. Middle positions accept neither. To use exact
+coordinates, supply `--subtitle-position-x`, `--subtitle-position-y`,
+`--subtitle-anchor`, `--subtitle-max-width`, and `--subtitle-max-height`
+together, without position or margin overrides. The envelope must fit the final
+video; geometry-dependent limits are checked during rendering.
+
+#### Subtitle typography
+
+Only explicitly supplied settings override the selected template.
+
+| Option | Purpose |
+| --- | --- |
+| `--subtitle-font NAME` | Font family. |
+| `--subtitle-font-weight WEIGHT` | Font weight name or rank 100-900 in steps of 100; cannot be combined with bold flags. |
+| `--subtitle-bold` / `--no-subtitle-bold` | Use bold weight (700) or regular weight (400). |
+| `--subtitle-italic` / `--no-subtitle-italic` | Enable or disable italic text. |
+| `--subtitle-text-case MODE` | Subtitle display casing: original, uppercase, or lowercase. |
+| `--subtitle-fonts-dir DIR` | Directory containing additional subtitle font files. |
+| `--subtitle-font-size LENGTH` | Font size as a percentage of the render height or pixels. |
+| `--subtitle-letter-spacing LENGTH` | Extra character spacing in pixels or as a percentage of font size. |
+| `--subtitle-line-height auto\|LENGTH` | Distance between text baselines: auto, pixels, or a percentage of natural line height. |
+
+#### Subtitle appearance
+
+Only explicitly supplied settings override the selected template.
+
+| Option | Purpose |
+| --- | --- |
+| `--subtitle-text-color COLOR` | Subtitle text color. |
+| `--subtitle-backdrop TYPE` | Subtitle backdrop: none, outline, or box. |
+| `--subtitle-backdrop-color COLOR` | Outline, box, and shadow color. |
+| `--subtitle-word-backdrop TYPE` | Timed word decoration: none, outline, or box. |
+| `--subtitle-word-backdrop-color COLOR` | Word-box color using #RRGGBB or #RRGGBBAA. |
+| `--subtitle-opacity PERCENT` | Opacity from 0% through 100%, multiplied with each component color opacity. |
+| `--subtitle-backdrop-size LENGTH` | Backdrop/outline size as a percentage of the resolved font size or pixels. |
+| `--subtitle-word-backdrop-size LENGTH` | Timed word-box padding as a percentage of the resolved font size or pixels. |
+| `--subtitle-shadow-size LENGTH` | Shadow size as a percentage of the resolved font size or pixels. |
+
+#### Subtitle animations
+
+Only explicitly supplied settings override the selected template.
+
+| Option | Purpose |
+| --- | --- |
+| `--subtitle-animation-cue-text-entrance TYPE` | Cue text entrance animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-emphasis TYPE` | Cue text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-exit TYPE` | Cue text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-text-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-entrance TYPE` | Cue backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-emphasis TYPE` | Cue backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-exit TYPE` | Cue backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-cue-backdrop-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-entrance TYPE` | Word text entrance animation; omission inherits the template. |
+| `--subtitle-animation-word-text-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-emphasis TYPE` | Word text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-word-text-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-exit TYPE` | Word text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-word-text-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-entrance TYPE` | Word backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-emphasis TYPE` | Word backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-exit TYPE` | Word backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-word-backdrop-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-mode MODE` | Timed word text behavior: progressive or active-word. |
+| `--subtitle-animation-word-backdrop-mode MODE` | Timed word backdrop behavior: progressive or active-word. |
+| `--subtitle-animation-word-text-highlight-color COLOR` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
+| `--subtitle-disable-cue-animations` / `--no-subtitle-disable-cue-animations` | Remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
+| `--subtitle-disable-word-animations` / `--no-subtitle-disable-word-animations` | Remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+
+Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
+and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases
+do not accept duration overrides. Set a phase to `none` to clear its inherited
+effect. Scope disables apply after validation; their paired `--no-subtitle-disable-…`
+flags clear the corresponding disable setting. Word effects still depend on
+observed alignment; missing alignment uses the normal provider fallback.
+See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#cue-and-word-effects)
+for the types accepted by each track and phase.
+
 #### Execution
 
 Control intermediate files, cache reuse, and terminal output.
@@ -695,7 +820,7 @@ Long sources are split into overlapping transcript blocks. `--block-chars` and `
 
 Cache reuse depends on the source, transcription settings, AI backend, model, effort, prompt version, and transcript content. Only normalized transcripts and validated AI responses are cached.
 
-Subtitles are generated after the final crop so they fit the clip frame. Complete word timings are required: clips are never retranscribed and timestamps are never invented. Words with zero duration are accepted and preserved in the transcript cache. For display, they are grouped with an adjacent timed word using observed outer bounds; if every selected word is a point, the group uses the observed segment interval. These words share the group's animation instead of receiving individual timing. `multisubs` splits supplied timed cues when they exceed the final layout.
+Subtitles are generated after the final crop so they fit the clip frame. Original segment and word timings are preserved, including zero-duration words. Missing or partial alignment uses the native segment fallback and suppresses unavailable word effects with a warning. Point-only groups use observed segment bounds when they cannot form a positive cue. Clips are never retranscribed and timestamps are never invented. `multisubs` performs subtitle grouping and layout once against the final configuration and geometry.
 
 </details>
 

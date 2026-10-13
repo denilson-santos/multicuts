@@ -22,6 +22,7 @@ from multicuts.models import (
     SubtitleArtifacts,
     Transcript,
 )
+from multicuts.subtitles import SubtitleOptions
 
 
 class SubtitleProvider(Protocol):
@@ -35,6 +36,7 @@ class SubtitleProvider(Protocol):
         template: str | None,
         template_dir: Path | None,
         workspace: Path,
+        options: SubtitleOptions | None = None,
     ) -> SubtitleArtifacts: ...
 
 
@@ -473,6 +475,7 @@ def render_final(
         template=config.subtitle_template,
         template_dir=config.subtitle_template_dir,
         workspace=work / f"subtitles-{clip.proposal.id}",
+        options=config.subtitle_options,
     )
     final_media = _inspect(artifacts.video_path)
     if (

@@ -8,7 +8,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Annotated
 
@@ -28,6 +28,7 @@ from multicuts.errors import (
 )
 from multicuts.models import TimeRange
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
+from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
 
 PipelineRunner = Callable[[AppConfig], RunResult]
 logger = logging.getLogger(__name__)
@@ -235,6 +236,23 @@ def _boolean_override(
         return None
     raw = setting(name)
     return None if raw is None else _parse_boolean(raw, name)
+
+
+def _subtitle_options(options: SubtitleOptions) -> SubtitleOptions:
+    values: dict[str, object] = {}
+    for field in fields(options):
+        name = "SUBTITLE_" + field.name.upper()
+        raw = _value(getattr(options, field.name), name, None)
+        if raw is None:
+            continue
+        if field.name in SUBTITLE_BOOLEAN_FIELDS:
+            raw = _parse_boolean(raw, name)
+        elif field.name == "fonts_dir":
+            raw = Path(str(raw)).expanduser()
+        elif not isinstance(raw, str):
+            raise ConfigurationError(f"{name} must be text")
+        values[field.name] = raw
+    return replace(options, **values)
 
 
 app = typer.Typer(
@@ -532,6 +550,568 @@ def run_command(
             rich_help_panel="Subtitles",
         ),
     ] = None,
+    subtitle_position: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-position",
+            metavar="POSITION",
+            help=(
+                "Subtitle position, such as bottom-center: top/middle/bottom with "
+                "left/center/right."
+            ),
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_margin_left: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-margin-left",
+            metavar="LENGTH",
+            help="Left margin as a percentage of width or pixels.",
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_margin_right: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-margin-right",
+            metavar="LENGTH",
+            help="Right margin as a percentage of width or pixels.",
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_margin_top: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-margin-top",
+            metavar="LENGTH",
+            help=(
+                "Top-position margin as a percentage of render height or pixels; "
+                "an explicit value is rejected for middle and bottom positions."
+            ),
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_margin_bottom: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-margin-bottom",
+            metavar="LENGTH",
+            help=(
+                "Bottom-position margin as a percentage of render height or "
+                "pixels; an explicit value is rejected for top and middle "
+                "positions."
+            ),
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_max_width: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-max-width",
+            metavar="LENGTH",
+            help=(
+                "Maximum subtitle line width. Native percentages use the width "
+                "after horizontal margins; explicit percentages use render width."
+            ),
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_max_height: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-max-height",
+            metavar="LENGTH",
+            help=(
+                "Maximum subtitle box height. Native percentages use the height "
+                "after the active margin; explicit percentages use the render "
+                "height."
+            ),
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_position_x: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-position-x",
+            metavar="LENGTH",
+            help="Horizontal anchor coordinate from the left edge of the final frame.",
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_position_y: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-position-y",
+            metavar="LENGTH",
+            help="Vertical anchor coordinate from the top edge of the final frame.",
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_anchor: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-anchor",
+            metavar="POSITION",
+            help="Required subtitle-box anchor for custom coordinates.",
+            rich_help_panel="Subtitle positioning",
+        ),
+    ] = None,
+    subtitle_font: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-font",
+            metavar="NAME",
+            help="Font family.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_font_weight: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-font-weight",
+            metavar="WEIGHT",
+            help=(
+                "Font weight name or rank 100-900 in steps of 100; cannot be "
+                "combined with bold flags."
+            ),
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_bold: Annotated[
+        bool | None,
+        typer.Option(
+            "--subtitle-bold/--no-subtitle-bold",
+            help="Use bold weight (700) or regular weight (400).",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_italic: Annotated[
+        bool | None,
+        typer.Option(
+            "--subtitle-italic/--no-subtitle-italic",
+            help="Enable or disable italic text.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_text_case: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-text-case",
+            metavar="MODE",
+            help="Subtitle display casing: original, uppercase, or lowercase.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_fonts_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--subtitle-fonts-dir",
+            metavar="DIR",
+            help="Directory containing additional subtitle font files.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_font_size: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-font-size",
+            metavar="LENGTH",
+            help="Font size as a percentage of the render height or pixels.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_letter_spacing: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-letter-spacing",
+            metavar="LENGTH",
+            help="Extra character spacing in pixels or as a percentage of font size.",
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_line_height: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-line-height",
+            metavar="auto|LENGTH",
+            help=(
+                "Distance between text baselines: auto, pixels, or a percentage "
+                "of natural line height."
+            ),
+            rich_help_panel="Subtitle typography",
+        ),
+    ] = None,
+    subtitle_text_color: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-text-color",
+            metavar="COLOR",
+            help="Subtitle text color.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_backdrop: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-backdrop",
+            metavar="TYPE",
+            help="Subtitle backdrop: none, outline, or box.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_backdrop_color: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-backdrop-color",
+            metavar="COLOR",
+            help="Outline, box, and shadow color.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_word_backdrop: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-word-backdrop",
+            metavar="TYPE",
+            help="Timed word decoration: none, outline, or box.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_word_backdrop_color: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-word-backdrop-color",
+            metavar="COLOR",
+            help="Word-box color using #RRGGBB or #RRGGBBAA.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_opacity: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-opacity",
+            metavar="PERCENT",
+            help=(
+                "Opacity from 0% through 100%, multiplied with each component "
+                "color opacity."
+            ),
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_backdrop_size: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-backdrop-size",
+            metavar="LENGTH",
+            help=(
+                "Backdrop/outline size as a percentage of the resolved font size "
+                "or pixels."
+            ),
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_word_backdrop_size: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-word-backdrop-size",
+            metavar="LENGTH",
+            help=(
+                "Timed word-box padding as a percentage of the resolved font size "
+                "or pixels."
+            ),
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_shadow_size: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-shadow-size",
+            metavar="LENGTH",
+            help="Shadow size as a percentage of the resolved font size or pixels.",
+            rich_help_panel="Subtitle appearance",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_entrance: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-entrance",
+            metavar="TYPE",
+            help="Cue text entrance animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_entrance_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-entrance-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_emphasis: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-emphasis",
+            metavar="TYPE",
+            help="Cue text emphasis animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_emphasis_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-emphasis-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_exit: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-exit",
+            metavar="TYPE",
+            help="Cue text exit animation; omission inherits the selected template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_text_exit_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-text-exit-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_entrance: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-entrance",
+            metavar="TYPE",
+            help=(
+                "Cue backdrop entrance animation; omission inherits the selected "
+                "template."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_entrance_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-entrance-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_emphasis: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-emphasis",
+            metavar="TYPE",
+            help=(
+                "Cue backdrop emphasis animation; omission inherits the selected "
+                "template."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_emphasis_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-emphasis-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_exit: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-exit",
+            metavar="TYPE",
+            help="Cue backdrop exit animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_cue_backdrop_exit_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-cue-backdrop-exit-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_entrance: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-entrance",
+            metavar="TYPE",
+            help="Word text entrance animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_entrance_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-entrance-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_emphasis: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-emphasis",
+            metavar="TYPE",
+            help="Word text emphasis animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_emphasis_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-emphasis-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_exit: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-exit",
+            metavar="TYPE",
+            help="Word text exit animation; omission inherits the selected template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_exit_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-exit-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_entrance: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-entrance",
+            metavar="TYPE",
+            help=(
+                "Word backdrop entrance animation; omission inherits the selected "
+                "template."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_entrance_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-entrance-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_emphasis: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-emphasis",
+            metavar="TYPE",
+            help=(
+                "Word backdrop emphasis animation; omission inherits the selected "
+                "template."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_emphasis_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-emphasis-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_exit: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-exit",
+            metavar="TYPE",
+            help="Word backdrop exit animation; omission inherits the template.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_exit_duration: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-exit-duration",
+            metavar="DURATION",
+            help="Override this effect duration with a value such as 150ms or 0.15s.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-mode",
+            metavar="MODE",
+            help="Timed word text behavior: progressive or active-word.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_backdrop_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-backdrop-mode",
+            metavar="MODE",
+            help="Timed word backdrop behavior: progressive or active-word.",
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_animation_word_text_highlight_color: Annotated[
+        str | None,
+        typer.Option(
+            "--subtitle-animation-word-text-highlight-color",
+            metavar="COLOR",
+            help=(
+                "Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight "
+                "emphasis."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_disable_cue_animations: Annotated[
+        bool | None,
+        typer.Option(
+            "--subtitle-disable-cue-animations/--no-subtitle-disable-cue-animations",
+            help=(
+                "Remove all cue text/backdrop animation phases while preserving "
+                "the static cue backdrop."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
+    subtitle_disable_word_animations: Annotated[
+        bool | None,
+        typer.Option(
+            "--subtitle-disable-word-animations/--no-subtitle-disable-word-animations",
+            help=(
+                "Remove all word text/backdrop animation phases, word highlight, "
+                "and timed word decoration."
+            ),
+            rich_help_panel="Subtitle animations",
+        ),
+    ] = None,
     block_chars: Annotated[
         int | None,
         typer.Option(
@@ -649,6 +1229,67 @@ def run_command(
         subtitle_template_dir=Path(str(template_dir)).expanduser()
         if template_dir
         else None,
+        subtitle_options=_subtitle_options(
+            SubtitleOptions(
+                position=subtitle_position,
+                margin_left=subtitle_margin_left,
+                margin_right=subtitle_margin_right,
+                margin_top=subtitle_margin_top,
+                margin_bottom=subtitle_margin_bottom,
+                max_width=subtitle_max_width,
+                max_height=subtitle_max_height,
+                position_x=subtitle_position_x,
+                position_y=subtitle_position_y,
+                anchor=subtitle_anchor,
+                font=subtitle_font,
+                font_weight=subtitle_font_weight,
+                bold=subtitle_bold,
+                italic=subtitle_italic,
+                text_case=subtitle_text_case,
+                fonts_dir=subtitle_fonts_dir,
+                font_size=subtitle_font_size,
+                letter_spacing=subtitle_letter_spacing,
+                line_height=subtitle_line_height,
+                text_color=subtitle_text_color,
+                backdrop=subtitle_backdrop,
+                backdrop_color=subtitle_backdrop_color,
+                word_backdrop=subtitle_word_backdrop,
+                word_backdrop_color=subtitle_word_backdrop_color,
+                opacity=subtitle_opacity,
+                backdrop_size=subtitle_backdrop_size,
+                word_backdrop_size=subtitle_word_backdrop_size,
+                shadow_size=subtitle_shadow_size,
+                animation_cue_text_entrance=subtitle_animation_cue_text_entrance,
+                animation_cue_text_entrance_duration=subtitle_animation_cue_text_entrance_duration,
+                animation_cue_text_emphasis=subtitle_animation_cue_text_emphasis,
+                animation_cue_text_emphasis_duration=subtitle_animation_cue_text_emphasis_duration,
+                animation_cue_text_exit=subtitle_animation_cue_text_exit,
+                animation_cue_text_exit_duration=subtitle_animation_cue_text_exit_duration,
+                animation_cue_backdrop_entrance=subtitle_animation_cue_backdrop_entrance,
+                animation_cue_backdrop_entrance_duration=subtitle_animation_cue_backdrop_entrance_duration,
+                animation_cue_backdrop_emphasis=subtitle_animation_cue_backdrop_emphasis,
+                animation_cue_backdrop_emphasis_duration=subtitle_animation_cue_backdrop_emphasis_duration,
+                animation_cue_backdrop_exit=subtitle_animation_cue_backdrop_exit,
+                animation_cue_backdrop_exit_duration=subtitle_animation_cue_backdrop_exit_duration,
+                animation_word_text_entrance=subtitle_animation_word_text_entrance,
+                animation_word_text_entrance_duration=subtitle_animation_word_text_entrance_duration,
+                animation_word_text_emphasis=subtitle_animation_word_text_emphasis,
+                animation_word_text_emphasis_duration=subtitle_animation_word_text_emphasis_duration,
+                animation_word_text_exit=subtitle_animation_word_text_exit,
+                animation_word_text_exit_duration=subtitle_animation_word_text_exit_duration,
+                animation_word_backdrop_entrance=subtitle_animation_word_backdrop_entrance,
+                animation_word_backdrop_entrance_duration=subtitle_animation_word_backdrop_entrance_duration,
+                animation_word_backdrop_emphasis=subtitle_animation_word_backdrop_emphasis,
+                animation_word_backdrop_emphasis_duration=subtitle_animation_word_backdrop_emphasis_duration,
+                animation_word_backdrop_exit=subtitle_animation_word_backdrop_exit,
+                animation_word_backdrop_exit_duration=subtitle_animation_word_backdrop_exit_duration,
+                animation_word_text_mode=subtitle_animation_word_text_mode,
+                animation_word_backdrop_mode=subtitle_animation_word_backdrop_mode,
+                animation_word_text_highlight_color=subtitle_animation_word_text_highlight_color,
+                disable_cue_animations=subtitle_disable_cue_animations,
+                disable_word_animations=subtitle_disable_word_animations,
+            )
+        ),
         block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
         block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
         keep_intermediates=bool(keep_intermediates),
