@@ -260,14 +260,17 @@ JSON should be human-readable enough for diagnostics and stable enough for fixtu
 
 FFmpeg is an external boundary.
 
-The x86_64 Linux/WSL installation and provisioned CI use the same FFmpeg 9.0.2
-release-branch build pinned by URL, SHA-256, and exact version in
-`scripts/install_ffmpeg.py`. Use the retained monthly GPL build for libass and
-libx264; do not use a floating `latest` URL or a daily build that expires after
-14 days. Update the monthly pin before its two-year upstream retention ends.
-The installer checks the archive and staged binaries before publication and
-requires `--replace` to overwrite an existing installation. Record its
+Provisioned CI uses the FFmpeg 9.0.2 release-branch build pinned by URL, SHA-256,
+and exact version in `.github/workflows/ci.yml`. The provisioned job downloads
+and verifies the archive, extracts only FFmpeg/ffprobe into its temporary
+directory, and checks both versions, libass, and libx264 before adding them to PATH.
+Use the retained monthly GPL build for libass and libx264; do not use a floating
+`latest` URL or a daily build that expires after 14 days. Update the monthly pin
+before its two-year upstream retention ends. Record the generated
 `ffmpeg-build.json` alongside media version evidence.
+
+Local environments manage their own FFmpeg/ffprobe installation. Both tools must
+be on PATH, with libass and libx264 available in the FFmpeg build.
 
 ### Process execution
 
