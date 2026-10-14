@@ -278,8 +278,8 @@ both sides. Vertical and horizontal dimensions remain configurable.
 
 Use `--no-variants` (or `RENDER_VARIANTS=false`) for only the primary output.
 `--short-variants` / `--no-short-variants` and `--long-variants` /
-`--no-long-variants` override this default per class. Individual flags such as
-`--short-horizontal-blur` / `--no-short-horizontal-blur` override it per output.
+`--no-long-variants` override this default per class. Use `--render short:horizontal-blur`
+or `--no-render short:horizontal-blur` to override it per output.
 Square primaries retain other enabled variants. If the preferred primary is
 unavailable or disabled, the first enabled supported variant becomes primary.
 Explicitly enabling an unsupported variant fails before transcription. Every
@@ -457,34 +457,77 @@ multicuts ./interview.mp4 --output-dir ./interview-cuts \
   --no-variants --no-subtitles
 ```
 
-For every variant in the table, replace `TYPE` with `short` or `long` and
-`VARIANT` with its name:
+Use `all`, `short`, `long`, or `TYPE:VARIANT` as a scope. Each subtitle
+option accepts a shared value or `SCOPE=VALUE` and can be repeated for different
+scopes. More specific scopes win within the same configuration source,
+independently of argument order. Conflicting values for the same field and scope
+are rejected. Every template, positioning, typography, appearance, and animation
+field supports this syntax.
 
-| Control | CLI | Environment |
+| Control | CLI example | Environment |
 | --- | --- | --- |
-| Render | `--TYPE-VARIANT` / `--no-TYPE-VARIANT` | `TYPE_VARIANT_ENABLED` |
-| Captions | `--subtitle-TYPE-VARIANT` / `--no-subtitle-TYPE-VARIANT` | `SUBTITLE_TYPE_VARIANT_ENABLED` |
-| Template | `--subtitle-TYPE-VARIANT-template NAME` | `SUBTITLE_TYPE_VARIANT_TEMPLATE` |
-| Custom templates | `--subtitle-TYPE-VARIANT-template-dir PATH` | `SUBTITLE_TYPE_VARIANT_TEMPLATE_DIR` |
-| Every presentation field | `--subtitle-TYPE-VARIANT-FIELD VALUE` | `SUBTITLE_TYPE_VARIANT_FIELD` |
+| Render a class | `--render short` / `--no-render long` | `SHORT_CLIPS_ENABLED` / `LONG_CLIPS_ENABLED` |
+| Render a variant | `--render short:horizontal-blur` / `--no-render short:horizontal-blur` | `SHORT_HORIZONTAL_BLUR_ENABLED` |
+| Shared captions | `--subtitle-enabled false` | Shared CLI shortcut; no shared environment variable |
+| Class captions | `--subtitle-enabled short=true` | `SUBTITLE_SHORT_ENABLED` |
+| Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_SHORT_VERTICAL_ENABLED` |
+| Shared font size | `--subtitle-font-size 4%` | `SUBTITLE_FONT_SIZE` |
+| Class font size | `--subtitle-font-size short=5%` | `SUBTITLE_SHORT_FONT_SIZE` |
+| Variant font size | `--subtitle-font-size short:vertical=6%` | `SUBTITLE_SHORT_VERTICAL_FONT_SIZE` |
+| Variant template | `--subtitle-template long:horizontal=yellow-pop` | `SUBTITLE_LONG_HORIZONTAL_TEMPLATE` |
+| Custom templates | `--subtitle-template-dir short:vertical=./templates` | `SUBTITLE_SHORT_VERTICAL_TEMPLATE_DIR` |
 
-Environment names are uppercase with underscores, for example
-`SHORT_HORIZONTAL_BLUR_ENABLED` and `SUBTITLE_SHORT_HORIZONTAL_BLUR_FONT_SIZE`.
-Class-wide captions use `--subtitle-short` / `--no-subtitle-short` and
-`--subtitle-long` / `--no-subtitle-long`, with `SUBTITLE_SHORT_ENABLED` and
-`SUBTITLE_LONG_ENABLED`. All template and presentation fields also support class
-scope, for example `--subtitle-long-template` and `--subtitle-short-position`.
-Boolean presentation fields support the corresponding `--no-subtitle-...` flag.
+Environment names remain uppercase with underscores. Boolean fields take explicit
+values, for example `--subtitle-bold short:vertical=false`. Unscoped values and
+`all=VALUE` are equivalent. Global/class/companion shortcuts such as
+`--no-subtitles`, `--no-long-clips`, and `--short-variant-subtitles` remain
+available. A disabled class still suppresses all its variants.
 
-For example, add just one companion variant, disable its captions, and change
+For example, add one companion variant, disable its captions, and change
 vertical-short subtitle placement:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
-  --no-variants --short-horizontal-blur --no-subtitle-short-horizontal-blur \
-  --subtitle-short-vertical-position top-center \
-  --subtitle-short-vertical-font-size 5%
+  --no-variants --render short:horizontal-blur \
+  --subtitle-enabled short:horizontal-blur=false \
+  --subtitle-position short:vertical=top-center \
+  --subtitle-font-size short:vertical=5%
 ```
+
+#### JSON presets
+
+Use `--config ./outputs.json` to reuse output and subtitle settings:
+
+```json
+{
+  "variants": {"all": false},
+  "render": {"long": false, "short:horizontal-blur": true},
+  "subtitles": {
+    "all": {"template": "yellow-pop", "font_size": "4%"},
+    "short:vertical": {"font_size": "5%", "position": "top-center"},
+    "short:horizontal-blur": {"enabled": false}
+  }
+}
+```
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts --config ./outputs.json \
+  --subtitle-font-size short:vertical=6%
+```
+
+`render` maps scopes to booleans. `variants` maps `all`, `short`, or `long` to
+booleans controlling additional formats. `subtitles` maps scopes to `enabled`,
+`template`, `template_dir`, and presentation fields written in snake_case.
+Lengths and other textual settings use strings; boolean fields use JSON
+`true`/`false`. Relative `fonts_dir` and `template_dir` paths resolve from the
+preset's directory; CLI paths resolve from the working directory. Unknown
+fields/scopes, duplicate JSON keys, and malformed values fail before media work.
+
+Precedence is CLI, process environment, `.env`, preset file, then built-in/template
+defaults. Existing `.env` settings therefore override a preset. The file contains
+only output/subtitle settings; source, intervals, output directory, AI/ASR
+configuration, and execution controls continue to use their existing CLI and
+environment mechanisms.
 
 ### Subtitle controls
 
@@ -518,10 +561,11 @@ multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --no-variants \
 All presentation options use the `--subtitle-` prefix and have matching
 `SUBTITLE_` environment variables: `--subtitle-font-size` corresponds to
 `SUBTITLE_FONT_SIZE`. CLI values override process environment, then `.env`, then
-the selected template. Within each source, variant settings override class
-settings, which override shared settings; precedence is applied per field.
-Explicit false values and valid zero lengths/opacity replace inherited values. Changing presentation reuses transcription and AI
-caches and does not run ASR again.
+the optional preset, then the selected template. Within each source, variant
+settings override class settings, which override shared settings; precedence is
+applied per field. Explicit false values and valid zero lengths/opacity replace
+inherited values. Changing presentation reuses transcription and AI caches and
+does not run ASR again.
 
 Lengths accept `%` or `px`; percentages resolve against each final render's
 geometry or the corresponding font/layout metric. This includes blurred canvases.
@@ -585,8 +629,8 @@ without printing its contents.
 
 #### Configuration precedence
 
-Settings are resolved in this order: CLI flags, process environment, `.env`, then
-defaults. Within each source, more specific settings win: variant subtitles over
+Settings are resolved in this order: CLI flags, process environment, `.env`, the
+optional output/subtitle preset, then defaults. Within each source, more specific settings win: variant subtitles over
 class subtitles, or class variants over the shared variant switch. Specific CLI
 flags take precedence regardless of argument order. For example:
 
@@ -691,8 +735,8 @@ Only explicitly supplied settings override the selected template.
 | --- | --- |
 | `--subtitle-font NAME` | Font family. |
 | `--subtitle-font-weight WEIGHT` | Font weight name or rank 100-900 in steps of 100; cannot be combined with bold flags. |
-| `--subtitle-bold` / `--no-subtitle-bold` | Use bold weight (700) or regular weight (400). |
-| `--subtitle-italic` / `--no-subtitle-italic` | Enable or disable italic text. |
+| `--subtitle-bold [SCOPE=]BOOL` | Use bold weight (700) or regular weight (400). |
+| `--subtitle-italic [SCOPE=]BOOL` | Enable or disable italic text. |
 | `--subtitle-text-case MODE` | Subtitle display casing: original, uppercase, or lowercase. |
 | `--subtitle-fonts-dir DIR` | Directory containing additional subtitle font files. |
 | `--subtitle-font-size LENGTH` | Font size as a percentage of the render height or pixels. |
@@ -748,14 +792,14 @@ Only explicitly supplied settings override the selected template.
 | `--subtitle-animation-word-text-mode MODE` | Timed word text behavior: progressive or active-word. |
 | `--subtitle-animation-word-backdrop-mode MODE` | Timed word backdrop behavior: progressive or active-word. |
 | `--subtitle-animation-word-text-highlight-color COLOR` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
-| `--subtitle-disable-cue-animations` / `--no-subtitle-disable-cue-animations` | Remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
-| `--subtitle-disable-word-animations` / `--no-subtitle-disable-word-animations` | Remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+| `--subtitle-disable-cue-animations [SCOPE=]BOOL` | Remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
+| `--subtitle-disable-word-animations [SCOPE=]BOOL` | Remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
 
 Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
 and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases
 do not accept duration overrides. Set a phase to `none` to clear its inherited
-effect. Scope disables apply after validation; their paired `--no-subtitle-disable-…`
-flags clear the corresponding disable setting. Word effects still depend on
+effect. Scope disables apply after validation; pass `false` to clear the
+corresponding disable setting. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
 See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
@@ -763,6 +807,8 @@ for the types accepted by each track and phase.
 #### Execution
 
 Control intermediate files, cache reuse, and terminal output.
+
+Use `--config PATH` for an optional JSON output/subtitle preset.
 
 | Option | Purpose |
 | --- | --- |

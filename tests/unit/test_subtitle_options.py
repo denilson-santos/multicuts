@@ -89,10 +89,7 @@ def parse(*flags):
 @pytest.mark.parametrize(("key", "value"), CASES)
 def test_each_presentation_option_is_available_directly_in_cli(key, value):
     flag = "--subtitle-" + key.replace("_", "-")
-    if isinstance(value, bool):
-        flags = [flag if value else "--no-subtitle-" + key.replace("_", "-")]
-    else:
-        flags = [flag, value]
+    flags = [flag, str(value).lower() if isinstance(value, bool) else value]
     options = parse(*flags)
     expected = Path(str(value)) if key == "fonts_dir" else value
     assert options.overrides() == {key: expected}
@@ -142,15 +139,13 @@ def test_missing_options_inherit():
 def test_every_subtitle_field_is_available_for_each_class_and_variant(
     clip_class, variant
 ):
-    scope = clip_class if variant is None else f"{clip_class}-{variant}"
+    scope = clip_class if variant is None else f"{clip_class}:{variant}"
     flags = []
     expected = {}
     for key, value in CASES:
-        flag = "subtitle-" + scope + "-" + key.replace("_", "-")
-        if isinstance(value, bool):
-            flags.append("--" + flag if value else "--no-" + flag)
-        else:
-            flags.extend(["--" + flag, value])
+        flag = "--subtitle-" + key.replace("_", "-")
+        raw = str(value).lower() if isinstance(value, bool) else value
+        flags.extend([flag, f"{scope}={raw}"])
         expected[key] = Path(str(value)) if key == "fonts_dir" else value
     config = parse_run_config(
         ["source.mp4", "--output-dir", "out", "--clip-full", *flags]
@@ -183,11 +178,11 @@ def test_scoped_styles_resolve_source_before_specificity(tmp_path, monkeypatch):
             "--output-dir",
             "out",
             "--clip-full",
-            "--subtitle-short-font-size",
-            "6%",
+            "--subtitle-font-size",
+            "short=6%",
             "--no-subtitle-italic",
-            "--subtitle-long-horizontal-font-size",
-            "3%",
+            "--subtitle-font-size",
+            "long:horizontal=3%",
         ]
     )
     assert config.for_output(
@@ -216,7 +211,14 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
     )
     monkeypatch.setenv("LONG_VARIANT_SUBTITLES_ENABLED", "false")
     config = parse_run_config(
-        ["source.mp4", "--output-dir", "out", "--clip-full", "--no-subtitle-long"]
+        [
+            "source.mp4",
+            "--output-dir",
+            "out",
+            "--clip-full",
+            "--subtitle-enabled",
+            "long=false",
+        ]
     )
     assert (
         config.for_output("long", "vertical", primary=True).subtitles_for("long")
@@ -240,8 +242,8 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
 def test_each_named_render_and_caption_switch_is_available(
     clip_class, variant, monkeypatch
 ):
-    scope = f"{clip_class}-{variant}"
-    env_scope = scope.replace("-", "_").upper()
+    scope = f"{clip_class}:{variant}"
+    env_scope = scope.replace("-", "_").replace(":", "_").upper()
     monkeypatch.setenv(env_scope + "_ENABLED", "true")
     monkeypatch.setenv("SUBTITLE_" + env_scope + "_ENABLED", "true")
     config = parse_run_config(
@@ -250,8 +252,10 @@ def test_each_named_render_and_caption_switch_is_available(
             "--output-dir",
             "out",
             "--clip-full",
-            f"--no-{scope}",
-            f"--no-subtitle-{scope}",
+            "--no-render",
+            scope,
+            "--subtitle-enabled",
+            f"{scope}=false",
         ]
     )
     output = next(

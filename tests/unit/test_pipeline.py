@@ -1325,9 +1325,12 @@ def test_named_caption_switch_skips_asr_for_the_only_published_output(
             str(tmp_path / "out"),
             "--clip-full",
             "--no-variants",
-            "--no-short-vertical",
-            "--short-square-blur",
-            "--no-subtitle-short-square-blur",
+            "--no-render",
+            "short:vertical",
+            "--render",
+            "short:square-blur",
+            "--subtitle-enabled",
+            "short:square-blur=false",
         ]
     )
     asr, ai = FakeTranscriber(), FakeBackend()
