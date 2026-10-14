@@ -955,7 +955,7 @@ def test_public_builder_failure_becomes_configuration_error(monkeypatch) -> None
             template_dir=None,
             options=SubtitleOptions(font_weight="700", bold=False),
         )
-    assert "--subtitle-bold or --no-subtitle-bold" in str(error.value)
+    assert "--subtitle-bold true or --subtitle-bold false" in str(error.value)
 
 
 def test_missing_public_builder_requires_provider_upgrade() -> None:

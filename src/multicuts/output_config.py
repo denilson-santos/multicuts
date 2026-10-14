@@ -18,6 +18,7 @@ SUBTITLE_FIELDS = frozenset(
         *(field.name for field in fields(SubtitleOptions)),
     }
 )
+OUTPUT_FIELDS = frozenset({"render", "variants", "aspect_ratio", "width", "height"})
 
 
 def output_scope(scope: str) -> str:
@@ -38,16 +39,16 @@ def output_scope(scope: str) -> str:
 
 def subtitle_key(scope: str, field: str) -> str:
     suffix = output_scope(scope)
-    if field == "enabled":
-        return f"subtitle_{suffix}" if suffix else "subtitles"
     return "subtitle_" + (suffix + "_" if suffix else "") + field
 
 
-def render_key(scope: str) -> str:
+def output_key(scope: str, field: str) -> str:
     suffix = output_scope(scope)
-    if not suffix:
-        return "render_all"
-    return f"{suffix}_clips" if suffix in ("short", "long") else suffix
+    if field in ("variants", "aspect_ratio") and ":" in scope:
+        raise ConfigurationError(
+            f"--{field.replace('_', '-')} scopes must be all, short, or long"
+        )
+    return field + ("_" + suffix if suffix else "")
 
 
 def scoped_value(value: str) -> tuple[str, str]:
@@ -57,7 +58,7 @@ def scoped_value(value: str) -> tuple[str, str]:
     scope, raw = scope.strip(), raw.strip()
     output_scope(scope)
     if not raw:
-        raise ConfigurationError("Subtitle values must not be empty; use [SCOPE=]VALUE")
+        raise ConfigurationError("Output values must not be empty; use [SCOPE=]VALUE")
     return scope, raw
 
 
@@ -83,9 +84,10 @@ def load_output_config(path: Path | None) -> dict[str, object]:
         raise ConfigurationError(
             "Could not read --config as a UTF-8 JSON object"
         ) from exc
-    if not isinstance(data, dict) or data.keys() - {"render", "subtitles", "variants"}:
+    if not isinstance(data, dict) or data.keys() - (OUTPUT_FIELDS | {"subtitles"}):
         raise ConfigurationError(
-            "--config accepts only render, subtitles, and variants objects"
+            "--config accepts only render, variants, aspect_ratio, width, height, "
+            "and subtitles objects"
         )
     result: dict[str, object] = {}
     for group, settings in data.items():
@@ -116,17 +118,14 @@ def load_output_config(path: Path | None) -> dict[str, object]:
                         )
                     result[subtitle_key(scope, field)] = raw
             else:
-                if type(value) is not bool:
-                    raise ConfigurationError(
-                        f"--config {group} values must be booleans"
-                    )
-                if group == "render":
-                    key = render_key(scope)
-                elif scope in ("all", "short", "long"):
-                    key = "variants" if scope == "all" else f"{scope}_variants"
+                key = output_key(scope, group)
+                if group in ("render", "variants"):
+                    valid = type(value) is bool
+                elif group in ("width", "height"):
+                    valid = type(value) is int and value > 0 and value % 2 == 0
                 else:
-                    raise ConfigurationError(
-                        "--config variants scopes must be all, short, or long"
-                    )
+                    valid = value in ("original", "9:16", "16:9", "1:1")
+                if not valid:
+                    raise ConfigurationError(f"Invalid --config {group} value")
                 result[key] = value
     return result

@@ -397,10 +397,17 @@ def run_pipeline(
             template_dir=config.subtitle_template_dir,
             options=config.subtitle_options,
         )
+    # Presentation validation must not resolve geometry for unused outputs.
+    subtitle_config = replace(
+        config,
+        output_options=tuple(
+            replace(output, width=None, height=None) for output in config.output_options
+        ),
+    )
     for output in config.output_options:
         if output.subtitle_options.overrides() or output.subtitle_template is not None:
-            resolved = config.for_output(
-                output.clip_class, output.variant or "original", primary=True
+            resolved = subtitle_config.for_output(
+                output.clip_class, output.variant or "vertical"
             )
             MultisubsAdapter().validate_subtitle_options(
                 template=resolved.subtitle_template,
@@ -515,14 +522,12 @@ def run_pipeline(
             )
             if not config.clips_for(clip_class):
                 raise ConfigurationError(
-                    f"The cut interval is {clip_class}; enable --{clip_class}-clips"
+                    f"The cut interval is {clip_class}; use --render {clip_class}=true"
                 )
             outputs = config.outputs_for(clip_class, media)
             needs_transcript = any(
-                config.for_output(clip_class, name, primary=index == 0).subtitles_for(
-                    clip_class
-                )
-                for index, name in enumerate(outputs)
+                config.for_output(clip_class, name).subtitles_for(clip_class)
+                for name in outputs
             )
         if original_source is not None and requested_range is not None:
             logger.info(
@@ -555,7 +560,7 @@ def run_pipeline(
             direct_clip = _direct_clip(source, source_duration, direct_range, None)
             clip_class = direct_clip.proposal.clip_class
             first_variant = config.outputs_for(clip_class, media)[0]
-            first_config = config.for_output(clip_class, first_variant, primary=True)
+            first_config = config.for_output(clip_class, first_variant)
             first_ratio = variant_ratio(first_variant)
             logger.info("Preparing the exact local cut before transcription")
             prepared_raw = raw_renderer(
@@ -804,9 +809,7 @@ def run_pipeline(
                 variant_stem = f"{stem}-{name}" if is_variant else stem
                 variant_work = work / variant_stem
                 final_path = root / "clips" / f"{variant_stem}.mp4"
-                variant_config = config.for_output(
-                    clip_class, name, primary=not is_variant
-                )
+                variant_config = config.for_output(clip_class, name)
                 logger.info(
                     "Rendering clip %d/%d version: %s", rank, len(selected), name
                 )

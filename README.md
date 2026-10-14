@@ -273,19 +273,20 @@ Orientation uses presentation dimensions, including rotation, for any source asp
 ratio. Plain outputs use a centered crop. Blurred outputs center the complete 9:16
 or 16:9 foreground over an enlarged, blurred copy, with neither layer mirrored.
 Subtitles are generated afterward against each final canvas and have their own
-settings and sidecars. Square outputs default to 1080×1080; `--square-size` changes
-both sides. Vertical and horizontal dimensions remain configurable.
+settings and sidecars. Default dimensions are 1080×1920, 1920×1080, and
+1080×1080. Use `--width [SCOPE=]VALUE` and `--height [SCOPE=]VALUE` to resize outputs.
 
-Use `--no-variants` (or `RENDER_VARIANTS=false`) for only the primary output.
-`--short-variants` / `--no-short-variants` and `--long-variants` /
-`--no-long-variants` override this default per class. Use `--render short:horizontal-blur`
-or `--no-render short:horizontal-blur` to override it per output.
-Square primaries retain other enabled variants. If the preferred primary is
-unavailable or disabled, the first enabled supported variant becomes primary.
-Explicitly enabling an unsupported variant fails before transcription. Every
-enabled class must retain at least one supported output.
+Use `--variants false` for only the primary output, or `--variants short=false`
+to apply this choice only to shorts. A named setting such as
+`--render short:horizontal-blur=true` overrides the additional-output default.
+If the preferred primary is unavailable or disabled, the first enabled supported
+variant becomes primary. Explicitly enabling an unsupported variant fails before
+transcription. Every enabled class must retain at least one supported output.
 
-Both clip classes are enabled by default. `--short-clips` / `--no-short-clips` and `--long-clips` / `--no-long-clips`, or `SHORT_CLIPS_ENABLED` and `LONG_CLIPS_ENABLED`, choose which classes to review and publish. Disabling a class also disables its variants, even if its variant switch is enabled. At least one class must remain enabled. Shared proposal discovery still covers both classes and reuses its cache; disabled classes skip editorial judgment, selection, and rendering.
+Both classes are enabled by default. `--render long=false` disables long cuts and
+all their variants. At least one class must remain enabled. Shared proposal
+discovery still covers both classes and reuses its cache; disabled classes skip
+editorial judgment, selection, and rendering.
 
 Long clips preferably span 3–15 minutes, with no hard duration ceiling. The number of clips follows the content and editorial decisions, with redundant overlaps suppressed.
 
@@ -349,14 +350,14 @@ Direct modes render your chosen interval or the entire source as one cut.
 They skip AI discovery, boundary adjustments, ranking, and rejection;
 no AI backend, model, or credentials are required.
 
-One cut can produce several formats. The examples below use `--no-variants` to
+One cut can produce several formats. The examples below use `--variants false` to
 produce one output video; omit it to include the configured additional formats.
 
 #### Render one interval
 
 ```bash
 multicuts ./source.mp4 --output-dir ./cuts \
-  --clip-range 00:01:30.25 00:02:45 --no-variants
+  --clip-range 00:01:30.25 00:02:45 --variants false
 ```
 
 Local files use the exact requested bounds. YouTube cuts can include extra
@@ -365,7 +366,7 @@ keyframe data; see [Range precision](#range-precision) before choosing an interv
 #### Use the entire source as one cut
 
 ```bash
-multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --no-variants
+multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --variants false
 ```
 
 This includes silence before and after speech, using the probed video duration.
@@ -436,39 +437,46 @@ Unrestricted and `--clip-full` local requests use the original file.
 
 ### Formats and variants
 
-Use `--short-aspect-ratio` and `--long-aspect-ratio` to choose the primary format
-for each class. Use `--no-variants` for primary outputs only, or the class-specific
-variant flags to control additional formats. The source-orientation table above
-applies equally to shorts and longs. The `original` primary format remains
-available as a compatibility option and adds an original version to the matrix.
+Output controls use **`[SCOPE=]VALUE`**. The brackets mean the scope is optional;
+do not type the brackets. An omitted scope means `all`.
+
+| Scope | Applies to | Example |
+| --- | --- | --- |
+| Omitted or `all` | Both classes and their outputs | `--subtitle-font-size 4%` |
+| `short` or `long` | One class and its outputs | `--subtitle-font-size short=5%` |
+| `TYPE:VARIANT` | One named output | `--subtitle-font-size short:vertical=6%` |
+
+Repeat an option to set different scopes. Within each configuration source,
+variant settings override class settings, which override shared settings,
+independently per field and argument order. Contradictory assignments to the same
+field/scope are rejected. Boolean values are explicit: `true` or `false`.
+
+`--render`, `--width`, `--height`, and every `--subtitle-*` option support all three
+scope levels. `--aspect-ratio` and `--variants` accept only `all`, `short`, or `long`:
+they choose the preferred primary format and whether to include additional
+formats. Defaults are `short=9:16`, `long=16:9`, and additional formats enabled.
+The source-orientation table above applies to both classes. `original` preserves
+the source framing and adds an original version to the matrix.
 
 To publish only primary short cuts:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
-  --no-long-clips --no-short-variants
+  --render long=false --variants short=false
 ```
 
 To keep the source framing and disable subtitles:
 
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
-  --short-aspect-ratio original --long-aspect-ratio original \
-  --no-variants --no-subtitles
+  --aspect-ratio original --variants false --subtitle-enabled false
 ```
-
-Use `all`, `short`, `long`, or `TYPE:VARIANT` as a scope. Each subtitle
-option accepts a shared value or `SCOPE=VALUE` and can be repeated for different
-scopes. More specific scopes win within the same configuration source,
-independently of argument order. Conflicting values for the same field and scope
-are rejected. Every template, positioning, typography, appearance, and animation
-field supports this syntax.
 
 | Control | CLI example | Environment |
 | --- | --- | --- |
-| Render a class | `--render short` / `--no-render long` | `SHORT_CLIPS_ENABLED` / `LONG_CLIPS_ENABLED` |
-| Render a variant | `--render short:horizontal-blur` / `--no-render short:horizontal-blur` | `SHORT_HORIZONTAL_BLUR_ENABLED` |
-| Shared captions | `--subtitle-enabled false` | Shared CLI shortcut; no shared environment variable |
+| Render a class | `--render long=false` | `RENDER_LONG` |
+| Render a variant | `--render short:horizontal-blur=false` | `RENDER_SHORT_HORIZONTAL_BLUR` |
+| Shared captions | `--subtitle-enabled false` | `SUBTITLE_ENABLED` |
 | Class captions | `--subtitle-enabled short=true` | `SUBTITLE_SHORT_ENABLED` |
 | Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_SHORT_VERTICAL_ENABLED` |
 | Shared font size | `--subtitle-font-size 4%` | `SUBTITLE_FONT_SIZE` |
@@ -477,18 +485,26 @@ field supports this syntax.
 | Variant template | `--subtitle-template long:horizontal=yellow-pop` | `SUBTITLE_LONG_HORIZONTAL_TEMPLATE` |
 | Custom templates | `--subtitle-template-dir short:vertical=./templates` | `SUBTITLE_SHORT_VERTICAL_TEMPLATE_DIR` |
 
-Environment names remain uppercase with underscores. Boolean fields take explicit
-values, for example `--subtitle-bold short:vertical=false`. Unscoped values and
-`all=VALUE` are equivalent. Global/class/companion shortcuts such as
-`--no-subtitles`, `--no-long-clips`, and `--short-variant-subtitles` remain
-available. A disabled class still suppresses all its variants.
+Environment names use uppercase and underscores. For output fields, append the
+scope: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`. For subtitle fields,
+insert the scope after `SUBTITLE_`: `SUBTITLE_FONT_SIZE`, `SUBTITLE_SHORT_FONT_SIZE`,
+`SUBTITLE_SHORT_VERTICAL_FONT_SIZE`. Omit the scope for shared values. Class render
+settings gate every output of that class; named render settings select individual
+outputs within enabled classes.
+
+Dimensions must be positive even pixel counts. Set one dimension to derive the
+other from the variant ratio, rounded to the nearest even pixel; if both are set,
+they must preserve that ratio within one pixel of rounding. For example,
+`--width short:vertical=720` produces 720×1280 vertical shorts. A class or shared
+width/height applies to each supported variant. `original` preserves native
+geometry and does not accept width/height overrides.
 
 For example, add one companion variant, disable its captions, and change
 vertical-short subtitle placement:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
-  --no-variants --render short:horizontal-blur \
+  --variants false --render short:horizontal-blur=true \
   --subtitle-enabled short:horizontal-blur=false \
   --subtitle-position short:vertical=top-center \
   --subtitle-font-size short:vertical=5%
@@ -501,6 +517,8 @@ Use `--config ./outputs.json` to reuse output and subtitle settings:
 ```json
 {
   "variants": {"all": false},
+  "aspect_ratio": {"short": "9:16"},
+  "width": {"short:vertical": 720},
   "render": {"long": false, "short:horizontal-blur": true},
   "subtitles": {
     "all": {"template": "yellow-pop", "font_size": "4%"},
@@ -516,7 +534,10 @@ multicuts ./podcast.mp4 --output-dir ./cuts --config ./outputs.json \
 ```
 
 `render` maps scopes to booleans. `variants` maps `all`, `short`, or `long` to
-booleans controlling additional formats. `subtitles` maps scopes to `enabled`,
+booleans controlling additional formats. `aspect_ratio` maps the same class/shared
+scopes to `original`, `9:16`, `16:9`, or `1:1` strings. `width` and `height` map
+shared/class/variant scopes to positive even JSON integers. `subtitles` maps
+scopes to `enabled`,
 `template`, `template_dir`, and presentation fields written in snake_case.
 Lengths and other textual settings use strings; boolean fields use JSON
 `true`/`false`. Relative `fonts_dir` and `template_dir` paths resolve from the
@@ -539,19 +560,18 @@ To enable subtitles only for short cuts and their variants:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
-  --short-subtitles --no-long-subtitles
+  --subtitle-enabled short=true --subtitle-enabled long=false
 ```
 
-Use `--subtitles` / `--no-subtitles` for both classes and their variants. For
-additional formats only, use `--short-variant-subtitles` /
-`--no-short-variant-subtitles` or `--long-variant-subtitles` /
-`--no-long-variant-subtitles`; these flags do not change primary subtitles.
+Use `--subtitle-enabled false` to disable captions everywhere, then repeat it
+with a class or named scope to enable captions for selected outputs. The caption
+setting belongs to the named variant even if it becomes the primary output.
 
 Adjust a template directly from the command line. Only supplied fields replace
 template values; omitted settings inherit. For example:
 
 ```bash
-multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --no-variants \
+multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --variants false \
   --subtitle-template yellow-pop \
   --subtitle-position bottom-center --subtitle-margin-bottom 8% \
   --subtitle-font-size 4.5% --subtitle-text-case original \
@@ -630,24 +650,24 @@ without printing its contents.
 #### Configuration precedence
 
 Settings are resolved in this order: CLI flags, process environment, `.env`, the
-optional output/subtitle preset, then defaults. Within each source, more specific settings win: variant subtitles over
-class subtitles, or class variants over the shared variant switch. Specific CLI
-flags take precedence regardless of argument order. For example:
+optional output/subtitle preset, then defaults. Source priority is applied before
+scope specificity, independently for each field. For example:
 
-- `--no-subtitles --short-variant-subtitles` captions only short variants.
-- `--no-variants --long-variants` adds formats only for longs.
+- `--subtitle-enabled false --subtitle-enabled short:vertical=true` captions only vertical shorts.
+- `--variants false --variants long=true` adds formats only for longs.
 
 See the option tables below and `.env.example` for environment variable names.
-The shared `SUBTITLES_ENABLED` environment setting is not supported.
+Output settings use only the scoped controls documented here and in `--help`.
 
 ### Options
 
-Options follow the same groups and order as `multicuts --help`. The required
+These tables describe the controls shown by `multicuts --help`. The required
 `SOURCE` argument accepts a local video path or supported YouTube URL.
 
 | Option | Purpose |
 | --- | --- |
 | `--output-dir PATH` | Required root directory for unique runs and shared caches. |
+| `--config PATH` | Load an optional JSON output/subtitle preset. |
 | `--help` / `-h` | Show command help and exit. |
 
 #### Analysis
@@ -676,32 +696,22 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
-| `--short-clips` / `--no-short-clips` | Enable or disable shorts and all their variants; default: enabled; environment: `SHORT_CLIPS_ENABLED`. |
-| `--long-clips` / `--no-long-clips` | Enable or disable longs and all their variants; default: enabled; environment: `LONG_CLIPS_ENABLED`. |
-| `--short-aspect-ratio FORMAT` | Choose the primary short format: `9:16`, `16:9`, `1:1`, or `original`; default: `9:16`. |
-| `--long-aspect-ratio FORMAT` | Choose the primary long format: `9:16`, `16:9`, `1:1`, or `original`; default: `16:9`. |
-| `--vertical-width PIXELS` | Set the `9:16` output width; default: `1080`. |
-| `--vertical-height PIXELS` | Set the `9:16` output height; default: `1920`. |
-| `--horizontal-width PIXELS` | Set the `16:9` output width; default: `1920`. |
-| `--horizontal-height PIXELS` | Set the `16:9` output height; default: `1080`. |
-| `--square-size PIXELS` | Set the square output side in pixels (positive and even; default: `1080`); environment: `SQUARE_SIZE`. |
-| `--variants` / `--no-variants` | Set the shared default for additional formats; environment: `RENDER_VARIANTS`. |
-| `--short-variants` / `--no-short-variants` | Override additional formats for shorts; environment: `SHORT_VARIANTS_ENABLED`. |
-| `--long-variants` / `--no-long-variants` | Override additional formats for longs; environment: `LONG_VARIANTS_ENABLED`. |
+| `--render [SCOPE=]VALUE` | `true`/`false`; enable classes or named outputs. Defaults to enabled. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
+| `--variants [SCOPE=]VALUE` | `true`/`false` for additional formats; scopes: `all`, `short`, `long`. Default: `true`. Environment: `VARIANTS`, `VARIANTS_SHORT`, `VARIANTS_LONG`. |
+| `--aspect-ratio [SCOPE=]VALUE` | Preferred primary: `9:16`, `16:9`, `1:1`, `original`; scopes: `all`, `short`, `long`. Defaults: short `9:16`, long `16:9`. Environment: `ASPECT_RATIO`, `ASPECT_RATIO_SHORT`, `ASPECT_RATIO_LONG`. |
+| `--width [SCOPE=]VALUE` | Positive even pixel width; derive height if omitted. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
+| `--height [SCOPE=]VALUE` | Positive even pixel height; derive width if omitted. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
 
 #### Subtitles
 
-Choose the subtitle style and control captions for primary outputs and variants.
+Choose the subtitle style and captions at shared, class, or named-variant scope.
+All options below are repeatable and use `[SCOPE=]VALUE`, including booleans.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-template NAME` | Choose a `multisubs` subtitle template; default: `yellow-pop`. |
-| `--subtitle-template-dir PATH` | Load custom subtitle templates from a directory. |
-| `--subtitles` / `--no-subtitles` | Enable or disable subtitles for both classes and their variants; more specific CLI flags take precedence. |
-| `--short-subtitles` / `--no-short-subtitles` | Set primary short subtitles and the default for short variants; environment: `SHORT_SUBTITLES_ENABLED`. |
-| `--long-subtitles` / `--no-long-subtitles` | Set primary long subtitles and the default for long variants; environment: `LONG_SUBTITLES_ENABLED`. |
-| `--short-variant-subtitles` / `--no-short-variant-subtitles` | Override captions only for additional short formats; environment: `SHORT_VARIANT_SUBTITLES_ENABLED`. |
-| `--long-variant-subtitles` / `--no-long-variant-subtitles` | Override captions only for additional long formats; environment: `LONG_VARIANT_SUBTITLES_ENABLED`. |
+| `--subtitle-enabled [SCOPE=]VALUE` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`, `SUBTITLE_SHORT_ENABLED`, `SUBTITLE_SHORT_VERTICAL_ENABLED`, etc. |
+| `--subtitle-template [SCOPE=]VALUE` | Template name; default: `yellow-pop`. |
+| `--subtitle-template-dir [SCOPE=]VALUE` | Path to a custom template directory. |
 
 #### Subtitle positioning
 
@@ -709,16 +719,16 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-position POSITION` | Subtitle position, such as bottom-center: top/middle/bottom with left/center/right. |
-| `--subtitle-margin-left LENGTH` | Left margin as a percentage of width or pixels. |
-| `--subtitle-margin-right LENGTH` | Right margin as a percentage of width or pixels. |
-| `--subtitle-margin-top LENGTH` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
-| `--subtitle-margin-bottom LENGTH` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
-| `--subtitle-max-width LENGTH` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
-| `--subtitle-max-height LENGTH` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
-| `--subtitle-position-x LENGTH` | Horizontal anchor coordinate from the left edge of the final frame. |
-| `--subtitle-position-y LENGTH` | Vertical anchor coordinate from the top edge of the final frame. |
-| `--subtitle-anchor POSITION` | Required subtitle-box anchor for custom coordinates. |
+| `--subtitle-position [SCOPE=]VALUE` | Subtitle position, such as bottom-center: top/middle/bottom with left/center/right. |
+| `--subtitle-margin-left [SCOPE=]VALUE` | Left margin as a percentage of width or pixels. |
+| `--subtitle-margin-right [SCOPE=]VALUE` | Right margin as a percentage of width or pixels. |
+| `--subtitle-margin-top [SCOPE=]VALUE` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
+| `--subtitle-margin-bottom [SCOPE=]VALUE` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
+| `--subtitle-max-width [SCOPE=]VALUE` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
+| `--subtitle-max-height [SCOPE=]VALUE` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
+| `--subtitle-position-x [SCOPE=]VALUE` | Horizontal anchor coordinate from the left edge of the final frame. |
+| `--subtitle-position-y [SCOPE=]VALUE` | Vertical anchor coordinate from the top edge of the final frame. |
+| `--subtitle-anchor [SCOPE=]VALUE` | Required subtitle-box anchor for custom coordinates. |
 
 Only top positions accept `--subtitle-margin-top`; only bottom positions accept
 `--subtitle-margin-bottom`. Middle positions accept neither. To use exact
@@ -733,15 +743,15 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-font NAME` | Font family. |
-| `--subtitle-font-weight WEIGHT` | Font weight name or rank 100-900 in steps of 100; cannot be combined with bold flags. |
-| `--subtitle-bold [SCOPE=]BOOL` | Use bold weight (700) or regular weight (400). |
-| `--subtitle-italic [SCOPE=]BOOL` | Enable or disable italic text. |
-| `--subtitle-text-case MODE` | Subtitle display casing: original, uppercase, or lowercase. |
-| `--subtitle-fonts-dir DIR` | Directory containing additional subtitle font files. |
-| `--subtitle-font-size LENGTH` | Font size as a percentage of the render height or pixels. |
-| `--subtitle-letter-spacing LENGTH` | Extra character spacing in pixels or as a percentage of font size. |
-| `--subtitle-line-height auto\|LENGTH` | Distance between text baselines: auto, pixels, or a percentage of natural line height. |
+| `--subtitle-font [SCOPE=]VALUE` | Font family. |
+| `--subtitle-font-weight [SCOPE=]VALUE` | Font weight name or rank 100-900 in steps of 100; cannot be combined with explicit bold values. |
+| `--subtitle-bold [SCOPE=]VALUE` | `true` for bold weight (700), `false` for regular weight (400). |
+| `--subtitle-italic [SCOPE=]VALUE` | `true`/`false` for italic text. |
+| `--subtitle-text-case [SCOPE=]VALUE` | Subtitle display casing: original, uppercase, or lowercase. |
+| `--subtitle-fonts-dir [SCOPE=]VALUE` | Directory containing additional subtitle font files. |
+| `--subtitle-font-size [SCOPE=]VALUE` | Font size as a percentage of the render height or pixels. |
+| `--subtitle-letter-spacing [SCOPE=]VALUE` | Extra character spacing in pixels or as a percentage of font size. |
+| `--subtitle-line-height [SCOPE=]VALUE` | Distance between text baselines: `auto`, pixels, or a percentage of natural line height. |
 
 #### Subtitle appearance
 
@@ -749,15 +759,15 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-text-color COLOR` | Subtitle text color. |
-| `--subtitle-backdrop TYPE` | Subtitle backdrop: none, outline, or box. |
-| `--subtitle-backdrop-color COLOR` | Outline, box, and shadow color. |
-| `--subtitle-word-backdrop TYPE` | Timed word decoration: none, outline, or box. |
-| `--subtitle-word-backdrop-color COLOR` | Word-box color using #RRGGBB or #RRGGBBAA. |
-| `--subtitle-opacity PERCENT` | Opacity from 0% through 100%, multiplied with each component color opacity. |
-| `--subtitle-backdrop-size LENGTH` | Backdrop/outline size as a percentage of the resolved font size or pixels. |
-| `--subtitle-word-backdrop-size LENGTH` | Timed word-box padding as a percentage of the resolved font size or pixels. |
-| `--subtitle-shadow-size LENGTH` | Shadow size as a percentage of the resolved font size or pixels. |
+| `--subtitle-text-color [SCOPE=]VALUE` | Subtitle text color. |
+| `--subtitle-backdrop [SCOPE=]VALUE` | Subtitle backdrop: none, outline, or box. |
+| `--subtitle-backdrop-color [SCOPE=]VALUE` | Outline, box, and shadow color. |
+| `--subtitle-word-backdrop [SCOPE=]VALUE` | Timed word decoration: none, outline, or box. |
+| `--subtitle-word-backdrop-color [SCOPE=]VALUE` | Word-box color using #RRGGBB or #RRGGBBAA. |
+| `--subtitle-opacity [SCOPE=]VALUE` | Opacity from 0% through 100%, multiplied with each component color opacity. |
+| `--subtitle-backdrop-size [SCOPE=]VALUE` | Backdrop/outline size as a percentage of the resolved font size or pixels. |
+| `--subtitle-word-backdrop-size [SCOPE=]VALUE` | Timed word-box padding as a percentage of the resolved font size or pixels. |
+| `--subtitle-shadow-size [SCOPE=]VALUE` | Shadow size as a percentage of the resolved font size or pixels. |
 
 #### Subtitle animations
 
@@ -765,35 +775,35 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-animation-cue-text-entrance TYPE` | Cue text entrance animation; omission inherits the template. |
-| `--subtitle-animation-cue-text-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-text-emphasis TYPE` | Cue text emphasis animation; omission inherits the template. |
-| `--subtitle-animation-cue-text-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-text-exit TYPE` | Cue text exit animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-text-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-entrance TYPE` | Cue backdrop entrance animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-backdrop-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-emphasis TYPE` | Cue backdrop emphasis animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-backdrop-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-exit TYPE` | Cue backdrop exit animation; omission inherits the template. |
-| `--subtitle-animation-cue-backdrop-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-entrance TYPE` | Word text entrance animation; omission inherits the template. |
-| `--subtitle-animation-word-text-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-emphasis TYPE` | Word text emphasis animation; omission inherits the template. |
-| `--subtitle-animation-word-text-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-exit TYPE` | Word text exit animation; omission inherits the selected template. |
-| `--subtitle-animation-word-text-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-entrance TYPE` | Word backdrop entrance animation; omission inherits the selected template. |
-| `--subtitle-animation-word-backdrop-entrance-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-emphasis TYPE` | Word backdrop emphasis animation; omission inherits the selected template. |
-| `--subtitle-animation-word-backdrop-emphasis-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-exit TYPE` | Word backdrop exit animation; omission inherits the template. |
-| `--subtitle-animation-word-backdrop-exit-duration DURATION` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-mode MODE` | Timed word text behavior: progressive or active-word. |
-| `--subtitle-animation-word-backdrop-mode MODE` | Timed word backdrop behavior: progressive or active-word. |
-| `--subtitle-animation-word-text-highlight-color COLOR` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
-| `--subtitle-disable-cue-animations [SCOPE=]BOOL` | Remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
-| `--subtitle-disable-word-animations [SCOPE=]BOOL` | Remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+| `--subtitle-animation-cue-text-entrance [SCOPE=]VALUE` | Cue text entrance animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-emphasis [SCOPE=]VALUE` | Cue text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-exit [SCOPE=]VALUE` | Cue text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-text-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-entrance [SCOPE=]VALUE` | Cue backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-emphasis [SCOPE=]VALUE` | Cue backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-exit [SCOPE=]VALUE` | Cue backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-cue-backdrop-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-entrance [SCOPE=]VALUE` | Word text entrance animation; omission inherits the template. |
+| `--subtitle-animation-word-text-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-emphasis [SCOPE=]VALUE` | Word text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-word-text-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-exit [SCOPE=]VALUE` | Word text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-word-text-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-entrance [SCOPE=]VALUE` | Word backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-emphasis [SCOPE=]VALUE` | Word backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-exit [SCOPE=]VALUE` | Word backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-word-backdrop-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-mode [SCOPE=]VALUE` | Timed word text behavior: progressive or active-word. |
+| `--subtitle-animation-word-backdrop-mode [SCOPE=]VALUE` | Timed word backdrop behavior: progressive or active-word. |
+| `--subtitle-animation-word-text-highlight-color [SCOPE=]VALUE` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
+| `--subtitle-disable-cue-animations [SCOPE=]VALUE` | `true`/`false`; remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
+| `--subtitle-disable-word-animations [SCOPE=]VALUE` | `true`/`false`; remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
 
 Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
 and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases

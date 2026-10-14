@@ -22,7 +22,7 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
-from multicuts.subtitles import SubtitleOptions
+from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +367,15 @@ def _build_subtitle_config(
             overrides=options.overrides(),
         )
     except provider.MultisubsError as exc:
-        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", r"--\1subtitle-\2", str(exc))
+
+        def subtitle_flag(match: re.Match[str]) -> str:
+            field = match[2]
+            flag = "--subtitle-" + field
+            if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
+                flag += " false" if match[1] else " true"
+            return flag
+
+        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(exc))
         raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
     except Exception as exc:
         raise ConfigurationError(

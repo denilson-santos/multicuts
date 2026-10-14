@@ -20,6 +20,7 @@ from multicuts.models import (
 )
 from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw
+from multicuts.variants import VARIANT_RATIOS, OutputOptions
 
 pytestmark = pytest.mark.integration
 
@@ -80,6 +81,10 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
         horizontal_width=160,
         horizontal_height=90,
         square_size=90,
+        output_options=(
+            OutputOptions("short", "square", width=64),
+            OutputOptions("short", "horizontal-blur", height=72),
+        ),
     )
     result = run_pipeline(
         config,
@@ -95,6 +100,10 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
         size = {"9:16": (90, 160), "16:9": (160, 90), "1:1": (90, 90)}[
             output["aspect_ratio"]
         ]
+        if output["variant"] == "square":
+            size = (64, 64)
+        elif output["variant"] == "horizontal-blur":
+            size = (128, 72)
         assert (media.presentation_width, media.presentation_height) == size
         assert media.duration == pytest.approx(0.8, abs=0.15)
         assert not media.has_audio
@@ -504,7 +513,14 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         long_clips_enabled=False,
         short_aspect_ratio=primary_ratio,
         short_subtitles_enabled=primary_subtitles,
-        short_variant_subtitles_enabled=not primary_subtitles,
+        output_options=tuple(
+            OutputOptions("short", name, subtitles_enabled=not primary_subtitles)
+            for name in VARIANT_RATIOS
+            if name
+            != {"9:16": "vertical", "16:9": "horizontal", "original": "original"}[
+                primary_ratio
+            ]
+        ),
         vertical_width=360,
         vertical_height=640,
         horizontal_width=640,

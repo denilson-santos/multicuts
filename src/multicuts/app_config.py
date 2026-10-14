@@ -57,8 +57,6 @@ class AppConfig:
     long_clips_enabled: bool = True
     short_variants_enabled: bool | None = None
     long_variants_enabled: bool | None = None
-    short_variant_subtitles_enabled: bool | None = None
-    long_variant_subtitles_enabled: bool | None = None
     search_range: TimeRange | None = None
     clip_range: TimeRange | None = None
     full_video: bool = False
@@ -167,7 +165,7 @@ class AppConfig:
             or self.vertical_height <= 0
             or self.vertical_width % 2
             or self.vertical_height % 2
-            or self.vertical_width * 16 != self.vertical_height * 9
+            or abs(self.vertical_width * 16 - self.vertical_height * 9) > 16
         ):
             raise ConfigurationError(
                 "Vertical dimensions must be positive, even, and 9:16"
@@ -179,7 +177,7 @@ class AppConfig:
             or self.horizontal_height <= 0
             or self.horizontal_width % 2
             or self.horizontal_height % 2
-            or self.horizontal_width * 9 != self.horizontal_height * 16
+            or abs(self.horizontal_width * 9 - self.horizontal_height * 16) > 16
         ):
             raise ConfigurationError(
                 "Horizontal dimensions must be positive, even, and 16:9"
@@ -222,8 +220,6 @@ class AppConfig:
             "long_subtitles_enabled",
             "short_variants_enabled",
             "long_variants_enabled",
-            "short_variant_subtitles_enabled",
-            "long_variant_subtitles_enabled",
         ):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
@@ -261,8 +257,8 @@ class AppConfig:
         )
         return self.render_variants if override is None else override
 
-    def subtitles_for(self, clip_class: str, *, variant: bool = False) -> bool:
-        """Variants inherit their class subtitles unless explicitly overridden."""
+    def subtitles_for(self, clip_class: str) -> bool:
+        """Read the caption decision for the current effective render config."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Subtitle class must be short or long")
         override = (
@@ -270,19 +266,10 @@ class AppConfig:
             if clip_class == "short"
             else self.long_subtitles_enabled
         )
-        enabled = self.subtitles_enabled if override is None else override
-        if variant:
-            variant_override = (
-                self.short_variant_subtitles_enabled
-                if clip_class == "short"
-                else self.long_variant_subtitles_enabled
-            )
-            if variant_override is not None:
-                return variant_override
-        return enabled
+        return self.subtitles_enabled if override is None else override
 
     def outputs_for(self, clip_class: str, media: MediaInfo) -> tuple[str, ...]:
-        """Select supported variants independently, retaining primary shortcuts."""
+        """Select and validate supported outputs before transcription."""
         if not self.clips_for(clip_class):
             return ()
         available = available_variants(media)
@@ -318,13 +305,16 @@ class AppConfig:
         )
         if not outputs:
             raise ConfigurationError(f"Enable at least one {clip_class} output variant")
+        for name in outputs:
+            self.for_output(clip_class, name)
         return outputs
 
-    def for_output(self, clip_class: str, variant: str, *, primary: bool) -> AppConfig:
+    def for_output(self, clip_class: str, variant: str) -> AppConfig:
         """Resolve captions and presentation before entering the render boundary."""
-        enabled = self.subtitles_for(clip_class, variant=not primary)
+        enabled = self.subtitles_for(clip_class)
         template, template_dir = self.subtitle_template, self.subtitle_template_dir
         options = self.subtitle_options
+        width = height = None
         for scope in (None, variant):
             override = next(
                 (
@@ -338,18 +328,52 @@ class AppConfig:
                 continue
             if override.subtitles_enabled is not None:
                 enabled = override.subtitles_enabled
-            if not primary and override.additional_subtitles_enabled is not None:
-                enabled = override.additional_subtitles_enabled
             if override.subtitle_template is not None:
                 template = override.subtitle_template
             if override.subtitle_template_dir is not None:
                 template_dir = override.subtitle_template_dir
             options = replace(options, **override.subtitle_options.overrides())
+            if override.width is not None:
+                width = override.width
+            if override.height is not None:
+                height = override.height
+        dimensions: dict[str, int] = {}
+        ratio = variant_ratio(variant)
+        if width is not None or height is not None:
+            if ratio == "original":
+                raise ConfigurationError(
+                    "Original framing does not accept width/height"
+                )
+            numerator, denominator = (int(part) for part in ratio.split(":"))
+            if width is None:
+                assert height is not None
+                width = max(
+                    2, 2 * ((height * numerator + denominator) // (2 * denominator))
+                )
+            if height is None:
+                height = max(
+                    2, 2 * ((width * denominator + numerator) // (2 * numerator))
+                )
+            if abs(width * denominator - height * numerator) > max(
+                numerator, denominator
+            ):
+                raise ConfigurationError(
+                    f"{clip_class}:{variant} dimensions must preserve {ratio}"
+                )
+            if ratio == "1:1":
+                if width != height:
+                    raise ConfigurationError("Square dimensions must have equal sides")
+                dimensions["square_size"] = width
+            else:
+                orientation = "vertical" if numerator < denominator else "horizontal"
+                dimensions[f"{orientation}_width"] = width
+                dimensions[f"{orientation}_height"] = height
         return replace(
             self,
             **{
-                f"{clip_class}_aspect_ratio": variant_ratio(variant),
+                f"{clip_class}_aspect_ratio": ratio,
                 f"{clip_class}_subtitles_enabled": enabled,
+                **dimensions,
             },
             subtitle_template=template,
             subtitle_template_dir=template_dir,

@@ -314,7 +314,11 @@ def test_custom_subtitles_cache_the_exact_cut_separately_from_full_source(
         tmp_path / "out",
         clip_range=TimeRange(10.25, 120.5),
         short_subtitles_enabled=not variant_subtitles,
-        short_variant_subtitles_enabled=variant_subtitles,
+        output_options=tuple(
+            OutputOptions("short", name, subtitles_enabled=variant_subtitles)
+            for name in VARIANT_RATIOS
+            if name != "vertical"
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     _run(tmp_path, asr, FakeBackend(empty=True))
@@ -364,7 +368,9 @@ def test_direct_cut_skips_asr_when_captioned_variants_are_not_published(
         short_aspect_ratio=ratio,
         render_variants=variants,
         short_subtitles_enabled=False,
-        short_variant_subtitles_enabled=True,
+        output_options=(
+            OutputOptions("short", "horizontal-blur", subtitles_enabled=True),
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(
@@ -1324,11 +1330,12 @@ def test_named_caption_switch_skips_asr_for_the_only_published_output(
             "--output-dir",
             str(tmp_path / "out"),
             "--clip-full",
-            "--no-variants",
-            "--no-render",
-            "short:vertical",
+            "--variants",
+            "false",
             "--render",
-            "short:square-blur",
+            "short:vertical=false",
+            "--render",
+            "short:square-blur=true",
             "--subtitle-enabled",
             "short:square-blur=false",
         ]
@@ -1489,8 +1496,15 @@ def test_primary_and_variant_subtitles_are_independent_and_persisted(
         long_aspect_ratio=primary_ratio,
         short_subtitles_enabled=primary_subtitles,
         long_subtitles_enabled=primary_subtitles,
-        short_variant_subtitles_enabled=variant_subtitles,
-        long_variant_subtitles_enabled=variant_subtitles,
+        output_options=tuple(
+            OutputOptions(clip_class, name, subtitles_enabled=variant_subtitles)
+            for clip_class in ("short", "long")
+            for name in VARIANT_RATIOS
+            if name
+            != {"9:16": "vertical", "16:9": "horizontal", "original": "original"}[
+                primary_ratio
+            ]
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1543,7 +1557,11 @@ def test_horizontal_only_short_uses_primary_subtitles(
         short_aspect_ratio="16:9",
         short_variants_enabled=False,
         short_subtitles_enabled=primary_subtitles,
-        short_variant_subtitles_enabled=unused_variant_subtitles,
+        output_options=(
+            OutputOptions(
+                "short", "vertical", subtitles_enabled=unused_variant_subtitles
+            ),
+        ),
     )
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     (video,) = result.clip_paths
@@ -1576,7 +1594,9 @@ def test_reenabling_class_reuses_proposals_and_transcription(tmp_path: Path) -> 
         config=replace(
             config,
             long_clips_enabled=True,
-            short_variant_subtitles_enabled=True,
+            output_options=(
+                OutputOptions("short", "horizontal-blur", subtitles_enabled=True),
+            ),
             long_variants_enabled=False,
         ),
     )
@@ -2614,3 +2634,57 @@ def test_pipeline_merges_proposals_revised_to_same_interval(tmp_path: Path) -> N
     assert manifest["analysis"]["editorially_eligible"] == 1
     assert manifest["analysis"]["selected"] == 1
     assert len(result.clip_paths) == 1
+
+
+def test_scoped_dimensions_and_styles_reach_final_render_without_extra_asr(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    from multicuts.adapters.multisubs import MultisubsAdapter
+
+    monkeypatch.setattr(
+        MultisubsAdapter, "validate_subtitle_options", lambda *a, **k: None
+    )
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--width",
+            "short=720",
+            "--width",
+            "short:vertical=360",
+            "--subtitle-font-size",
+            "short:vertical=4%",
+        ]
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path, asr, ai, config=config, source_media=replace(_media(), duration=180)
+    )
+    assert asr.calls == 1 and ai.calls == 0
+    root = result.manifest_path.parent
+    manifest = json.loads(result.manifest_path.read_text())
+    variants = manifest["clips"][0]["variants"]
+    assert len(variants) == 6
+    for version in variants:
+        data = json.loads((root / version["metadata"]).read_text())
+        width = 360 if version["variant"] == "vertical" else 720
+        assert data["render"]["width"] == width
+        if version["variant"] == "vertical":
+            assert data["render"]["height"] == 640
+            assert data["render"]["subtitle_overrides"] == {"font_size": "4%"}
+
+
+def test_mismatched_scoped_dimensions_fail_before_asr(tmp_path):
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        output_options=(OutputOptions("long", "horizontal", width=720, height=720),),
+    )
+    asr = FakeTranscriber()
+    with pytest.raises(ConfigurationError, match="dimensions must preserve"):
+        _run(tmp_path, asr, FakeBackend(), config=config)
+    assert asr.calls == 0

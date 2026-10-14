@@ -46,8 +46,8 @@ class OutputOptions:
     subtitle_template: str | None = None
     subtitle_template_dir: Path | None = None
     subtitle_options: SubtitleOptions = SubtitleOptions()
-    # Preserve the legacy companion caption shortcut after primary fallback.
-    additional_subtitles_enabled: bool | None = None
+    width: int | None = None
+    height: int | None = None
 
     def __post_init__(self) -> None:
         if self.clip_class not in ("short", "long"):
@@ -57,10 +57,16 @@ class OutputOptions:
             "original",
         ):
             raise ConfigurationError("Unknown output variant")
-        for name in ("enabled", "subtitles_enabled", "additional_subtitles_enabled"):
+        for name in ("enabled", "subtitles_enabled"):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
                 raise ConfigurationError(f"Output {name} must be boolean or unset")
+        for name in ("width", "height"):
+            value = getattr(self, name)
+            if value is not None and (
+                type(value) is not int or value <= 0 or value % 2
+            ):
+                raise ConfigurationError(f"Output {name} must be positive even pixels")
         if self.subtitle_template is not None and (
             not isinstance(self.subtitle_template, str)
             or not self.subtitle_template.strip()

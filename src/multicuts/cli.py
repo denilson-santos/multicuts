@@ -30,7 +30,7 @@ from multicuts.errors import (
 from multicuts.models import TimeRange
 from multicuts.output_config import (
     load_output_config,
-    render_key,
+    output_key,
     scoped_value,
     subtitle_key,
 )
@@ -211,10 +211,6 @@ def _float(option: float | None, name: str, default: float) -> float:
         raise ConfigurationError(f"{name} must be a number") from exc
 
 
-def _boolean(option: bool | None, name: str, default: object) -> bool:
-    return _parse_boolean(_value(option, name, default), name)
-
-
 def _parse_boolean(raw: object, name: str) -> bool:
     if type(raw) is bool:
         return raw
@@ -226,82 +222,32 @@ def _parse_boolean(raw: object, name: str) -> bool:
     raise ConfigurationError(f"{name} must be a boolean")
 
 
-def _boolean_override(
-    option: bool | None,
-    name: str,
-    *,
-    parent_options: tuple[bool | None, ...] = (),
-    parent_env_names: tuple[str, ...] = (),
-    default: object = None,
-) -> bool | None:
-    if option is not None:
-        return option
-    if any(parent is not None for parent in parent_options):
-        return None
-    # Source precedence also applies across inherited settings.
-    if name not in os.environ and any(
-        parent_name in os.environ for parent_name in parent_env_names
-    ):
-        return None
-    raw = setting(name)
-    if raw is None:
-        if any(setting(parent_name) is not None for parent_name in parent_env_names):
-            return None
-        return None if default is None else _parse_boolean(default, name)
-    return _parse_boolean(raw, name)
-
-
-def _subtitle_options(
-    cli: dict[str, object], preset: dict[str, object]
-) -> SubtitleOptions:
-    values: dict[str, object] = {}
-    for field in fields(SubtitleOptions):
-        key = "subtitle_" + field.name
-        raw = _value(cli.get(key), key.upper(), preset.get(key))
-        if raw is None:
-            continue
-        if field.name in SUBTITLE_BOOLEAN_FIELDS:
-            raw = _parse_boolean(raw, key.upper())
-        elif field.name == "fonts_dir":
-            raw = Path(str(raw)).expanduser()
-        elif not isinstance(raw, str):
-            raise ConfigurationError(f"{key.upper()} must be text")
-        values[field.name] = raw
-    return replace(SubtitleOptions(), **values)
-
-
 def _capture_output_option(
     ctx: typer.Context, param: TyperOption, value: object
 ) -> None:
-    if value is None:
-        return
-    if param.name is None:
+    if not value:
         return
     name = param.name
-    captured = ctx.meta.setdefault("output_options", {})
-
-    def assign(key: str, raw: object) -> None:
-        if key in captured and captured[key] != raw:
-            raise ConfigurationError(
-                f"Conflicting values for --{name.replace('_', '-')}"
-            )
-        captured[key] = raw
-
-    if name.startswith("no_subtitle_"):
-        assign(name.removeprefix("no_"), False)
-        return
-    if not isinstance(value, tuple) or not all(isinstance(raw, str) for raw in value):
+    if name is None or not isinstance(value, tuple):
         raise ConfigurationError("Output options require text values")
+    captured = ctx.meta.setdefault("output_options", {})
     for raw in value:
-        if name in ("render", "no_render"):
-            assign(render_key(raw), name == "render")
-        else:
+        scope, supplied = scoped_value(raw)
+        if name.startswith("subtitle_"):
             field = name.removeprefix("subtitle_")
-            scope, supplied = scoped_value(raw)
-            normalized: object = supplied
-            if field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS:
-                normalized = _parse_boolean(supplied, f"--{name.replace('_', '-')}")
-            assign(subtitle_key(scope, field), normalized)
+            key = subtitle_key(scope, field)
+            boolean = field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS
+        else:
+            key = output_key(scope, name)
+            boolean = name in ("render", "variants")
+        normalized: object = supplied
+        if boolean:
+            normalized = _parse_boolean(supplied, f"--{name.replace('_', '-')}")
+        if key in captured and captured[key] != normalized:
+            raise ConfigurationError(
+                f"Conflicting values for --{name.replace('_', '-')} at scope {scope}"
+            )
+        captured[key] = normalized
 
 
 class _OutputCommand(TyperCommand):
@@ -309,187 +255,197 @@ class _OutputCommand(TyperCommand):
 
     def __init__(self, name: str | None, **kwargs: Any) -> None:
         super().__init__(name, **kwargs)
-        for flag in ("render", "no-render"):
-            self.params.append(
-                TyperOption(
-                    param_decls=["--" + flag],
-                    type=str,
-                    multiple=True,
-                    default=(),
-                    expose_value=False,
-                    callback=_capture_output_option,
-                    metavar="SCOPE",
-                    rich_help_panel="Clips",
-                    help="Enable or disable rendering for all, TYPE, or TYPE:VARIANT. "
-                    "Repeatable.",
-                )
-            )
+        controls = {
+            "render": "true/false (default: true). "
+            "Class scopes gate all their outputs.",
+            "variants": "true/false for additional outputs (default: true); "
+            "all, short, or long only. Named --render settings override this default.",
+            "aspect_ratio": "Primary format: original, 9:16, 16:9, or 1:1; "
+            "all, short, or long only (defaults: short=9:16, long=16:9).",
+            "width": "Positive even pixels. If height is omitted, derive it from "
+            "the variant ratio and round to even pixels. Unavailable for original.",
+            "height": "Positive even pixels. If width is omitted, derive it from "
+            "the variant ratio and round to even pixels. Unavailable for original.",
+        }
+        subtitle_help = {
+            "enabled": "Caption switch (default: true).",
+            "template": "Template name (default: yellow-pop).",
+            "template_dir": "Custom template directory path.",
+            "position": "Position: top/middle/bottom with left/center/right.",
+            "anchor": "Subtitle-box anchor for custom x/y coordinates.",
+            "font": "Font family name.",
+            "font_weight": "Weight name or 100-900; cannot be combined with bold.",
+            "fonts_dir": "Directory containing additional font files.",
+            "text_case": "Text case: original, uppercase, or lowercase.",
+            "line_height": "Line height: auto, %, or px.",
+            "opacity": "Opacity: 0% through 100%.",
+            "backdrop": "Cue backdrop: none, outline, or box.",
+            "word_backdrop": "Timed word backdrop: none, outline, or box.",
+        }
         for key in (
-            "enabled",
-            "template",
-            "template_dir",
-            *(field.name for field in fields(SubtitleOptions)),
+            *controls,
+            "subtitle_enabled",
+            "subtitle_template",
+            "subtitle_template_dir",
+            *("subtitle_" + field.name for field in fields(SubtitleOptions)),
         ):
-            flag = "subtitle-" + key.replace("_", "-")
-            boolean = key == "enabled" or key in SUBTITLE_BOOLEAN_FIELDS
+            subtitle = key.startswith("subtitle_")
+            field = key.removeprefix("subtitle_")
+            boolean = field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS
+            help_text = controls.get(
+                key, subtitle_help.get(field, f"Subtitle {field.replace('_', ' ')}.")
+            )
+            if subtitle and boolean:
+                help_text += " Value: true/false."
+            elif field.endswith("_duration"):
+                help_text += " Value: 10ms-5000ms or seconds, e.g. 0.15s."
+            elif field.endswith("_color"):
+                help_text += " Value: #RRGGBB or #RRGGBBAA."
+            elif field.endswith(("_mode", "_entrance", "_emphasis", "_exit")):
+                help_text += (
+                    " Value: progressive or active-word."
+                    if field.endswith("_mode")
+                    else " Value: effect name; none disables this phase."
+                )
+            elif field in (
+                "font_size",
+                "letter_spacing",
+                "margin_left",
+                "margin_right",
+                "margin_top",
+                "margin_bottom",
+                "max_width",
+                "max_height",
+                "position_x",
+                "position_y",
+                "backdrop_size",
+                "word_backdrop_size",
+                "shadow_size",
+            ):
+                help_text += " Value: % or px."
             self.params.append(
                 TyperOption(
-                    param_decls=["--" + flag],
+                    param_decls=["--" + key.replace("_", "-")],
                     type=str,
                     multiple=True,
                     default=(),
                     expose_value=False,
                     callback=_capture_output_option,
-                    metavar="[SCOPE=]BOOL" if boolean else "[SCOPE=]VALUE",
-                    help=f"Subtitle {key.replace('_', ' ')}; "
-                    "repeat for all, TYPE, or TYPE:VARIANT.",
-                    rich_help_panel="Subtitles"
-                    if key in ("enabled", "template", "template_dir")
-                    else "Subtitle presentation",
+                    metavar="[SCOPE=]VALUE",
+                    help=help_text,
+                    rich_help_panel=(
+                        "Clips"
+                        if not subtitle
+                        else "Subtitles"
+                        if field in ("enabled", "template", "template_dir")
+                        else "Subtitle presentation"
+                    ),
                 )
             )
-            if key in SUBTITLE_BOOLEAN_FIELDS:
-                self.params.append(
-                    TyperOption(
-                        param_decls=["--no-" + flag],
-                        type=bool,
-                        is_flag=True,
-                        default=None,
-                        expose_value=False,
-                        callback=_capture_output_option,
-                        hidden=True,
-                    )
-                )
 
 
-def _class_subtitle_value(
-    option: bool | None, shared: bool | None, clip_class: str, preset: dict[str, object]
-) -> bool | None:
-    if option is not None:
-        return option
-    if shared is not None:
-        return None
-    names = (
-        f"SUBTITLE_{clip_class.upper()}_ENABLED",
-        f"{clip_class.upper()}_SUBTITLES_ENABLED",
-    )
-    for name in names:
-        if name in os.environ:
-            return _parse_boolean(os.environ[name], name)
-    for name in names:
-        value = setting(name)
-        if value is not None:
-            return _parse_boolean(value, name)
-    value = preset.get(f"subtitle_{clip_class}")
-    return None if value is None else _parse_boolean(value, names[0])
-
-
-def _output_options(
-    ctx: typer.Context, preset: dict[str, object]
-) -> tuple[OutputOptions, ...]:
-    """Resolve source priority before specificity, independently for each field."""
-    cli = dict(ctx.params)
-    cli.update(ctx.meta.get("output_options", {}))
+def _output_settings(
+    cli: dict[str, object], preset: dict[str, object]
+) -> dict[str, object]:
+    """Normalize output values once, resolving source before scope specificity."""
     cache: dict[str, str | None] = {}
 
-    def resolve(
-        keys: tuple[str, ...], env_names: tuple[str | None, ...] | None = None
-    ) -> object | None:
-        names = tuple(key.upper() for key in keys) if env_names is None else env_names
+    def resolve(keys: tuple[str, ...]) -> tuple[str, object] | None:
         for key in keys:
-            if cli.get(key) is not None:
-                return cli[key]
-        for name in names:
-            if name is not None and name in os.environ:
-                return os.environ[name]
-        for name in names:
-            if name is None:
-                continue
-            if name not in cache:
-                cache[name] = setting(name)
-            if cache[name] is not None:
-                return cache[name]
+            if key in cli:
+                return key, cli[key]
+        for key in keys:
+            if key.upper() in os.environ:
+                return key, os.environ[key.upper()]
+        for key in keys:
+            if key not in cache:
+                cache[key] = setting(key.upper())
+            if cache[key] is not None:
+                return key, cache[key]
         for key in keys:
             if key in preset:
-                return preset[key]
+                return key, preset[key]
         return None
 
-    def captions(clip_class: str, scope: str, *, additional: bool) -> bool | None:
-        keys = (f"subtitle_{scope}",)
-        names: tuple[str | None, ...] = (f"SUBTITLE_{scope.upper()}_ENABLED",)
-        if additional:
-            keys += (f"{clip_class}_variant_subtitles",)
-            names += (f"{clip_class.upper()}_VARIANT_SUBTITLES_ENABLED",)
-        keys += (
-            f"subtitle_{clip_class}",
-            f"{clip_class}_subtitles",
-            "subtitles",
-        )
-        names += (
-            f"SUBTITLE_{clip_class.upper()}_ENABLED",
-            f"{clip_class.upper()}_SUBTITLES_ENABLED",
-            None,
-        )
-        value = resolve(keys, names)
-        return None if value is None else _parse_boolean(value, names[0] or scope)
+    def value(field: str, scopes: tuple[str, ...], default: object = None) -> object:
+        key_for = subtitle_key if field.startswith("subtitle_") else output_key
+        field = field.removeprefix("subtitle_")
+        found = resolve(tuple(key_for(scope, field) for scope in scopes))
+        return default if found is None else found[1]
 
-    outputs: list[OutputOptions] = []
-    for clip_class in ("short", "long"):
-        for variant in (None, *VARIANT_RATIOS, "original"):
-            scope = (
-                clip_class
-                if variant is None
-                else f"{clip_class}_{variant.replace('-', '_')}"
-            )
-            prefixes = (f"subtitle_{scope}_", f"subtitle_{clip_class}_", "subtitle_")
-            values: dict[str, object] = {}
-            for field in fields(SubtitleOptions):
-                raw = resolve(tuple(prefix + field.name for prefix in prefixes))
-                if raw is None:
-                    continue
+    def boolean(field: str, scopes: tuple[str, ...], default: bool) -> bool:
+        return _parse_boolean(value(field, scopes, default), field.upper())
+
+    def presentation(scopes: tuple[str, ...]) -> SubtitleOptions:
+        values: dict[str, object] = {}
+        for field in fields(SubtitleOptions):
+            raw = value("subtitle_" + field.name, scopes)
+            if raw is not None:
                 if field.name in SUBTITLE_BOOLEAN_FIELDS:
-                    raw = _parse_boolean(raw, f"subtitle_{scope}_{field.name}".upper())
+                    raw = _parse_boolean(
+                        raw, subtitle_key(scopes[0], field.name).upper()
+                    )
                 elif field.name == "fonts_dir":
                     raw = Path(str(raw)).expanduser()
                 values[field.name] = raw
-            template = resolve(tuple(prefix + "template" for prefix in prefixes))
-            directory = resolve(tuple(prefix + "template_dir" for prefix in prefixes))
+        return replace(SubtitleOptions(), **values)
 
-            subtitle_enabled = captions(clip_class, scope, additional=False)
-            additional_enabled = (
-                captions(clip_class, scope, additional=True)
-                if variant is not None
-                else None
+    def directory(scopes: tuple[str, ...]) -> Path | None:
+        raw = value("subtitle_template_dir", scopes)
+        return None if raw is None else Path(str(raw)).expanduser()
+
+    outputs: list[OutputOptions] = []
+    result: dict[str, object] = {
+        "render_variants": boolean("variants", ("all",), True),
+        "subtitles_enabled": boolean("subtitle_enabled", ("all",), True),
+        "subtitle_template": str(value("subtitle_template", ("all",), "yellow-pop")),
+        "subtitle_template_dir": directory(("all",)),
+        "subtitle_options": presentation(("all",)),
+    }
+    for clip_class in ("short", "long"):
+        scopes = (clip_class, "all")
+        result[f"{clip_class}_clips_enabled"] = boolean("render", scopes, True)
+        result[f"{clip_class}_variants_enabled"] = boolean("variants", scopes, True)
+        result[f"{clip_class}_subtitles_enabled"] = boolean(
+            "subtitle_enabled", scopes, True
+        )
+        result[f"{clip_class}_aspect_ratio"] = str(
+            value("aspect_ratio", scopes, "9:16" if clip_class == "short" else "16:9")
+        )
+        for variant in (None, *VARIANT_RATIOS, "original"):
+            scopes = (
+                (clip_class, "all")
+                if variant is None
+                else (f"{clip_class}:{variant}", clip_class, "all")
             )
             enabled = None
             if variant is not None:
-                render_key = scope.upper() + "_ENABLED"
-                enabled = _boolean_override(
-                    cli.get(scope),
-                    render_key,
-                    parent_options=(
-                        cli.get(f"{clip_class}_variants"),
-                        cli.get("variants"),
-                    ),
-                    default=preset.get(scope),
-                    parent_env_names=(
-                        f"{clip_class.upper()}_VARIANTS_ENABLED",
-                        "RENDER_VARIANTS",
-                    ),
-                )
+                key = output_key(scopes[0], "render")
+                found = resolve((key, output_key(clip_class, "variants"), "variants"))
+                if found is not None and found[0] == key:
+                    enabled = _parse_boolean(found[1], key.upper())
+            dimensions: dict[str, int | None] = {}
+            for field in ("width", "height"):
+                raw = value(field, scopes)
+                try:
+                    dimensions[field] = None if raw is None else int(str(raw))
+                except ValueError as exc:
+                    raise ConfigurationError(f"--{field} must be an integer") from exc
+            template = value("subtitle_template", scopes)
             outputs.append(
                 OutputOptions(
-                    clip_class,
-                    variant,
-                    enabled,
-                    subtitle_enabled,
-                    None if template is None else str(template),
-                    None if directory is None else Path(str(directory)).expanduser(),
-                    replace(SubtitleOptions(), **values),
-                    additional_enabled,
+                    clip_class=clip_class,
+                    variant=variant,
+                    enabled=enabled,
+                    subtitles_enabled=boolean("subtitle_enabled", scopes, True),
+                    subtitle_template=None if template is None else str(template),
+                    subtitle_template_dir=directory(scopes),
+                    subtitle_options=presentation(scopes),
+                    **dimensions,
                 )
             )
-    return tuple(outputs)
+    result["output_options"] = tuple(outputs)
+    return result
 
 
 app = typer.Typer(
@@ -505,9 +461,19 @@ app = typer.Typer(
 
 @app.command(
     cls=_OutputCommand,
+    help=(
+        "Find and render short and long clips. Output controls are repeatable: "
+        "[SCOPE=]VALUE. Omitted scope means all; use short, long, or TYPE:VARIANT "
+        "for specific outputs. Boolean values are true/false."
+    ),
     epilog=(
-        "Examples: --no-long-clips --no-short-variants publishes primary shorts; "
-        "--no-subtitles --short-variant-subtitles captions only short variants."
+        "Examples: --render long=false --variants short=false "
+        "publishes primary shorts. "
+        "--subtitle-enabled false --subtitle-enabled short:vertical=true captions "
+        "only vertical shorts. Scopes: all, short, long, TYPE:VARIANT."
+        " Output options are repeatable: [SCOPE=]VALUE; omitted scope means all. "
+        "VARIANT: horizontal, vertical, square, horizontal-blur, vertical-blur, "
+        "square-blur, original."
     ),
 )
 def run_command(
@@ -626,158 +592,6 @@ def run_command(
             rich_help_panel="Clips",
         ),
     ] = None,
-    short_clips: Annotated[
-        bool | None,
-        typer.Option(
-            "--short-clips/--no-short-clips",
-            help="Enable short cuts and their variants (default: on).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    long_clips: Annotated[
-        bool | None,
-        typer.Option(
-            "--long-clips/--no-long-clips",
-            help="Enable long cuts and their variants (default: on).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    short_aspect_ratio: Annotated[
-        str | None,
-        typer.Option(
-            "--short-aspect-ratio",
-            help=(
-                "Primary short format: original, 9:16, 16:9, or 1:1 (default: 9:16)."
-            ),
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    long_aspect_ratio: Annotated[
-        str | None,
-        typer.Option(
-            "--long-aspect-ratio",
-            help=("Primary long format: original, 9:16, 16:9, or 1:1 (default: 16:9)."),
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    vertical_width: Annotated[
-        int | None,
-        typer.Option(
-            "--vertical-width",
-            help="9:16 width in pixels (default: 1080).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    vertical_height: Annotated[
-        int | None,
-        typer.Option(
-            "--vertical-height",
-            help="9:16 height in pixels (default: 1920).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    horizontal_width: Annotated[
-        int | None,
-        typer.Option(
-            "--horizontal-width",
-            help="16:9 width in pixels (default: 1920).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    horizontal_height: Annotated[
-        int | None,
-        typer.Option(
-            "--horizontal-height",
-            help="16:9 height in pixels (default: 1080).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    square_size: Annotated[
-        int | None,
-        typer.Option(
-            "--square-size",
-            help="1:1 side in pixels; positive and even (default: 1080).",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    variants: Annotated[
-        bool | None,
-        typer.Option(
-            "--variants/--no-variants",
-            help=(
-                "Add all source-compatible crop and blur variants (default: on). "
-                "--no-variants publishes only the primary format. "
-                "Class and individual variant flags can override this default."
-            ),
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    short_variants: Annotated[
-        bool | None,
-        typer.Option(
-            "--short-variants/--no-short-variants",
-            help="Additional short formats; inherits --variants by default.",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    long_variants: Annotated[
-        bool | None,
-        typer.Option(
-            "--long-variants/--no-long-variants",
-            help="Additional long formats; inherits --variants by default.",
-            rich_help_panel="Clips",
-        ),
-    ] = None,
-    subtitles: Annotated[
-        bool | None,
-        typer.Option(
-            "--subtitles/--no-subtitles",
-            help=(
-                "Enable/disable subtitles for both classes and variants (default: on). "
-                "Class-specific CLI flags win regardless of order; "
-                "CLI flags override environment settings."
-            ),
-            rich_help_panel="Subtitles",
-        ),
-    ] = None,
-    short_subtitles: Annotated[
-        bool | None,
-        typer.Option(
-            "--short-subtitles/--no-short-subtitles",
-            help=(
-                "Short subtitles and the default for short variants. "
-                "Overrides the shared CLI shortcut."
-            ),
-            rich_help_panel="Subtitles",
-        ),
-    ] = None,
-    long_subtitles: Annotated[
-        bool | None,
-        typer.Option(
-            "--long-subtitles/--no-long-subtitles",
-            help=(
-                "Long subtitles and the default for long variants. "
-                "Overrides the shared CLI shortcut."
-            ),
-            rich_help_panel="Subtitles",
-        ),
-    ] = None,
-    short_variant_subtitles: Annotated[
-        bool | None,
-        typer.Option(
-            "--short-variant-subtitles/--no-short-variant-subtitles",
-            help="Short variant subtitles; inherits short subtitles by default.",
-            rich_help_panel="Subtitles",
-        ),
-    ] = None,
-    long_variant_subtitles: Annotated[
-        bool | None,
-        typer.Option(
-            "--long-variant-subtitles/--no-long-variant-subtitles",
-            help="Long variant subtitles; inherits long subtitles by default.",
-            rich_help_panel="Subtitles",
-        ),
-    ] = None,
     block_chars: Annotated[
         int | None,
         typer.Option(
@@ -820,19 +634,7 @@ def run_command(
     ] = None,
 ) -> None:
     preset = load_output_config(config_file)
-    scoped_cli = ctx.meta.get("output_options", {})
-    cli = dict(ctx.params)
-    cli.update(scoped_cli)
-    subtitles = scoped_cli.get("subtitles", subtitles)
-    short_clips = scoped_cli.get("short_clips", short_clips)
-    long_clips = scoped_cli.get("long_clips", long_clips)
-    if "render_all" in scoped_cli:
-        if short_clips is None:
-            short_clips = scoped_cli["render_all"]
-        if long_clips is None:
-            long_clips = scoped_cli["render_all"]
-    short_subtitles = scoped_cli.get("subtitle_short", short_subtitles)
-    long_subtitles = scoped_cli.get("subtitle_long", long_subtitles)
+    output_settings = _output_settings(ctx.meta.get("output_options", {}), preset)
     direct = clip_range is not None or clip_full
     backend = "" if direct else _value(llm_backend, "LLM_BACKEND", "")
     llm_model_value = "" if direct else _value(llm_model, "LLM_MODEL", "")
@@ -845,11 +647,6 @@ def run_command(
     effort_value = None if direct else _value(llm_effort, "LLM_EFFORT", None)
     if effort_value is not None and not isinstance(effort_value, str):
         raise ConfigurationError("LLM_EFFORT must be a string")
-    template_dir = _value(
-        cli.get("subtitle_template_dir"),
-        "SUBTITLE_TEMPLATE_DIR",
-        preset.get("subtitle_template_dir"),
-    )
     config = AppConfig(
         source=source,
         output_dir=output_dir.expanduser(),
@@ -864,75 +661,6 @@ def run_command(
         language=lang,
         transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),
         asr_backend=str(_value(asr_backend, "ASR_BACKEND", "whisperx")),
-        short_aspect_ratio=str(
-            _value(short_aspect_ratio, "SHORT_ASPECT_RATIO", "9:16")
-        ),
-        long_aspect_ratio=str(_value(long_aspect_ratio, "LONG_ASPECT_RATIO", "16:9")),
-        vertical_width=_integer(vertical_width, "VERTICAL_WIDTH", 1080),
-        vertical_height=_integer(vertical_height, "VERTICAL_HEIGHT", 1920),
-        horizontal_width=_integer(horizontal_width, "HORIZONTAL_WIDTH", 1920),
-        horizontal_height=_integer(horizontal_height, "HORIZONTAL_HEIGHT", 1080),
-        square_size=_integer(square_size, "SQUARE_SIZE", 1080),
-        short_clips_enabled=_boolean(
-            short_clips,
-            "SHORT_CLIPS_ENABLED",
-            preset.get("short_clips", preset.get("render_all", True)),
-        ),
-        long_clips_enabled=_boolean(
-            long_clips,
-            "LONG_CLIPS_ENABLED",
-            preset.get("long_clips", preset.get("render_all", True)),
-        ),
-        render_variants=_boolean(
-            variants, "RENDER_VARIANTS", preset.get("variants", True)
-        ),
-        short_variants_enabled=_boolean_override(
-            short_variants,
-            "SHORT_VARIANTS_ENABLED",
-            parent_options=(variants,),
-            parent_env_names=("RENDER_VARIANTS",),
-            default=preset.get("short_variants"),
-        ),
-        long_variants_enabled=_boolean_override(
-            long_variants,
-            "LONG_VARIANTS_ENABLED",
-            parent_options=(variants,),
-            parent_env_names=("RENDER_VARIANTS",),
-            default=preset.get("long_variants"),
-        ),
-        subtitles_enabled=_parse_boolean(
-            preset.get("subtitles", True) if subtitles is None else subtitles,
-            "--subtitle-enabled",
-        ),
-        short_subtitles_enabled=_class_subtitle_value(
-            short_subtitles, subtitles, "short", preset
-        ),
-        long_subtitles_enabled=_class_subtitle_value(
-            long_subtitles, subtitles, "long", preset
-        ),
-        short_variant_subtitles_enabled=_boolean_override(
-            short_variant_subtitles,
-            "SHORT_VARIANT_SUBTITLES_ENABLED",
-            parent_options=(short_subtitles, subtitles),
-            parent_env_names=("SUBTITLE_SHORT_ENABLED", "SHORT_SUBTITLES_ENABLED"),
-        ),
-        long_variant_subtitles_enabled=_boolean_override(
-            long_variant_subtitles,
-            "LONG_VARIANT_SUBTITLES_ENABLED",
-            parent_options=(long_subtitles, subtitles),
-            parent_env_names=("SUBTITLE_LONG_ENABLED", "LONG_SUBTITLES_ENABLED"),
-        ),
-        subtitle_template=str(
-            _value(
-                cli.get("subtitle_template"),
-                "SUBTITLE_TEMPLATE",
-                preset.get("subtitle_template", "yellow-pop"),
-            )
-        ),
-        subtitle_template_dir=Path(str(template_dir)).expanduser()
-        if template_dir
-        else None,
-        subtitle_options=_subtitle_options(cli, preset),
         block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
         block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
         keep_intermediates=bool(keep_intermediates),
@@ -940,7 +668,7 @@ def run_command(
         verbose=bool(verbose),
     )
     state = ctx.obj if isinstance(ctx.obj, _CliContext) else _CliContext()
-    state.parsed_config = replace(config, output_options=_output_options(ctx, preset))
+    state.parsed_config = replace(config, **output_settings)
 
 
 def parse_run_config(argv: Sequence[str] | None = None) -> AppConfig:
