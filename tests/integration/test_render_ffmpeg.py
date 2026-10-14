@@ -19,9 +19,85 @@ from multicuts.models import (
     Word,
 )
 from multicuts.pipeline import run_pipeline
-from multicuts.render import render_final, render_raw, render_short_horizontal
+from multicuts.render import render_final, render_raw
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize(
+    ("source_size", "expected"),
+    [
+        (
+            "160x90",
+            {
+                "horizontal",
+                "vertical",
+                "square",
+                "horizontal-blur",
+                "vertical-blur",
+                "square-blur",
+            },
+        ),
+        ("120x160", {"vertical", "square", "horizontal-blur", "square-blur"}),
+        (
+            "120x120",
+            {"horizontal", "vertical", "square", "horizontal-blur", "vertical-blur"},
+        ),
+    ],
+)
+def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
+    source_size: str, expected: set[str], tmp_path: Path
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=s={source_size}:r=25:d=0.8",
+            "-c:v",
+            "mpeg4",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source = AcquiredSource(source_path, "sha256-v1:orientation-matrix")
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        full_video=True,
+        subtitles_enabled=False,
+        long_clips_enabled=False,
+        vertical_width=90,
+        vertical_height=160,
+        horizontal_width=160,
+        horizontal_height=90,
+        square_size=90,
+    )
+    result = run_pipeline(
+        config,
+        acquire=lambda _source, _work, *, time_range=None: source,
+        probe=lambda acquired: inspect_media_path(acquired.local_path),
+    )
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["transcription"] is None
+    (clip,) = manifest["clips"]
+    assert {item["variant"] for item in clip["variants"]} == expected
+    for output in clip["variants"]:
+        media = inspect_media_path(result.manifest_path.parent / output["video"])
+        size = {"9:16": (90, 160), "16:9": (160, 90), "1:1": (90, 90)}[
+            output["aspect_ratio"]
+        ]
+        assert (media.presentation_width, media.presentation_height) == size
+        assert media.duration == pytest.approx(0.8, abs=0.15)
+        assert not media.has_audio
 
 
 @pytest.mark.parametrize(
@@ -451,18 +527,18 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         raw_renderer=render,
     )
     assert transcriber.calls == 1
-    # Vertical and square are encoded once; horizontal reuses the foreground.
-    assert len(rendering_outputs) == 2
+    # Every crop and blur output is encoded once, including exact-cut ASR input.
+    assert len(rendering_outputs) == 6
     assert transcription_inputs == ([rendering_outputs[0]] if custom else [source_path])
     root = result.manifest_path.parent
     assert not (root / ".work").exists()
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["analysis"]["clip_classes"] == ["short"]
     (clip,) = manifest["clips"]
-    assert len(clip["variants"]) == 3
+    assert len(clip["variants"]) == 6
     for version in clip["variants"]:
         metadata = json.loads((root / version["metadata"]).read_text())
-        is_variant = version["aspect_ratio"] != primary_ratio
+        is_variant = version["video"] != clip["video"]
         expected = not primary_subtitles if is_variant else primary_subtitles
         assert metadata["render"]["is_variant"] is is_variant
         assert metadata["render"]["subtitles_enabled"] is expected
@@ -619,13 +695,12 @@ def test_short_clip_is_published_with_requested_geometry_and_square_subtitles(
 
 
 @pytest.mark.parametrize("audio", [False, True])
-def test_horizontal_short_preserves_center_captions_over_unmirrored_blurred_background(
+def test_horizontal_blur_preserves_sharp_unmirrored_foreground_over_blurred_background(
     audio: bool, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
     raw = tmp_path / "vertical-raw.mp4"
-    foreground = tmp_path / "vertical-final.mp4"
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -645,40 +720,28 @@ def test_horizontal_short_preserves_center_captions_over_unmirrored_blurred_back
         )
     command.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(raw)])
     subprocess.run(command, check=True)
-    # A visible caption stand-in belongs only to the completed foreground.
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-i",
-            str(raw),
-            "-vf",
-            "drawbox=x=0:y=280:w=180:h=40:color=yellow:t=fill",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "copy",
-            str(foreground),
-        ],
-        check=True,
-    )
     config = AppConfig(
-        str(raw), tmp_path, "codex", "test", horizontal_width=640, horizontal_height=360
+        str(raw),
+        tmp_path,
+        "codex",
+        "test",
+        horizontal_width=640,
+        horizontal_height=360,
+        short_aspect_ratio="16:9",
+        render_variant="horizontal-blur",
     )
-    output = tmp_path / "clips" / "horizontal.mp4"
-    final, media = render_short_horizontal(
-        raw,
-        foreground,
+    output = tmp_path / "clips" / "horizontal-blur.mp4"
+    proposal = Proposal("blur", "short", "u0", "u0", 0, 2, "Hello.", "Title", "Reason")
+    clip = JudgedClip(proposal, {}, 80, True, "Good", "u0", "u0")
+    final, media, ratio = render_raw(
+        AcquiredSource(raw, "sha256-v1:blur"),
         inspect_media_path(raw),
+        clip,
         config,
         output=output,
         work=tmp_path / "work",
     )
+    assert ratio == "16:9"
     assert final == output and final.is_file()
     assert (media.presentation_width, media.presentation_height) == (640, 360)
     assert media.duration == pytest.approx(2.0, abs=0.25)
@@ -716,7 +779,6 @@ def test_horizontal_short_preserves_center_captions_over_unmirrored_blurred_back
     assert pixel(600, 40)[2] > 180 and pixel(600, 40)[0] < 60
     assert pixel(275, 40)[0] > 180 and pixel(275, 40)[2] < 60
     assert pixel(390, 40)[2] > 180 and pixel(390, 40)[0] < 60
-    assert pixel(320, 340)[0] > 180 and pixel(320, 340)[1] > 180
     assert pixel(40, 340)[1] < 60 and pixel(600, 340)[1] < 60
     # The white bar's hard edge stays sharp in the foreground and becomes a
     # gradual transition in the enlarged background. Allow encoding tolerance.

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
-from multicuts.models import TimeRange
+from multicuts.models import MediaInfo, TimeRange
 from multicuts.subtitles import SubtitleOptions
+from multicuts.variants import OutputOptions, available_variants, variant_ratio
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -62,8 +63,19 @@ class AppConfig:
     clip_range: TimeRange | None = None
     full_video: bool = False
     subtitle_options: SubtitleOptions = SubtitleOptions()
+    output_options: tuple[OutputOptions, ...] = ()
+    render_variant: str | None = None
 
     def __post_init__(self) -> None:
+        if self.render_variant is not None:
+            variant_ratio(self.render_variant)
+        if not isinstance(self.output_options, tuple) or any(
+            not isinstance(option, OutputOptions) for option in self.output_options
+        ):
+            raise ConfigurationError("Output options must be a tuple of OutputOptions")
+        keys = [(option.clip_class, option.variant) for option in self.output_options]
+        if len(keys) != len(set(keys)):
+            raise ConfigurationError("Duplicate output options")
         if not isinstance(self.subtitle_options, SubtitleOptions):
             raise ConfigurationError("Subtitle options must use SubtitleOptions")
         for name in ("search_range", "clip_range"):
@@ -268,3 +280,79 @@ class AppConfig:
             if variant_override is not None:
                 return variant_override
         return enabled
+
+    def outputs_for(self, clip_class: str, media: MediaInfo) -> tuple[str, ...]:
+        """Select supported variants independently, retaining primary shortcuts."""
+        if not self.clips_for(clip_class):
+            return ()
+        available = available_variants(media)
+        ratio = getattr(self, f"{clip_class}_aspect_ratio")
+        primary = {
+            "9:16": "vertical",
+            "16:9": "horizontal",
+            "1:1": "square",
+            "original": "original",
+        }[ratio]
+        if primary == "original":
+            available = (*available, "original")
+        elif primary not in available:
+            primary = "vertical"
+        overrides = {
+            option.variant: option.enabled
+            for option in self.output_options
+            if option.clip_class == clip_class and option.variant is not None
+        }
+        for name, enabled in overrides.items():
+            if enabled and name not in available:
+                raise ConfigurationError(
+                    f"{clip_class}-{name} is unavailable for this source orientation"
+                )
+        outputs = tuple(
+            name
+            for name in dict.fromkeys((primary, *available))
+            if (
+                overrides.get(name)
+                if overrides.get(name) is not None
+                else name == primary or self.variants_for(clip_class)
+            )
+        )
+        if not outputs:
+            raise ConfigurationError(f"Enable at least one {clip_class} output variant")
+        return outputs
+
+    def for_output(self, clip_class: str, variant: str, *, primary: bool) -> AppConfig:
+        """Resolve captions and presentation before entering the render boundary."""
+        enabled = self.subtitles_for(clip_class, variant=not primary)
+        template, template_dir = self.subtitle_template, self.subtitle_template_dir
+        options = self.subtitle_options
+        for scope in (None, variant):
+            override = next(
+                (
+                    item
+                    for item in self.output_options
+                    if item.clip_class == clip_class and item.variant == scope
+                ),
+                None,
+            )
+            if override is None:
+                continue
+            if override.subtitles_enabled is not None:
+                enabled = override.subtitles_enabled
+            if not primary and override.additional_subtitles_enabled is not None:
+                enabled = override.additional_subtitles_enabled
+            if override.subtitle_template is not None:
+                template = override.subtitle_template
+            if override.subtitle_template_dir is not None:
+                template_dir = override.subtitle_template_dir
+            options = replace(options, **override.subtitle_options.overrides())
+        return replace(
+            self,
+            **{
+                f"{clip_class}_aspect_ratio": variant_ratio(variant),
+                f"{clip_class}_subtitles_enabled": enabled,
+            },
+            subtitle_template=template,
+            subtitle_template_dir=template_dir,
+            subtitle_options=options,
+            render_variant=variant,
+        )

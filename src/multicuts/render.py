@@ -89,6 +89,24 @@ def _geometry(
     return ratio, _even(media.presentation_width), _even(media.presentation_height)
 
 
+def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str:
+    # The foreground is a vertical crop except for vertical canvases, which
+    # preserve a horizontal crop. Both layers remain uncaptioned until layout.
+    foreground_ratio = "16:9" if variant == "vertical-blur" else "9:16"
+    if foreground_ratio == "16:9":
+        fg_width, fg_height = width, _even(width * 9 // 16)
+    else:
+        fg_width, fg_height = _even(height * 9 // 16), height
+    return (
+        f"[0:{media.video_stream_index}]"
+        f"{_crop_filter(media, foreground_ratio, fg_width, fg_height)},"
+        "split=2[base][fg];"
+        f"[base]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[video]"
+    )
+
+
 def _inspect(path: Path) -> MediaInfo:
     try:
         return inspect_media_path(path)
@@ -198,11 +216,25 @@ def render_raw(
         f"{local_start:.6f}",
         "-t",
         f"{proposal.end - proposal.start:.6f}",
-        "-map",
-        f"0:{media.video_stream_index}",
-        "-vf",
-        _crop_filter(media, ratio, width, height),
     ]
+    if config.render_variant is not None and config.render_variant.endswith("-blur"):
+        command.extend(
+            [
+                "-filter_complex",
+                _blur_filter(media, config.render_variant, width, height),
+                "-map",
+                "[video]",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "-map",
+                f"0:{media.video_stream_index}",
+                "-vf",
+                _crop_filter(media, ratio, width, height),
+            ]
+        )
     if media.audio_stream_index is not None:
         command.extend(["-map", f"0:{media.audio_stream_index}"])
     path, actual = _encode_and_publish(
@@ -216,55 +248,6 @@ def render_raw(
         work=work,
     )
     return path, actual, ratio
-
-
-def render_short_horizontal(
-    raw_vertical: Path,
-    final_vertical: Path,
-    vertical_media: MediaInfo,
-    config: AppConfig,
-    *,
-    output: Path,
-    work: Path,
-) -> tuple[Path, MediaInfo]:
-    """Keep the complete subtitled short centered over its blurred video."""
-    foreground = _inspect(final_vertical)
-    width, height = config.horizontal_width, config.horizontal_height
-    filters = (
-        f"[0:{vertical_media.video_stream_index}]"
-        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
-        f"[1:{foreground.video_stream_index}]scale=-2:{height}:flags=lanczos,"
-        "setsar=1[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[video]"
-    )
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nostdin",
-        "-i",
-        str(raw_vertical),
-        "-i",
-        str(final_vertical),
-        "-filter_complex",
-        filters,
-        "-map",
-        "[video]",
-    ]
-    if foreground.audio_stream_index is not None:
-        command.extend(["-map", f"1:{foreground.audio_stream_index}"])
-    return _encode_and_publish(
-        command,
-        config,
-        media=foreground,
-        duration=vertical_media.duration,
-        width=width,
-        height=height,
-        output=output,
-        work=work,
-    )
 
 
 def clip_transcript(

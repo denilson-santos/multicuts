@@ -9,6 +9,7 @@ import pytest
 from multicuts.cli import parse_run_config
 from multicuts.errors import ConfigurationError
 from multicuts.subtitles import SubtitleOptions
+from multicuts.variants import VARIANT_RATIOS
 
 CASES = [
     ("position", "bottom-center"),
@@ -134,6 +135,154 @@ def test_missing_options_inherit():
     assert isinstance(options, SubtitleOptions)
     assert len(fields(options)) == len(CASES) == 57
     assert options.overrides() == {}
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("variant", [None, *VARIANT_RATIOS])
+def test_every_subtitle_field_is_available_for_each_class_and_variant(
+    clip_class, variant
+):
+    scope = clip_class if variant is None else f"{clip_class}-{variant}"
+    flags = []
+    expected = {}
+    for key, value in CASES:
+        flag = "subtitle-" + scope + "-" + key.replace("_", "-")
+        if isinstance(value, bool):
+            flags.append("--" + flag if value else "--no-" + flag)
+        else:
+            flags.extend(["--" + flag, value])
+        expected[key] = Path(str(value)) if key == "fonts_dir" else value
+    config = parse_run_config(
+        ["source.mp4", "--output-dir", "out", "--clip-full", *flags]
+    )
+    options = next(
+        item
+        for item in config.output_options
+        if item.clip_class == clip_class and item.variant == variant
+    )
+    assert options.subtitle_options.overrides() == expected
+    other_class = "long" if clip_class == "short" else "short"
+    assert (
+        config.for_output(
+            other_class, "vertical", primary=True
+        ).subtitle_options.overrides()
+        == {}
+    )
+
+
+def test_scoped_styles_resolve_source_before_specificity(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        "SUBTITLE_SHORT_VERTICAL_FONT_SIZE=9%\nSUBTITLE_SHORT_VERTICAL_ITALIC=true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "4%")
+    monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_ITALIC", "true")
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            "out",
+            "--clip-full",
+            "--subtitle-short-font-size",
+            "6%",
+            "--no-subtitle-italic",
+            "--subtitle-long-horizontal-font-size",
+            "3%",
+        ]
+    )
+    assert config.for_output(
+        "short", "vertical", primary=True
+    ).subtitle_options.overrides() == {
+        "font_size": "6%",
+        "italic": False,
+    }
+    assert (
+        config.for_output("long", "horizontal", primary=True).subtitle_options.font_size
+        == "3%"
+    )
+    config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
+    assert (
+        config.for_output("short", "vertical", primary=True).subtitle_options.font_size
+        == "4%"
+    )
+
+
+def test_named_caption_precedence_remains_correct_when_primary_changes(
+    tmp_path, monkeypatch
+):
+    (tmp_path / ".env").write_text(
+        "SUBTITLE_LONG_VERTICAL_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LONG_VARIANT_SUBTITLES_ENABLED", "false")
+    config = parse_run_config(
+        ["source.mp4", "--output-dir", "out", "--clip-full", "--no-subtitle-long"]
+    )
+    assert (
+        config.for_output("long", "vertical", primary=True).subtitles_for("long")
+        is False
+    )
+    config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
+    # A vertical source makes vertical the primary; the companion shortcut
+    # applies only if this same named output actually has a companion role.
+    assert (
+        config.for_output("long", "vertical", primary=True).subtitles_for("long")
+        is True
+    )
+    assert (
+        config.for_output("long", "vertical", primary=False).subtitles_for("long")
+        is False
+    )
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize("variant", list(VARIANT_RATIOS))
+def test_each_named_render_and_caption_switch_is_available(
+    clip_class, variant, monkeypatch
+):
+    scope = f"{clip_class}-{variant}"
+    env_scope = scope.replace("-", "_").upper()
+    monkeypatch.setenv(env_scope + "_ENABLED", "true")
+    monkeypatch.setenv("SUBTITLE_" + env_scope + "_ENABLED", "true")
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            "out",
+            "--clip-full",
+            f"--no-{scope}",
+            f"--no-subtitle-{scope}",
+        ]
+    )
+    output = next(
+        item
+        for item in config.output_options
+        if item.clip_class == clip_class and item.variant == variant
+    )
+    assert output.enabled is False
+    assert (
+        config.for_output(clip_class, variant, primary=True).subtitles_for(clip_class)
+        is False
+    )
+    config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
+    output = next(
+        item
+        for item in config.output_options
+        if item.clip_class == clip_class and item.variant == variant
+    )
+    assert output.enabled is True
+    assert (
+        config.for_output(clip_class, variant, primary=False).subtitles_for(clip_class)
+        is True
+    )
+
+
+def test_unknown_output_variant_is_a_configuration_error():
+    config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
+    with pytest.raises(ConfigurationError, match="Unknown output variant"):
+        replace(config, render_variant="unknown")
+    with pytest.raises(ConfigurationError, match="Unknown output variant"):
+        config.for_output("short", "unknown", primary=True)
 
 
 def test_font_directory_expands_and_is_excluded_from_metadata(monkeypatch):

@@ -29,7 +29,7 @@ def test_explicit_media_duration_preserves_silence_beyond_asr_coverage() -> None
 @pytest.mark.parametrize(
     "failure", ["geometry", "duration", "audio", "ffmpeg", "exists"]
 )
-def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
+def test_blur_render_rejects_invalid_output_and_preserves_existing_files(
     failure, tmp_path, monkeypatch
 ) -> None:
     import subprocess
@@ -37,15 +37,15 @@ def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
     from pathlib import Path
 
     from multicuts.app_config import AppConfig
+    from multicuts.clips import JudgedClip, Proposal
     from multicuts.errors import RenderingError
-    from multicuts.models import MediaInfo
-    from multicuts.render import render_short_horizontal
+    from multicuts.models import AcquiredSource, MediaInfo
+    from multicuts.render import render_raw
 
     vertical_media = MediaInfo(5.0, 180, 320, 180, 320, 0, 1)
     horizontal_media = MediaInfo(5.0, 640, 360, 640, 360, 0, 1)
-    raw, foreground = tmp_path / "raw.mp4", tmp_path / "foreground.mp4"
+    raw = tmp_path / "raw.mp4"
     raw.write_bytes(b"raw")
-    foreground.write_bytes(b"subtitled")
     output = tmp_path / "clips" / "horizontal.mp4"
     work = tmp_path / "work"
     config = AppConfig(
@@ -55,6 +55,8 @@ def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
         "test",
         horizontal_width=640,
         horizontal_height=360,
+        short_aspect_ratio="16:9",
+        render_variant="horizontal-blur",
     )
     if failure == "geometry":
         horizontal_media = replace(horizontal_media, presentation_width=638)
@@ -75,18 +77,27 @@ def test_horizontal_short_rejects_invalid_output_and_preserves_existing_files(
     monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 58)
     monkeypatch.setattr(
         "multicuts.render.inspect_media_path",
-        lambda path: vertical_media if path == foreground else horizontal_media,
+        lambda path: horizontal_media,
     )
     with pytest.raises(RenderingError):
-        render_short_horizontal(
-            raw, foreground, vertical_media, config, output=output, work=work
+        proposal = Proposal(
+            "blur", "short", "u0", "u0", 0, 5, "Hello.", "Title", "Reason"
+        )
+        clip = JudgedClip(proposal, {}, 80, True, "Good", "u0", "u0")
+        render_raw(
+            AcquiredSource(raw, "sha256-v1:blur"),
+            vertical_media,
+            clip,
+            config,
+            output=output,
+            work=work,
         )
     if failure == "exists":
         assert output.read_bytes() == b"completed"
     else:
         assert not output.exists()
     assert not list(work.glob("*.mp4"))
-    assert raw.read_bytes() == b"raw" and foreground.read_bytes() == b"subtitled"
+    assert raw.read_bytes() == b"raw"
 
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])

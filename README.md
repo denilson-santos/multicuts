@@ -253,14 +253,37 @@ multicuts ./podcast.mp4 --output-dir ./cuts --lang pt
 
 This example uses Portuguese audio. Set `--lang` to your source language when known, or omit it for automatic detection. Each run searches for both clip classes:
 
-| Class | Duration | Default output |
+| Class | Duration | Preferred primary output |
 | --- | --- | --- |
-| 📱 Short | Up to 3 minutes | 9:16 · 1080×1920 + 16:9 · 1920×1080 + 1:1 · 1080×1080 |
-| 🖥️ Long | More than 3 minutes | 16:9 · 1920×1080 + 9:16 · 1080×1920 + 1:1 · 1080×1080 |
+| 📱 Short | 180 seconds or less | Vertical (9:16, 1080×1920) |
+| 🖥️ Long | More than 180 seconds | Horizontal (16:9, 1920×1080), or vertical for vertical sources |
 
-Horizontal shorts show the complete vertical short in the center, with an enlarged, blurred copy of its video filling the background. Neither layer is mirrored. Subtitles stay inside the central short; the background has no captions. Long clips and 1:1 versions use a centered crop, with subtitle layout generated for that version's geometry.
+Both classes have the same source-aware variants, all enabled by default:
 
-Use `--no-variants` (or `RENDER_VARIANTS=false`) to publish only the primary version of each cut. Override this independently with `--short-variants` / `--no-short-variants` and `--long-variants` / `--no-long-variants`, or `SHORT_VARIANTS_ENABLED` and `LONG_VARIANTS_ENABLED`. Unset class settings inherit the shared switch. A primary `1:1` output, or `original` when the source geometry is square, always produces one version. A square source still gets all three social formats when the primary output is 9:16 or 16:9. Nonsquare original primary output produces four versions when variants are enabled. Square outputs default to 1080×1080; set `--square-size` or `SQUARE_SIZE` to change both sides together.
+| Variant | Horizontal source | Vertical source | Square source |
+| --- | :---: | :---: | :---: |
+| `horizontal` — 16:9 crop | ✓ | | ✓ |
+| `vertical` — 9:16 crop | ✓ | ✓ | ✓ |
+| `square` — 1:1 crop | ✓ | ✓ | ✓ |
+| `horizontal-blur` — vertical video over blurred video | ✓ | ✓ | ✓ |
+| `vertical-blur` — horizontal video over blurred video | ✓ | | ✓ |
+| `square-blur` — vertical video over blurred video | ✓ | ✓ | |
+
+Orientation uses presentation dimensions, including rotation, for any source aspect
+ratio. Plain outputs use a centered crop. Blurred outputs center the complete 9:16
+or 16:9 foreground over an enlarged, blurred copy, with neither layer mirrored.
+Subtitles are generated afterward against each final canvas and have their own
+settings and sidecars. Square outputs default to 1080×1080; `--square-size` changes
+both sides. Vertical and horizontal dimensions remain configurable.
+
+Use `--no-variants` (or `RENDER_VARIANTS=false`) for only the primary output.
+`--short-variants` / `--no-short-variants` and `--long-variants` /
+`--no-long-variants` override this default per class. Individual flags such as
+`--short-horizontal-blur` / `--no-short-horizontal-blur` override it per output.
+Square primaries retain other enabled variants. If the preferred primary is
+unavailable or disabled, the first enabled supported variant becomes primary.
+Explicitly enabling an unsupported variant fails before transcription. Every
+enabled class must retain at least one supported output.
 
 Both clip classes are enabled by default. `--short-clips` / `--no-short-clips` and `--long-clips` / `--no-long-clips`, or `SHORT_CLIPS_ENABLED` and `LONG_CLIPS_ENABLED`, choose which classes to review and publish. Disabling a class also disables its variants, even if its variant switch is enabled. At least one class must remain enabled. Shared proposal discovery still covers both classes and reuses its cache; disabled classes skip editorial judgment, selection, and rendering.
 
@@ -415,8 +438,9 @@ Unrestricted and `--clip-full` local requests use the original file.
 
 Use `--short-aspect-ratio` and `--long-aspect-ratio` to choose the primary format
 for each class. Use `--no-variants` for primary outputs only, or the class-specific
-variant flags to control additional formats. Square primary outputs have no
-variants, including square sources with `original` framing.
+variant flags to control additional formats. The source-orientation table above
+applies equally to shorts and longs. The `original` primary format remains
+available as a compatibility option and adds an original version to the matrix.
 
 To publish only primary short cuts:
 
@@ -431,6 +455,35 @@ To keep the source framing and disable subtitles:
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
   --short-aspect-ratio original --long-aspect-ratio original \
   --no-variants --no-subtitles
+```
+
+For every variant in the table, replace `TYPE` with `short` or `long` and
+`VARIANT` with its name:
+
+| Control | CLI | Environment |
+| --- | --- | --- |
+| Render | `--TYPE-VARIANT` / `--no-TYPE-VARIANT` | `TYPE_VARIANT_ENABLED` |
+| Captions | `--subtitle-TYPE-VARIANT` / `--no-subtitle-TYPE-VARIANT` | `SUBTITLE_TYPE_VARIANT_ENABLED` |
+| Template | `--subtitle-TYPE-VARIANT-template NAME` | `SUBTITLE_TYPE_VARIANT_TEMPLATE` |
+| Custom templates | `--subtitle-TYPE-VARIANT-template-dir PATH` | `SUBTITLE_TYPE_VARIANT_TEMPLATE_DIR` |
+| Every presentation field | `--subtitle-TYPE-VARIANT-FIELD VALUE` | `SUBTITLE_TYPE_VARIANT_FIELD` |
+
+Environment names are uppercase with underscores, for example
+`SHORT_HORIZONTAL_BLUR_ENABLED` and `SUBTITLE_SHORT_HORIZONTAL_BLUR_FONT_SIZE`.
+Class-wide captions use `--subtitle-short` / `--no-subtitle-short` and
+`--subtitle-long` / `--no-subtitle-long`, with `SUBTITLE_SHORT_ENABLED` and
+`SUBTITLE_LONG_ENABLED`. All template and presentation fields also support class
+scope, for example `--subtitle-long-template` and `--subtitle-short-position`.
+Boolean presentation fields support the corresponding `--no-subtitle-...` flag.
+
+For example, add just one companion variant, disable its captions, and change
+vertical-short subtitle placement:
+
+```bash
+multicuts ./podcast.mp4 --output-dir ./cuts \
+  --no-variants --short-horizontal-blur --no-subtitle-short-horizontal-blur \
+  --subtitle-short-vertical-position top-center \
+  --subtitle-short-vertical-font-size 5%
 ```
 
 ### Subtitle controls
@@ -465,13 +518,14 @@ multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --no-variants \
 All presentation options use the `--subtitle-` prefix and have matching
 `SUBTITLE_` environment variables: `--subtitle-font-size` corresponds to
 `SUBTITLE_FONT_SIZE`. CLI values override process environment, then `.env`, then
-the selected template. Explicit false values and valid zero lengths/opacity
-replace inherited values. Changing presentation reuses transcription and AI
+the selected template. Within each source, variant settings override class
+settings, which override shared settings; precedence is applied per field.
+Explicit false values and valid zero lengths/opacity replace inherited values. Changing presentation reuses transcription and AI
 caches and does not run ASR again.
 
 Lengths accept `%` or `px`; percentages resolve against each final render's
-geometry or the corresponding font/layout metric. Horizontal shorts retain
-placement inside their vertical foreground. See [presentation options](#subtitle-positioning)
+geometry or the corresponding font/layout metric. This includes blurred canvases.
+See [presentation options](#subtitle-positioning)
 and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#subtitle-configuration-reference)
 for units, valid values, and combinations.
 
@@ -487,9 +541,8 @@ and an unknown detected language stays null. When alignment is unavailable,
 multisubs uses its native segment fallback and warns about suppressed effects.
 Older transcript caches are recomputed once; completed runs remain available.
 
-A private foreground follows the subtitle decision of the horizontal output that
-consumes it. See [Output and reruns](#output-and-reruns) for subtitle sidecars and
-render metadata.
+Each published variant has independent subtitle sidecars using its final canvas.
+See [Output and reruns](#output-and-reruns) for subtitle sidecars and render metadata.
 
 </details>
 
@@ -581,8 +634,8 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
 | `--short-clips` / `--no-short-clips` | Enable or disable shorts and all their variants; default: enabled; environment: `SHORT_CLIPS_ENABLED`. |
 | `--long-clips` / `--no-long-clips` | Enable or disable longs and all their variants; default: enabled; environment: `LONG_CLIPS_ENABLED`. |
-| `--short-aspect-ratio FORMAT` | Choose the primary short format: `9:16`, `16:9`, `1:1`, or `original`; default: `9:16`. Square outputs have no variants. |
-| `--long-aspect-ratio FORMAT` | Choose the primary long format: `9:16`, `16:9`, `1:1`, or `original`; default: `16:9`. Square outputs have no variants. |
+| `--short-aspect-ratio FORMAT` | Choose the primary short format: `9:16`, `16:9`, `1:1`, or `original`; default: `9:16`. |
+| `--long-aspect-ratio FORMAT` | Choose the primary long format: `9:16`, `16:9`, `1:1`, or `original`; default: `16:9`. |
 | `--vertical-width PIXELS` | Set the `9:16` output width; default: `1080`. |
 | `--vertical-height PIXELS` | Set the `9:16` output height; default: `1920`. |
 | `--horizontal-width PIXELS` | Set the `16:9` output width; default: `1920`. |
@@ -743,16 +796,15 @@ cuts/
 │       └── clips/
 │           ├── <clip>.mp4
 │           ├── <clip>.json
-│           ├── <clip>-<vertical-or-horizontal>.mp4
-│           ├── <clip>-<vertical-or-horizontal>.json
-│           ├── <clip>-square.mp4
-│           └── <clip>-square.json
+│           ├── <clip>-<variant>.mp4
+│           ├── <clip>-<variant>.json
+│           └── subtitles/
 └── .cache/
 ```
 
-- **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions have `-vertical`, `-horizontal`, or `-square` suffixes.
-- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. Horizontal short subtitle sidecars describe the vertical foreground. When its vertical version is published with matching enabled subtitles, the horizontal version references those sidecars and records that video in `render.subtitle_source_video`; otherwise it has its own sidecars and the source-video field is null. `render.is_variant` distinguishes additional formats from the primary output.
-- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
+- **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions use the variant name as a suffix, such as `-vertical`, `-horizontal-blur`, or `-square-blur`.
+- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. `render.variant` identifies the named crop or blur variant. Every captioned output owns its subtitle sidecars, generated for its final geometry; `render.subtitle_source_video` is null. `render.is_variant` distinguishes additional formats from the primary output.
+- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their variant name, aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
 
 Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.
 
