@@ -266,7 +266,44 @@ def _capture_output_option(
 
 
 class _OutputCommand(TyperCommand):
-    """One repeatable option per field; scope belongs in the supplied value."""
+    """Accept grouped scoped values and normalize them to repeatable options."""
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        options = {
+            flag: param
+            for param in self.get_params(ctx)
+            if isinstance(param, TyperOption)
+            for flag in (*param.opts, *param.secondary_opts)
+        }
+        expanded: list[str] = []
+        source_seen = False
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--":
+                expanded.extend(args[index:])
+                break
+            flag, separator, _ = token.partition("=")
+            option = options.get(flag)
+            expanded.append(token)
+            index += 1
+            if option is None:
+                if not token.startswith("-"):
+                    source_seen = True
+                continue
+            count = 0 if option.is_flag else option.nargs - bool(separator)
+            expanded.extend(args[index : index + count])
+            index += count
+            if option.callback is not _capture_output_option:
+                continue
+            while index < len(args) and not args[index].startswith("-"):
+                # Before SOURCE, only explicit assignments can be distinguished
+                # from the positional video path. Use -- to end a value group.
+                if not source_seen and "=" not in args[index]:
+                    break
+                expanded.extend((flag, args[index]))
+                index += 1
+        return super().parse_args(ctx, expanded)
 
     def __init__(self, name: str | None, **kwargs: Any) -> None:
         super().__init__(name, **kwargs)
@@ -347,7 +384,7 @@ class _OutputCommand(TyperCommand):
                     default=(),
                     expose_value=False,
                     callback=_capture_output_option,
-                    metavar="[SCOPE=]VALUE",
+                    metavar="[SCOPE=]VALUE...",
                     help=help_text,
                     rich_help_panel=(
                         "Clips"
@@ -477,16 +514,19 @@ app = typer.Typer(
 @app.command(
     cls=_OutputCommand,
     help=(
-        "Find and render short and long clips. Output controls are repeatable: "
-        "[SCOPE=]VALUE. Omitted scope means all; use short, long, or TYPE:VARIANT "
+        "Find and render short and long clips. Output controls accept multiple "
+        "space-separated values or repeated flags: [SCOPE=]VALUE... "
+        "Omitted scope means all; use short, long, or TYPE:VARIANT "
         "for specific outputs. Boolean values are true/false."
     ),
     epilog=(
-        "Examples: --render long=false --render short=primary "
+        "Examples: --render long=false short=primary "
         "publishes primary shorts. "
-        "--subtitle-enabled false --subtitle-enabled short:vertical=true captions "
+        "--subtitle-enabled false short:vertical=true captions "
         "only vertical shorts. Scopes: all, short, long, TYPE:VARIANT."
-        " Output options are repeatable: [SCOPE=]VALUE; omitted scope means all. "
+        " Output controls: [SCOPE=]VALUE...; omitted scope means all. "
+        "Place SOURCE before grouped values, or use -- before a trailing SOURCE. "
+        "Quote values containing spaces. "
         "VARIANT: horizontal, vertical, square, horizontal-blur, vertical-blur, "
         "square-blur."
     ),

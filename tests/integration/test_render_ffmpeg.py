@@ -9,6 +9,7 @@ import pytest
 
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
+from multicuts.cli import parse_run_config
 from multicuts.clips import JudgedClip, Proposal
 from multicuts.media import inspect_media_path
 from multicuts.models import (
@@ -115,6 +116,70 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
         assert (media.presentation_width, media.presentation_height) == size
         assert media.duration == pytest.approx(0.8, abs=0.15)
         assert not media.has_audio
+
+
+def test_grouped_cli_controls_publish_only_the_requested_variant(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x90:r=25:d=0.4",
+            "-c:v",
+            "mpeg4",
+            str(source_path),
+        ],
+        check=True,
+    )
+    config = parse_run_config(
+        [
+            str(source_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--primary",
+            "short=vertical",
+            "long=horizontal",
+            "--render",
+            "false",
+            "short:square=true",
+            "--width",
+            "short:square=64",
+            "long:square=96",
+            "--height",
+            "short:square=64",
+            "long:square=96",
+            "--subtitle-enabled",
+            "short=false",
+            "long=false",
+        ]
+    )
+    source = AcquiredSource(source_path, "sha256-v1:grouped-cli")
+    result = run_pipeline(
+        config,
+        acquire=lambda _source, _work, *, time_range=None: source,
+        probe=lambda acquired: inspect_media_path(acquired.local_path),
+    )
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["transcription"] is None
+    (cut,) = manifest["clips"]
+    assert cut["class"] == "short"
+    assert [version["variant"] for version in cut["variants"]] == ["square"]
+    (video,) = result.clip_paths
+    media = inspect_media_path(video)
+    assert (media.presentation_width, media.presentation_height) == (64, 64)
+    assert media.duration == pytest.approx(0.4, abs=0.15)
+    assert not media.has_audio
 
 
 @pytest.mark.parametrize(

@@ -96,6 +96,31 @@ def test_each_presentation_option_is_available_directly_in_cli(key, value):
 
 
 @pytest.mark.parametrize(("key", "value"), CASES)
+def test_each_presentation_option_accepts_grouped_class_and_variant_values(key, value):
+    raw = str(value).lower() if isinstance(value, bool) else value
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            "out",
+            "--clip-full",
+            "--subtitle-" + key.replace("_", "-"),
+            f"short={raw}",
+            f"long:vertical={raw}",
+        ]
+    )
+    expected = {key: Path(str(value)) if key == "fonts_dir" else value}
+    assert (
+        config.for_output("short", "horizontal").subtitle_options.overrides()
+        == expected
+    )
+    assert (
+        config.for_output("long", "vertical").subtitle_options.overrides() == expected
+    )
+    assert config.for_output("long", "horizontal").subtitle_options.overrides() == {}
+
+
+@pytest.mark.parametrize(("key", "value"), CASES)
 def test_each_presentation_option_accepts_environment_settings(key, value, monkeypatch):
     raw = str(value).lower() if isinstance(value, bool) else value
     monkeypatch.setenv("SUBTITLE_" + key.upper(), raw)

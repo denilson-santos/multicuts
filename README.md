@@ -276,7 +276,7 @@ orientation keeps its native ratio; other sources use a 9:16 vertical or 16:9
 horizontal center crop.
 Subtitles are generated afterward against each final canvas and have their own
 settings and sidecars. Default dimensions are 1080×1920, 1920×1080, and
-1080×1080. Use `--width [SCOPE=]VALUE` and `--height [SCOPE=]VALUE` to resize outputs.
+1080×1080. Use `--width [SCOPE=]VALUE...` and `--height [SCOPE=]VALUE...` to resize outputs.
 
 Use `--render primary` for only the primary output, or `--render short=primary`
 to apply this choice only to shorts. Both classes default to `--primary auto`: a
@@ -442,8 +442,8 @@ Unrestricted and `--clip-full` local requests use the original file.
 
 ### Formats and variants
 
-Output controls use **`[SCOPE=]VALUE`**. The brackets mean the scope is optional;
-do not type the brackets. An omitted scope means `all`.
+Output controls use **`[SCOPE=]VALUE...`**. The scope is optional and defaults
+to `all`; the ellipsis means one or more values. Do not type the brackets or ellipsis.
 
 | Scope | Applies to | Example |
 | --- | --- | --- |
@@ -451,7 +451,21 @@ do not type the brackets. An omitted scope means `all`.
 | `short` or `long` | One class and its outputs | `--subtitle-font-size short=5%` |
 | `TYPE:VARIANT` | One named output | `--subtitle-font-size short:vertical=6%` |
 
-Repeat an option to set different scopes. Within each configuration source,
+Set several scopes after one flag, or repeat the flag:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts \
+  --primary short=horizontal-blur long=vertical-blur \
+  --render long=false short:vertical=false \
+  --subtitle-font short="Open Sans" long="Montserrat"
+```
+
+Combine a shared value with scoped exceptions, such as
+`--render primary long=false short:square=true`. Quote values containing
+spaces. Place `SOURCE` before grouped values, or use `--` before a trailing
+source: `--render primary short:square=true -- ./video.mp4`.
+
+Within each configuration source,
 variant settings override class settings, which override shared settings,
 independently per field and argument order. Contradictory assignments to the same
 field/scope are rejected. Boolean values are explicit: `true` or `false`.
@@ -712,21 +726,22 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
-| `--render [SCOPE=]VALUE` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
-| `--primary [SCOPE=]VALUE` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
-| `--width [SCOPE=]VALUE` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
-| `--height [SCOPE=]VALUE` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
+| `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
+| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
+| `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
+| `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
 
 #### Subtitles
 
 Choose the subtitle style and captions at shared, class, or named-variant scope.
-All options below are repeatable and use `[SCOPE=]VALUE`, including booleans.
+All options below accept grouped values or repeated flags and use
+`[SCOPE=]VALUE...`, including booleans.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-enabled [SCOPE=]VALUE` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`, `SUBTITLE_SHORT_ENABLED`, `SUBTITLE_SHORT_VERTICAL_ENABLED`, etc. |
-| `--subtitle-template [SCOPE=]VALUE` | Template name; default: `yellow-pop`. |
-| `--subtitle-template-dir [SCOPE=]VALUE` | Path to a custom template directory. |
+| `--subtitle-enabled [SCOPE=]VALUE...` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`, `SUBTITLE_SHORT_ENABLED`, `SUBTITLE_SHORT_VERTICAL_ENABLED`, etc. |
+| `--subtitle-template [SCOPE=]VALUE...` | Template name; default: `yellow-pop`. |
+| `--subtitle-template-dir [SCOPE=]VALUE...` | Path to a custom template directory. |
 
 #### Subtitle positioning
 
@@ -734,16 +749,16 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-position [SCOPE=]VALUE` | Subtitle position, such as bottom-center: top/middle/bottom with left/center/right. |
-| `--subtitle-margin-left [SCOPE=]VALUE` | Left margin as a percentage of width or pixels. |
-| `--subtitle-margin-right [SCOPE=]VALUE` | Right margin as a percentage of width or pixels. |
-| `--subtitle-margin-top [SCOPE=]VALUE` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
-| `--subtitle-margin-bottom [SCOPE=]VALUE` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
-| `--subtitle-max-width [SCOPE=]VALUE` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
-| `--subtitle-max-height [SCOPE=]VALUE` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
-| `--subtitle-position-x [SCOPE=]VALUE` | Horizontal anchor coordinate from the left edge of the final frame. |
-| `--subtitle-position-y [SCOPE=]VALUE` | Vertical anchor coordinate from the top edge of the final frame. |
-| `--subtitle-anchor [SCOPE=]VALUE` | Required subtitle-box anchor for custom coordinates. |
+| `--subtitle-position [SCOPE=]VALUE...` | Subtitle position, such as bottom-center: top/middle/bottom with left/center/right. |
+| `--subtitle-margin-left [SCOPE=]VALUE...` | Left margin as a percentage of width or pixels. |
+| `--subtitle-margin-right [SCOPE=]VALUE...` | Right margin as a percentage of width or pixels. |
+| `--subtitle-margin-top [SCOPE=]VALUE...` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
+| `--subtitle-margin-bottom [SCOPE=]VALUE...` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
+| `--subtitle-max-width [SCOPE=]VALUE...` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
+| `--subtitle-max-height [SCOPE=]VALUE...` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
+| `--subtitle-position-x [SCOPE=]VALUE...` | Horizontal anchor coordinate from the left edge of the final frame. |
+| `--subtitle-position-y [SCOPE=]VALUE...` | Vertical anchor coordinate from the top edge of the final frame. |
+| `--subtitle-anchor [SCOPE=]VALUE...` | Required subtitle-box anchor for custom coordinates. |
 
 Only top positions accept `--subtitle-margin-top`; only bottom positions accept
 `--subtitle-margin-bottom`. Middle positions accept neither. To use exact
@@ -758,15 +773,15 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-font [SCOPE=]VALUE` | Font family. |
-| `--subtitle-font-weight [SCOPE=]VALUE` | Font weight name or rank 100-900 in steps of 100; cannot be combined with explicit bold values. |
-| `--subtitle-bold [SCOPE=]VALUE` | `true` for bold weight (700), `false` for regular weight (400). |
-| `--subtitle-italic [SCOPE=]VALUE` | `true`/`false` for italic text. |
-| `--subtitle-text-case [SCOPE=]VALUE` | Subtitle display casing: original, uppercase, or lowercase. |
-| `--subtitle-fonts-dir [SCOPE=]VALUE` | Directory containing additional subtitle font files. |
-| `--subtitle-font-size [SCOPE=]VALUE` | Font size as a percentage of the render height or pixels. |
-| `--subtitle-letter-spacing [SCOPE=]VALUE` | Extra character spacing in pixels or as a percentage of font size. |
-| `--subtitle-line-height [SCOPE=]VALUE` | Distance between text baselines: `auto`, pixels, or a percentage of natural line height. |
+| `--subtitle-font [SCOPE=]VALUE...` | Font family. |
+| `--subtitle-font-weight [SCOPE=]VALUE...` | Font weight name or rank 100-900 in steps of 100; cannot be combined with explicit bold values. |
+| `--subtitle-bold [SCOPE=]VALUE...` | `true` for bold weight (700), `false` for regular weight (400). |
+| `--subtitle-italic [SCOPE=]VALUE...` | `true`/`false` for italic text. |
+| `--subtitle-text-case [SCOPE=]VALUE...` | Subtitle display casing: original, uppercase, or lowercase. |
+| `--subtitle-fonts-dir [SCOPE=]VALUE...` | Directory containing additional subtitle font files. |
+| `--subtitle-font-size [SCOPE=]VALUE...` | Font size as a percentage of the render height or pixels. |
+| `--subtitle-letter-spacing [SCOPE=]VALUE...` | Extra character spacing in pixels or as a percentage of font size. |
+| `--subtitle-line-height [SCOPE=]VALUE...` | Distance between text baselines: `auto`, pixels, or a percentage of natural line height. |
 
 #### Subtitle appearance
 
@@ -774,15 +789,15 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-text-color [SCOPE=]VALUE` | Subtitle text color. |
-| `--subtitle-backdrop [SCOPE=]VALUE` | Subtitle backdrop: none, outline, or box. |
-| `--subtitle-backdrop-color [SCOPE=]VALUE` | Outline, box, and shadow color. |
-| `--subtitle-word-backdrop [SCOPE=]VALUE` | Timed word decoration: none, outline, or box. |
-| `--subtitle-word-backdrop-color [SCOPE=]VALUE` | Word-box color using #RRGGBB or #RRGGBBAA. |
-| `--subtitle-opacity [SCOPE=]VALUE` | Opacity from 0% through 100%, multiplied with each component color opacity. |
-| `--subtitle-backdrop-size [SCOPE=]VALUE` | Backdrop/outline size as a percentage of the resolved font size or pixels. |
-| `--subtitle-word-backdrop-size [SCOPE=]VALUE` | Timed word-box padding as a percentage of the resolved font size or pixels. |
-| `--subtitle-shadow-size [SCOPE=]VALUE` | Shadow size as a percentage of the resolved font size or pixels. |
+| `--subtitle-text-color [SCOPE=]VALUE...` | Subtitle text color. |
+| `--subtitle-backdrop [SCOPE=]VALUE...` | Subtitle backdrop: none, outline, or box. |
+| `--subtitle-backdrop-color [SCOPE=]VALUE...` | Outline, box, and shadow color. |
+| `--subtitle-word-backdrop [SCOPE=]VALUE...` | Timed word decoration: none, outline, or box. |
+| `--subtitle-word-backdrop-color [SCOPE=]VALUE...` | Word-box color using #RRGGBB or #RRGGBBAA. |
+| `--subtitle-opacity [SCOPE=]VALUE...` | Opacity from 0% through 100%, multiplied with each component color opacity. |
+| `--subtitle-backdrop-size [SCOPE=]VALUE...` | Backdrop/outline size as a percentage of the resolved font size or pixels. |
+| `--subtitle-word-backdrop-size [SCOPE=]VALUE...` | Timed word-box padding as a percentage of the resolved font size or pixels. |
+| `--subtitle-shadow-size [SCOPE=]VALUE...` | Shadow size as a percentage of the resolved font size or pixels. |
 
 #### Subtitle animations
 
@@ -790,35 +805,35 @@ Only explicitly supplied settings override the selected template.
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-animation-cue-text-entrance [SCOPE=]VALUE` | Cue text entrance animation; omission inherits the template. |
-| `--subtitle-animation-cue-text-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-text-emphasis [SCOPE=]VALUE` | Cue text emphasis animation; omission inherits the template. |
-| `--subtitle-animation-cue-text-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-text-exit [SCOPE=]VALUE` | Cue text exit animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-text-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-entrance [SCOPE=]VALUE` | Cue backdrop entrance animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-backdrop-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-emphasis [SCOPE=]VALUE` | Cue backdrop emphasis animation; omission inherits the selected template. |
-| `--subtitle-animation-cue-backdrop-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-cue-backdrop-exit [SCOPE=]VALUE` | Cue backdrop exit animation; omission inherits the template. |
-| `--subtitle-animation-cue-backdrop-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-entrance [SCOPE=]VALUE` | Word text entrance animation; omission inherits the template. |
-| `--subtitle-animation-word-text-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-emphasis [SCOPE=]VALUE` | Word text emphasis animation; omission inherits the template. |
-| `--subtitle-animation-word-text-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-exit [SCOPE=]VALUE` | Word text exit animation; omission inherits the selected template. |
-| `--subtitle-animation-word-text-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-entrance [SCOPE=]VALUE` | Word backdrop entrance animation; omission inherits the selected template. |
-| `--subtitle-animation-word-backdrop-entrance-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-emphasis [SCOPE=]VALUE` | Word backdrop emphasis animation; omission inherits the selected template. |
-| `--subtitle-animation-word-backdrop-emphasis-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-backdrop-exit [SCOPE=]VALUE` | Word backdrop exit animation; omission inherits the template. |
-| `--subtitle-animation-word-backdrop-exit-duration [SCOPE=]VALUE` | Override this effect duration with a value such as 150ms or 0.15s. |
-| `--subtitle-animation-word-text-mode [SCOPE=]VALUE` | Timed word text behavior: progressive or active-word. |
-| `--subtitle-animation-word-backdrop-mode [SCOPE=]VALUE` | Timed word backdrop behavior: progressive or active-word. |
-| `--subtitle-animation-word-text-highlight-color [SCOPE=]VALUE` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
-| `--subtitle-disable-cue-animations [SCOPE=]VALUE` | `true`/`false`; remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
-| `--subtitle-disable-word-animations [SCOPE=]VALUE` | `true`/`false`; remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+| `--subtitle-animation-cue-text-entrance [SCOPE=]VALUE...` | Cue text entrance animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-entrance-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-emphasis [SCOPE=]VALUE...` | Cue text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-cue-text-emphasis-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-text-exit [SCOPE=]VALUE...` | Cue text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-text-exit-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-entrance [SCOPE=]VALUE...` | Cue backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-entrance-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-emphasis [SCOPE=]VALUE...` | Cue backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-cue-backdrop-emphasis-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-cue-backdrop-exit [SCOPE=]VALUE...` | Cue backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-cue-backdrop-exit-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-entrance [SCOPE=]VALUE...` | Word text entrance animation; omission inherits the template. |
+| `--subtitle-animation-word-text-entrance-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-emphasis [SCOPE=]VALUE...` | Word text emphasis animation; omission inherits the template. |
+| `--subtitle-animation-word-text-emphasis-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-exit [SCOPE=]VALUE...` | Word text exit animation; omission inherits the selected template. |
+| `--subtitle-animation-word-text-exit-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-entrance [SCOPE=]VALUE...` | Word backdrop entrance animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-entrance-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-emphasis [SCOPE=]VALUE...` | Word backdrop emphasis animation; omission inherits the selected template. |
+| `--subtitle-animation-word-backdrop-emphasis-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-backdrop-exit [SCOPE=]VALUE...` | Word backdrop exit animation; omission inherits the template. |
+| `--subtitle-animation-word-backdrop-exit-duration [SCOPE=]VALUE...` | Override this effect duration with a value such as 150ms or 0.15s. |
+| `--subtitle-animation-word-text-mode [SCOPE=]VALUE...` | Timed word text behavior: progressive or active-word. |
+| `--subtitle-animation-word-backdrop-mode [SCOPE=]VALUE...` | Timed word backdrop behavior: progressive or active-word. |
+| `--subtitle-animation-word-text-highlight-color [SCOPE=]VALUE...` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
+| `--subtitle-disable-cue-animations [SCOPE=]VALUE...` | `true`/`false`; remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
+| `--subtitle-disable-word-animations [SCOPE=]VALUE...` | `true`/`false`; remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
 
 Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
 and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases

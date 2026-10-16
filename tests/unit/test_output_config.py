@@ -375,10 +375,12 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch):
     )
     for param in get_command(app).params:
         if getattr(param, "multiple", False):
-            assert param.metavar == "[SCOPE=]VALUE"
+            assert param.metavar == "[SCOPE=]VALUE..."
             flag = param.opts[0]
-            assert re.search(re.escape(flag) + r"\s+\[SCOPE=\]VALUE", result.stdout)
-            assert f"`{flag} [SCOPE=]VALUE`" in readme
+            assert re.search(
+                re.escape(flag) + r"\s+\[SCOPE=\]VALUE\.\.\.", result.stdout
+            )
+            assert f"`{flag} [SCOPE=]VALUE...`" in readme
     assert "--no-render" not in result.stdout
     assert "--no-subtitle" not in result.stdout
 
@@ -727,6 +729,216 @@ def test_render_preset_values_are_strict(value, tmp_path):
 def test_removed_variants_preset_group_is_rejected(tmp_path):
     with pytest.raises(ConfigurationError, match="accepts only"):
         parse("--config", preset(tmp_path, {"variants": {}}))
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_primary_and_render_accept_multiple_values_per_occurrence(attached):
+    primary = (
+        ["--primary=short=horizontal-blur"]
+        if attached
+        else ["--primary", "short=horizontal-blur"]
+    )
+    render = ["--render=long=false"] if attached else ["--render", "long=false"]
+    config = parse(*primary, "long=vertical-blur", *render, "short:vertical=false")
+    assert config.short_primary == "horizontal-blur"
+    assert config.long_primary == "vertical-blur"
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media)[0] == "horizontal-blur"
+    assert "vertical" not in config.outputs_for("short", media)
+    assert not config.clips_for("long")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_grouped_values_preserve_scope_priority_and_allow_repeated_flags(reverse):
+    sizes = ["4%", "short=5%", "short:vertical=6%"]
+    render = ["primary", "long=false", "short:square=true"]
+    if reverse:
+        sizes.reverse()
+        render.reverse()
+    config = parse(
+        "--subtitle-font-size",
+        *sizes,
+        "--render",
+        *render,
+        "--subtitle-font-size",
+        "short:horizontal=7%",
+    )
+    assert config.for_output("long", "horizontal").subtitle_options.font_size == "4%"
+    assert config.for_output("short", "square").subtitle_options.font_size == "5%"
+    assert config.for_output("short", "vertical").subtitle_options.font_size == "6%"
+    assert config.for_output("short", "horizontal").subtitle_options.font_size == "7%"
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("horizontal", "square")
+    assert config.outputs_for("long", media) == ()
+
+
+def test_grouped_dimensions_and_subtitle_controls_keep_quoted_values_intact(tmp_path):
+    import shlex
+
+    short_dir = tmp_path / "Short templates"
+    long_dir = tmp_path / "Long templates"
+    short_dir.mkdir()
+    long_dir.mkdir()
+    config = parse(
+        "--width",
+        "short:horizontal=2520",
+        "long:horizontal=1920",
+        "--height",
+        "short:horizontal=1080",
+        "long:horizontal=1080",
+        "--subtitle-enabled",
+        "short=false",
+        "long=true",
+        "--subtitle-template",
+        "short=yellow-pop",
+        "long=amber-word",
+        "--subtitle-template-dir",
+        f"short={short_dir}",
+        f"long={long_dir}",
+        *shlex.split('--subtitle-font short="Open Sans" long="Montserrat"'),
+    )
+    assert config.dimensions_for("short", "horizontal") == (2520, 1080)
+    assert config.dimensions_for("long", "horizontal") == (1920, 1080)
+    short = config.for_output("short", "horizontal")
+    long = config.for_output("long", "horizontal")
+    assert not short.subtitles_for("short") and long.subtitles_for("long")
+    assert short.subtitle_template == "yellow-pop"
+    assert long.subtitle_template == "amber-word"
+    assert short.subtitle_template_dir == short_dir
+    assert long.subtitle_template_dir == long_dir
+    assert short.subtitle_options.font == "Open Sans"
+    assert long.subtitle_options.font == "Montserrat"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--render", "short=true", "short=false"],
+        ["--render", "primary", "--render", "primary", "false"],
+        ["--subtitle-font-size", "short=4%", "short=5%"],
+        ["--subtitle-enabled", "short=true", "short=false"],
+    ],
+)
+def test_grouped_contradictory_assignments_are_rejected(flags):
+    with pytest.raises(ConfigurationError, match="Conflicting"):
+        parse(*flags)
+
+
+def test_grouped_identical_assignments_are_allowed():
+    config = parse("--render", "primary", "short=true", "short=true")
+    assert config.render_for("short") is True
+    assert config.render_for("long") == "primary"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--render", "true", "short:vertical=primary"],
+        ["--render", "true", "unknown=false"],
+        ["--primary", "auto", "short:vertical=vertical"],
+        ["--width", "short=720", "long=721"],
+        ["--subtitle-font-size", "4%", "short="],
+    ],
+)
+def test_invalid_grouped_values_fail_before_the_pipeline(flags):
+    assert (
+        main(
+            ["source.mp4", "--output-dir", "out", "--clip-full", *flags],
+            pipeline=lambda _: pytest.fail("Pipeline must not run"),
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["source.mp4", "--render", "primary", "short:square=true"],
+        ["--render", "primary", "short:square=true", "source.mp4"],
+        ["--render=primary", "short:square=true", "--", "source.mp4"],
+    ],
+)
+def test_grouped_options_preserve_source_position_and_end_of_options(arguments):
+    config = parse_run_config(["--output-dir", "out", "--clip-full", *arguments])
+    assert config.source == "source.mp4"
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("horizontal", "square")
+
+
+def test_grouped_options_preserve_flag_like_sources_after_end_of_options():
+    config = parse_run_config(
+        [
+            "--output-dir",
+            "out",
+            "--clip-full",
+            "--render",
+            "primary",
+            "short=true",
+            "--",
+            "--source=video.mp4",
+        ]
+    )
+    assert config.source == "--source=video.mp4"
+
+
+def test_grouping_respects_fixed_option_arity_and_literal_text_values():
+    config = parse_run_config(
+        [
+            "--output-dir=out",
+            "--search-range",
+            "0",
+            "180",
+            "--context",
+            "short=literal long=text",
+            "--llm-backend",
+            "codex",
+            "--llm-model",
+            "--render",
+            "--render",
+            "primary",
+            "short:square=true",
+            "source.mp4",
+        ]
+    )
+    assert config.source == "source.mp4"
+    assert config.search_range is not None
+    assert (config.search_range.start, config.search_range.end) == (0, 180)
+    assert config.editorial_context == "short=literal long=text"
+    assert config.llm_model == "--render"
+    assert config.render_for("long") == "primary"
+
+
+def test_grouped_negative_subtitle_lengths_and_equals_inside_values():
+    config = parse(
+        "--subtitle-letter-spacing",
+        "-1px",
+        "short=-2px",
+        "--subtitle-font",
+        "short=Font=Name",
+        "long=Other Font",
+    )
+    assert config.subtitle_options.letter_spacing == "-1px"
+    short = config.for_output("short", "vertical").subtitle_options
+    assert short.letter_spacing == "-2px"
+    assert short.font == "Font=Name"
+    assert config.for_output("long", "horizontal").subtitle_options.font == "Other Font"
+
+
+def test_grouped_cli_values_override_more_specific_environment_values(monkeypatch):
+    monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_FONT_SIZE", "9%")
+    monkeypatch.setenv("RENDER_SHORT_SQUARE", "true")
+    config = parse(
+        "--subtitle-font-size",
+        "short=5%",
+        "long=4%",
+        "--render",
+        "short=primary",
+        "long=false",
+    )
+    assert config.for_output("short", "vertical").subtitle_options.font_size == "5%"
+    assert config.for_output("long", "horizontal").subtitle_options.font_size == "4%"
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("horizontal",)
 
 
 @pytest.mark.parametrize("flag", ["--render", "--width", "--subtitle-font-size"])
