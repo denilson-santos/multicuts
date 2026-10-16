@@ -29,14 +29,17 @@ from multicuts.errors import (
 )
 from multicuts.models import TimeRange
 from multicuts.output_config import (
+    collect_output_values,
     load_output_config,
+    load_output_environment,
     output_key,
-    scoped_value,
+    parse_boolean,
+    parse_render,
     subtitle_key,
 )
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
-from multicuts.variants import VARIANTS, OutputOptions, RenderMode
+from multicuts.variants import VARIANTS, OutputOptions
 
 PipelineRunner = Callable[[AppConfig], RunResult]
 logger = logging.getLogger(__name__)
@@ -211,30 +214,6 @@ def _float(option: float | None, name: str, default: float) -> float:
         raise ConfigurationError(f"{name} must be a number") from exc
 
 
-def _parse_boolean(raw: object, name: str) -> bool:
-    if type(raw) is bool:
-        return raw
-    if isinstance(raw, str):
-        if raw.casefold() in ("true", "yes", "1", "on"):
-            return True
-        if raw.casefold() in ("false", "no", "0", "off"):
-            return False
-    raise ConfigurationError(f"{name} must be a boolean")
-
-
-def _parse_render(raw: object, name: str, *, named: bool = False) -> RenderMode:
-    if isinstance(raw, str) and raw.strip().casefold() == "primary":
-        if named:
-            raise ConfigurationError(
-                f"{name}: primary is allowed only at all, short, or long scope"
-            )
-        return "primary"
-    try:
-        return _parse_boolean(raw, name)
-    except ConfigurationError as exc:
-        raise ConfigurationError(f"{name} must be true, false, or primary") from exc
-
-
 def _capture_output_option(
     ctx: typer.Context, param: TyperOption, value: object
 ) -> None:
@@ -244,25 +223,7 @@ def _capture_output_option(
     if name is None or not isinstance(value, tuple):
         raise ConfigurationError("Output options require text values")
     captured = ctx.meta.setdefault("output_options", {})
-    for raw in value:
-        scope, supplied = scoped_value(raw)
-        if name.startswith("subtitle_"):
-            field = name.removeprefix("subtitle_")
-            key = subtitle_key(scope, field)
-            boolean = field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS
-        else:
-            key = output_key(scope, name)
-            boolean = False
-        normalized: object = supplied
-        if name == "render":
-            normalized = _parse_render(supplied, "--render", named=":" in scope)
-        elif boolean:
-            normalized = _parse_boolean(supplied, f"--{name.replace('_', '-')}")
-        if key in captured and captured[key] != normalized:
-            raise ConfigurationError(
-                f"Conflicting values for --{name.replace('_', '-')} at scope {scope}"
-            )
-        captured[key] = normalized
+    collect_output_values(name, value, captured, name="--" + name.replace("_", "-"))
 
 
 class _OutputCommand(TyperCommand):
@@ -401,23 +362,13 @@ def _output_settings(
     cli: dict[str, object], preset: dict[str, object]
 ) -> dict[str, object]:
     """Normalize output values once, resolving source before scope specificity."""
-    cache: dict[str, str | None] = {}
+    process, dotenv = load_output_environment()
 
     def resolve(keys: tuple[str, ...]) -> tuple[str, object] | None:
-        for key in keys:
-            if key in cli:
-                return key, cli[key]
-        for key in keys:
-            if key.upper() in os.environ:
-                return key, os.environ[key.upper()]
-        for key in keys:
-            if key not in cache:
-                cache[key] = setting(key.upper())
-            if cache[key] is not None:
-                return key, cache[key]
-        for key in keys:
-            if key in preset:
-                return key, preset[key]
+        for source in (cli, process, dotenv, preset):
+            for key in keys:
+                if key in source:
+                    return key, source[key]
         return None
 
     def value(field: str, scopes: tuple[str, ...], default: object = None) -> object:
@@ -427,7 +378,7 @@ def _output_settings(
         return default if found is None else found[1]
 
     def boolean(field: str, scopes: tuple[str, ...], default: bool) -> bool:
-        return _parse_boolean(value(field, scopes, default), field.upper())
+        return parse_boolean(value(field, scopes, default), field.upper())
 
     def presentation(scopes: tuple[str, ...]) -> SubtitleOptions:
         values: dict[str, object] = {}
@@ -435,7 +386,7 @@ def _output_settings(
             raw = value("subtitle_" + field.name, scopes)
             if raw is not None:
                 if field.name in SUBTITLE_BOOLEAN_FIELDS:
-                    raw = _parse_boolean(
+                    raw = parse_boolean(
                         raw, subtitle_key(scopes[0], field.name).upper()
                     )
                 elif field.name == "fonts_dir":
@@ -449,7 +400,7 @@ def _output_settings(
 
     outputs: list[OutputOptions] = []
     result: dict[str, object] = {
-        "render": _parse_render(value("render", ("all",), True), "RENDER"),
+        "render": parse_render(value("render", ("all",), True), "RENDER"),
         "subtitles_enabled": boolean("subtitle_enabled", ("all",), True),
         "subtitle_template": str(value("subtitle_template", ("all",), "yellow-pop")),
         "subtitle_template_dir": directory(("all",)),
@@ -457,7 +408,7 @@ def _output_settings(
     }
     for clip_class in ("short", "long"):
         scopes = (clip_class, "all")
-        result[f"{clip_class}_render"] = _parse_render(
+        result[f"{clip_class}_render"] = parse_render(
             value("render", scopes, True), f"RENDER_{clip_class.upper()}"
         )
         result[f"{clip_class}_subtitles_enabled"] = boolean(
@@ -475,7 +426,7 @@ def _output_settings(
                 key = output_key(scopes[0], "render")
                 found = resolve(tuple(output_key(scope, "render") for scope in scopes))
                 if found is not None and found[0] == key:
-                    enabled = _parse_boolean(found[1], key.upper())
+                    enabled = parse_boolean(found[1], key.upper())
             dimensions: dict[str, int | None] = {}
             for field in ("width", "height"):
                 raw = value(field, scopes)
@@ -517,7 +468,8 @@ app = typer.Typer(
         "Find and render short and long clips. Output controls accept multiple "
         "space-separated values or repeated flags: [SCOPE=]VALUE... "
         "Omitted scope means all; use short, long, or TYPE:VARIANT "
-        "for specific outputs. Boolean values are true/false."
+        "for specific outputs. Boolean values are true/false. "
+        "Matching environment variables accept the same values."
     ),
     epilog=(
         "Examples: --render long=false short=primary "

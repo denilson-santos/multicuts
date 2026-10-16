@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+from collections.abc import Mapping, Sequence
 from dataclasses import fields
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
-from multicuts.variants import VARIANTS
+from multicuts.variants import VARIANTS, RenderMode
 
 SUBTITLE_FIELDS = frozenset(
     {
@@ -19,6 +22,31 @@ SUBTITLE_FIELDS = frozenset(
     }
 )
 OUTPUT_FIELDS = frozenset({"render", "primary", "width", "height"})
+ENVIRONMENT_FIELDS = OUTPUT_FIELDS | {"subtitle_" + field for field in SUBTITLE_FIELDS}
+
+
+def parse_boolean(raw: object, name: str) -> bool:
+    if type(raw) is bool:
+        return raw
+    if isinstance(raw, str):
+        if raw.casefold() in ("true", "yes", "1", "on"):
+            return True
+        if raw.casefold() in ("false", "no", "0", "off"):
+            return False
+    raise ConfigurationError(f"{name} must be a boolean")
+
+
+def parse_render(raw: object, name: str, *, named: bool = False) -> RenderMode:
+    if isinstance(raw, str) and raw.strip().casefold() == "primary":
+        if named:
+            raise ConfigurationError(
+                f"{name}: primary is allowed only at all, short, or long scope"
+            )
+        return "primary"
+    try:
+        return parse_boolean(raw, name)
+    except ConfigurationError as exc:
+        raise ConfigurationError(f"{name} must be true, false, or primary") from exc
 
 
 def output_scope(scope: str) -> str:
@@ -58,6 +86,76 @@ def scoped_value(value: str) -> tuple[str, str]:
     if not raw:
         raise ConfigurationError("Output values must not be empty; use [SCOPE=]VALUE")
     return scope, raw
+
+
+def collect_output_values(
+    field: str, values: Sequence[str], destination: dict[str, object], *, name: str
+) -> None:
+    """Use the same scope and conflict rules for CLI and environment values."""
+    for raw in values:
+        scope, supplied = scoped_value(raw)
+        if field.startswith("subtitle_"):
+            subtitle_field = field.removeprefix("subtitle_")
+            key = subtitle_key(scope, subtitle_field)
+            boolean = (
+                subtitle_field == "enabled" or subtitle_field in SUBTITLE_BOOLEAN_FIELDS
+            )
+        else:
+            key = output_key(scope, field)
+            boolean = False
+        normalized: object = supplied
+        if field == "render":
+            normalized = parse_render(supplied, name, named=":" in scope)
+        elif boolean:
+            normalized = parse_boolean(supplied, name)
+        if key in destination and destination[key] != normalized:
+            raise ConfigurationError(f"Conflicting values for {name} at scope {scope}")
+        destination[key] = normalized
+
+
+def environment_output_config(values: Mapping[str, str]) -> dict[str, object]:
+    """Read one variable per scoped option; quoting is literal and never executed."""
+    result: dict[str, object] = {}
+    for field in sorted(ENVIRONMENT_FIELDS):
+        name = field.upper()
+        raw = values.get(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            tokens = shlex.split(raw, comments=False)
+        except ValueError as exc:
+            raise ConfigurationError(f"Invalid quoting in {name}") from exc
+        collect_output_values(field, tokens, result, name=name)
+    return result
+
+
+def load_output_environment() -> tuple[dict[str, object], dict[str, object]]:
+    """Keep process and dotenv scopes separate so source priority comes first."""
+    try:
+        lines = (Path.cwd() / ".env").read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    except (OSError, UnicodeError) as exc:
+        raise ConfigurationError("Could not read .env as UTF-8 text") from exc
+    dotenv: dict[str, str] = {}
+    names = {field.upper() for field in ENVIRONMENT_FIELDS}
+    for line in lines:
+        name, separator, raw = line.partition("=")
+        name = name.strip().removeprefix("export ").strip()
+        if not separator or name not in names:
+            continue
+        if name in dotenv:
+            raise ConfigurationError(f"Duplicate output variable in .env: {name}")
+        raw = raw.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            try:
+                unquoted = shlex.split(raw, comments=False)
+            except ValueError as exc:
+                raise ConfigurationError(f"Invalid quoting in {name}") from exc
+            if len(unquoted) == 1:
+                raw = unquoted[0]
+        dotenv[name] = raw
+    return environment_output_config(os.environ), environment_output_config(dotenv)
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

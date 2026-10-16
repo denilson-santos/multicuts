@@ -122,9 +122,9 @@ def test_cli_and_environment_override_more_specific_file_values(tmp_path, monkey
     assert "horizontal" in config.outputs_for("short", media)
     assert config.render_for("short") is True
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "8%")
-    monkeypatch.setenv("RENDER_LONG", "true")
+    monkeypatch.setenv("RENDER", "long=true")
     assert parse("--config", path).clips_for("long")
-    monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_FONT_SIZE", "9%")
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=9%")
     config = parse(
         "--config", path, "--subtitle-font-size", "10%", "--subtitle-enabled", "false"
     )
@@ -273,9 +273,8 @@ def test_primary_format_and_dimensions_are_scoped(source, tmp_path, monkeypatch)
         flags = ["--config", preset(tmp_path, settings)]
     else:
         values = {
-            "PRIMARY_SHORT": "square",
-            "WIDTH_SHORT_SQUARE": "720",
-            "WIDTH_LONG_HORIZONTAL_BLUR": "640",
+            "PRIMARY": "short=square",
+            "WIDTH": "short:square=720 long:horizontal-blur=640",
         }
         if source == "process":
             for name, raw in values.items():
@@ -300,7 +299,7 @@ def test_dimension_inheritance_and_source_precedence(tmp_path, monkeypatch):
     path = preset(
         tmp_path, {"width": {"short:vertical": 360}, "primary": {"short": "square"}}
     )
-    (tmp_path / ".env").write_text("WIDTH_SHORT_VERTICAL=720\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("WIDTH=short:vertical=720\n", encoding="utf-8")
     monkeypatch.setenv("WIDTH", "1080")
     config = parse("--config", path)
     vertical = config.for_output("short", "vertical")
@@ -526,7 +525,7 @@ def test_dimension_fields_resolve_independently_across_sources(tmp_path, monkeyp
             "primary": {"short": "horizontal"},
         },
     )
-    monkeypatch.setenv("WIDTH_SHORT", "1920")
+    monkeypatch.setenv("WIDTH", "short=1920")
     config = parse("--config", path)
     assert config.dimensions_for("short", "horizontal") == (1920, 1080)
     config = parse(
@@ -644,9 +643,9 @@ def test_cli_render_policy_overrides_lower_priority_named_settings(
     if source == "json":
         flags = ["--config", preset(tmp_path, {"render": {"short:square": True}})]
     elif source == "process":
-        monkeypatch.setenv("RENDER_SHORT_SQUARE", "true")
+        monkeypatch.setenv("RENDER", "short:square=true")
     else:
-        (tmp_path / ".env").write_text("RENDER_SHORT_SQUARE=true\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("RENDER=short:square=true\n", encoding="utf-8")
     config = parse(*flags, "--render", "short=" + value)
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     outputs = config.outputs_for("short", media)
@@ -657,7 +656,7 @@ def test_process_render_policy_overrides_dotenv_and_preset_named_settings(
     tmp_path, monkeypatch
 ):
     path = preset(tmp_path, {"render": {"short:square": True}})
-    (tmp_path / ".env").write_text("RENDER_SHORT_VERTICAL=true\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("RENDER=short:vertical=true\n", encoding="utf-8")
     monkeypatch.setenv("RENDER", "primary")
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert parse("--config", path).outputs_for("short", media) == ("horizontal",)
@@ -681,10 +680,8 @@ def test_primary_render_and_auto_primary_are_available_in_all_sources(
         ]
     else:
         settings = {
-            "RENDER": "primary",
-            "RENDER_SHORT_SQUARE": "true",
-            "PRIMARY": "auto",
-            "PRIMARY_LONG": "square",
+            "RENDER": "primary short:square=true",
+            "PRIMARY": "auto long=square",
         }
         if source == "process":
             for key, value in settings.items():
@@ -711,10 +708,10 @@ def test_named_render_rejects_primary_value(source, tmp_path, monkeypatch):
             preset(tmp_path, {"render": {"short:vertical": "primary"}}),
         ]
     elif source == "process":
-        monkeypatch.setenv("RENDER_SHORT_VERTICAL", "primary")
+        monkeypatch.setenv("RENDER", "short:vertical=primary")
     else:
         (tmp_path / ".env").write_text(
-            "RENDER_SHORT_VERTICAL=primary\n", encoding="utf-8"
+            "RENDER=short:vertical=primary\n", encoding="utf-8"
         )
     with pytest.raises(ConfigurationError):
         parse(*flags)
@@ -925,8 +922,8 @@ def test_grouped_negative_subtitle_lengths_and_equals_inside_values():
 
 
 def test_grouped_cli_values_override_more_specific_environment_values(monkeypatch):
-    monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_FONT_SIZE", "9%")
-    monkeypatch.setenv("RENDER_SHORT_SQUARE", "true")
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=9%")
+    monkeypatch.setenv("RENDER", "short:square=true")
     config = parse(
         "--subtitle-font-size",
         "short=5%",
@@ -950,3 +947,246 @@ def test_original_is_not_an_output_scope(flag):
 def test_preset_rejects_removed_aspect_ratio_group(tmp_path):
     with pytest.raises(ConfigurationError, match="accepts only"):
         parse("--config", preset(tmp_path, {"aspect_ratio": {"short": "original"}}))
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_grouped_environment_options_match_cli_config(
+    source, reverse, tmp_path, monkeypatch
+):
+    values = {
+        "primary": ["auto", "short=horizontal-blur", "long=vertical-blur"],
+        "render": ["primary", "long=false", "short:square=true"],
+        "width": ["short:horizontal-blur=2520", "short:square=720"],
+        "height": ["short:horizontal-blur=1080", "short:square=720"],
+        "subtitle_enabled": ["false", "short:square=true"],
+        "subtitle_font_size": ["4%", "short=5%", "short:square=6%"],
+        "subtitle_text_color": ["#FFEE00", "short:square=#AABBCC"],
+    }
+    if reverse:
+        values = {field: list(reversed(items)) for field, items in values.items()}
+    flags = [
+        part
+        for field, items in values.items()
+        for part in ("--" + field.replace("_", "-"), *items)
+    ]
+    expected = parse(*flags)
+    if source == "process":
+        for field, items in values.items():
+            monkeypatch.setenv(field.upper(), " ".join(items))
+    else:
+        (tmp_path / ".env").write_text(
+            "\n".join(
+                f"{field.upper()}='{' '.join(items)}'"
+                for field, items in values.items()
+            ),
+            encoding="utf-8",
+        )
+    actual = parse()
+    assert actual == expected
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert actual.outputs_for("short", media) == ("horizontal-blur", "square")
+    assert actual.outputs_for("long", media) == ()
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+def test_grouped_environment_preserves_spaces_and_literal_characters(
+    source, tmp_path, monkeypatch
+):
+    directory = tmp_path / "Subtitle templates"
+    directory.mkdir()
+    literal_font = "Font $(literal) `text` ${NAME} #tag"
+    values = {
+        "SUBTITLE_FONT": f'short="Open Sans" long="{literal_font}"',
+        "SUBTITLE_TEMPLATE": "short=yellow-pop long=amber-word",
+        "SUBTITLE_TEMPLATE_DIR": f'short="{directory}"',
+        "SUBTITLE_FONTS_DIR": 'short="~/My Fonts"',
+    }
+    if source == "process":
+        for field, value in values.items():
+            monkeypatch.setenv(field, value)
+    else:
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{field}='{value}'" for field, value in values.items()),
+            encoding="utf-8",
+        )
+    config = parse()
+    short = config.for_output("short", "vertical")
+    long = config.for_output("long", "horizontal")
+    assert short.subtitle_options.font == "Open Sans"
+    assert long.subtitle_options.font == literal_font
+    assert short.subtitle_template == "yellow-pop"
+    assert long.subtitle_template == "amber-word"
+    assert short.subtitle_template_dir == directory
+    assert short.subtitle_options.fonts_dir == Path("~/My Fonts").expanduser()
+
+
+def test_grouped_environment_inherits_missing_scopes_from_lower_priority_sources(
+    tmp_path, monkeypatch
+):
+    path = preset(
+        tmp_path,
+        {
+            "subtitles": {
+                "all": {"font_size": "7%", "text_color": "#AABBCC"},
+                "long:vertical": {"font_size": "8%"},
+            }
+        },
+    )
+    (tmp_path / ".env").write_text(
+        'SUBTITLE_FONT_SIZE="short=5% long=4% long:horizontal=3%"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=6%")
+    config = parse("--config", path, "--subtitle-font-size", "short:horizontal=9%")
+    assert config.subtitle_options.font_size == "7%"
+    for kind, variant, expected in [
+        ("short", "square", "5%"),
+        ("short", "vertical", "6%"),
+        ("short", "horizontal", "9%"),
+        ("long", "horizontal", "3%"),
+        ("long", "vertical", "4%"),
+    ]:
+        options = config.for_output(kind, variant).subtitle_options
+        assert options.font_size == expected
+        assert options.text_color == "#AABBCC"
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "4%")
+    config = parse("--config", path)
+    for kind in ("short", "long"):
+        assert config.for_output(kind, "vertical").subtitle_options.font_size == "4%"
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("RENDER", "true short=true short=false"),
+        ("SUBTITLE_ENABLED", "short=true short=false"),
+        ("SUBTITLE_FONT_SIZE", "short=4% short=5%"),
+        ("PRIMARY", "short=auto short=vertical"),
+        ("WIDTH", "short=720 short=640"),
+        ("HEIGHT", "short=720 short=640"),
+    ],
+)
+def test_environment_rejects_conflicting_values_for_one_scope(
+    source, name, value, tmp_path, monkeypatch
+):
+    if source == "process":
+        monkeypatch.setenv(name, value)
+    else:
+        (tmp_path / ".env").write_text(f"{name}='{value}'\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError, match=f"Conflicting values for {name}"):
+        parse()
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("RENDER", 'short="true'),
+        ("SUBTITLE_FONT", 'short="Open Sans'),
+        ("RENDER", "unknown=false"),
+        ("RENDER", "primary short:vertical=primary"),
+        ("PRIMARY", "short:vertical=vertical"),
+        ("SUBTITLE_FONT_SIZE", 'short=""'),
+        ("WIDTH", "short=721"),
+    ],
+)
+def test_invalid_grouped_environment_stops_before_pipeline(
+    source, name, value, tmp_path, monkeypatch
+):
+    if source == "process":
+        monkeypatch.setenv(name, value)
+    else:
+        (tmp_path / ".env").write_text(f"{name}='{value}'\n", encoding="utf-8")
+    assert (
+        main(
+            ["source.mp4", "--output-dir", "out", "--clip-full"],
+            pipeline=lambda _: pytest.fail("Pipeline must not run"),
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("empty", ["", " ", "\t"])
+def test_empty_environment_values_inherit_from_dotenv(empty, tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text('RENDER="primary long=false"\n', encoding="utf-8")
+    monkeypatch.setenv("RENDER", empty)
+    config = parse()
+    assert config.render_for("short") == "primary"
+    assert not config.clips_for("long")
+
+
+def test_dotenv_accepts_export_quotes_and_ignores_unrelated_settings(tmp_path):
+    (tmp_path / ".env").write_text(
+        '# RENDER=false\nexport RENDER = "primary long=false"\n'
+        "PRIMARY='short=vertical long=auto'\n"
+        'UNRELATED="not output settings\n',
+        encoding="utf-8",
+    )
+    config = parse()
+    assert config.render_for("short") == "primary"
+    assert not config.clips_for("long")
+    assert config.short_primary == "vertical"
+
+
+def test_dotenv_rejects_duplicate_output_variables(tmp_path):
+    (tmp_path / ".env").write_text(
+        "RENDER=primary\nRENDER=long=false\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigurationError, match="Duplicate output variable"):
+        parse()
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PRIMARY_SHORT",
+        "PRIMARY_LONG",
+        "RENDER_SHORT",
+        "RENDER_SHORT_VERTICAL",
+        "WIDTH_SHORT_VERTICAL",
+        "HEIGHT_LONG_HORIZONTAL",
+        "SUBTITLE_SHORT_ENABLED",
+        "SUBTITLE_LONG_VERTICAL_ENABLED",
+        "SUBTITLE_SHORT_FONT_SIZE",
+        "SUBTITLE_SHORT_VERTICAL_FONT_SIZE",
+        "SUBTITLE_LONG_HORIZONTAL_TEMPLATE",
+        "SUBTITLE_SHORT_VERTICAL_TEMPLATE_DIR",
+    ],
+)
+def test_generated_environment_names_are_removed(source, name, tmp_path, monkeypatch):
+    if source == "process":
+        monkeypatch.setenv(name, "obsolete-value")
+    else:
+        (tmp_path / ".env").write_text(f"{name}=obsolete-value\n", encoding="utf-8")
+    config = parse()
+    assert config.short_primary == config.long_primary == "auto"
+    assert config.render_for("short") is True
+    assert config.for_output("short", "vertical").subtitle_options.font_size is None
+
+
+@pytest.mark.parametrize("failure", ["encoding", "directory"])
+def test_unreadable_dotenv_stops_before_pipeline(failure, tmp_path):
+    path = tmp_path / ".env"
+    if failure == "encoding":
+        path.write_bytes(b"RENDER=\xff")
+    else:
+        path.mkdir()
+    assert (
+        main(
+            ["source.mp4", "--output-dir", "out", "--clip-full"],
+            pipeline=lambda _: pytest.fail("Pipeline must not run"),
+        )
+        == 2
+    )
+
+
+def test_dotenv_decodes_escaped_quotes_around_grouped_text_values(tmp_path):
+    (tmp_path / ".env").write_text(
+        'SUBTITLE_FONT="short=\\"Open Sans\\" long=\\"Montserrat\\""\n',
+        encoding="utf-8",
+    )
+    config = parse()
+    assert config.for_output("short", "vertical").subtitle_options.font == "Open Sans"
+    assert config.for_output("long", "horizontal").subtitle_options.font == "Montserrat"

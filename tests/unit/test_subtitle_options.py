@@ -96,17 +96,29 @@ def test_each_presentation_option_is_available_directly_in_cli(key, value):
 
 
 @pytest.mark.parametrize(("key", "value"), CASES)
-def test_each_presentation_option_accepts_grouped_class_and_variant_values(key, value):
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv"])
+def test_each_presentation_option_accepts_grouped_class_and_variant_values(
+    key, value, source, tmp_path, monkeypatch
+):
     raw = str(value).lower() if isinstance(value, bool) else value
+    values = [f"short={raw}", f"long:vertical={raw}"]
+    flags = []
+    name = "SUBTITLE_" + key.upper()
+    if source == "cli":
+        flags = ["--subtitle-" + key.replace("_", "-"), *values]
+    elif source == "process":
+        monkeypatch.setenv(name, " ".join(values))
+    else:
+        (tmp_path / ".env").write_text(
+            f"{name}='{' '.join(values)}'\n", encoding="utf-8"
+        )
     config = parse_run_config(
         [
             "source.mp4",
             "--output-dir",
             "out",
             "--clip-full",
-            "--subtitle-" + key.replace("_", "-"),
-            f"short={raw}",
-            f"long:vertical={raw}",
+            *flags,
         ]
     )
     expected = {key: Path(str(value)) if key == "fonts_dir" else value}
@@ -192,11 +204,11 @@ def test_every_subtitle_field_is_available_for_each_class_and_variant(
 
 def test_scoped_styles_resolve_source_before_specificity(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text(
-        "SUBTITLE_SHORT_VERTICAL_FONT_SIZE=9%\nSUBTITLE_SHORT_VERTICAL_ITALIC=true\n",
+        "SUBTITLE_FONT_SIZE=short:vertical=9%\nSUBTITLE_ITALIC=short:vertical=true\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "4%")
-    monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_ITALIC", "true")
+    monkeypatch.setenv("SUBTITLE_ITALIC", "short:vertical=true")
     config = parse_run_config(
         [
             "source.mp4",
@@ -224,10 +236,10 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
     tmp_path, monkeypatch
 ):
     (tmp_path / ".env").write_text(
-        "SUBTITLE_LONG_VERTICAL_ENABLED=true\n",
+        "SUBTITLE_ENABLED=long:vertical=true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("SUBTITLE_LONG_ENABLED", "false")
+    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false")
     config = parse_run_config(
         [
             "source.mp4",
@@ -241,7 +253,7 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
     assert config.for_output("long", "vertical").subtitles_for("long") is False
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     assert config.for_output("long", "vertical").subtitles_for("long") is False
-    monkeypatch.setenv("SUBTITLE_LONG_VERTICAL_ENABLED", "true")
+    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false long:vertical=true")
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     # The named output keeps its captions when it changes publication order.
     assert config.for_output("long", "vertical").subtitles_for("long") is True
@@ -264,9 +276,8 @@ def test_each_named_render_and_caption_switch_is_available(
     clip_class, variant, monkeypatch
 ):
     scope = f"{clip_class}:{variant}"
-    env_scope = scope.replace("-", "_").replace(":", "_").upper()
-    monkeypatch.setenv("RENDER_" + env_scope, "true")
-    monkeypatch.setenv("SUBTITLE_" + env_scope + "_ENABLED", "true")
+    monkeypatch.setenv("RENDER", scope + "=true")
+    monkeypatch.setenv("SUBTITLE_ENABLED", scope + "=true")
     config = parse_run_config(
         [
             "source.mp4",

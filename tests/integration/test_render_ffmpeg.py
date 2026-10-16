@@ -19,6 +19,7 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
+from multicuts.output_config import ENVIRONMENT_FIELDS
 from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw
 from multicuts.variants import VARIANTS, OutputOptions
@@ -118,8 +119,11 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
         assert not media.has_audio
 
 
+@pytest.mark.parametrize("configured_in", ["cli", "process", "dotenv"])
 def test_grouped_cli_controls_publish_only_the_requested_variant(
+    configured_in: str,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -141,27 +145,38 @@ def test_grouped_cli_controls_publish_only_the_requested_variant(
         ],
         check=True,
     )
+    monkeypatch.chdir(tmp_path)
+    for field in ENVIRONMENT_FIELDS:
+        monkeypatch.delenv(field.upper(), raising=False)
+    values = {
+        "primary": "short=vertical long=horizontal",
+        "render": "false short:square=true",
+        "width": "short:square=64 long:square=96",
+        "height": "short:square=64 long:square=96",
+        "subtitle_enabled": "short=false long=false",
+    }
+    flags = []
+    if configured_in == "cli":
+        flags = [
+            part
+            for field, value in values.items()
+            for part in ("--" + field.replace("_", "-"), *value.split())
+        ]
+    elif configured_in == "process":
+        for field, value in values.items():
+            monkeypatch.setenv(field.upper(), value)
+    else:
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{field.upper()}='{value}'" for field, value in values.items()),
+            encoding="utf-8",
+        )
     config = parse_run_config(
         [
             str(source_path),
             "--output-dir",
             str(tmp_path / "out"),
             "--clip-full",
-            "--primary",
-            "short=vertical",
-            "long=horizontal",
-            "--render",
-            "false",
-            "short:square=true",
-            "--width",
-            "short:square=64",
-            "long:square=96",
-            "--height",
-            "short:square=64",
-            "long:square=96",
-            "--subtitle-enabled",
-            "short=false",
-            "long=false",
+            *flags,
         ]
     )
     source = AcquiredSource(source_path, "sha256-v1:grouped-cli")

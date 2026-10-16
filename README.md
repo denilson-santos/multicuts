@@ -465,6 +465,23 @@ Combine a shared value with scoped exceptions, such as
 spaces. Place `SOURCE` before grouped values, or use `--` before a trailing
 source: `--render primary short:square=true -- ./video.mp4`.
 
+Environment variables use one name per option and the same grouped values:
+
+```dotenv
+PRIMARY="short=horizontal-blur long=vertical-blur"
+RENDER="primary long=false short:square=true"
+SUBTITLE_FONT_SIZE="short=5% long=4%"
+SUBTITLE_FONT='short="Open Sans" long="Montserrat"'
+```
+
+Use outer quotes for a group and inner quotes for values containing spaces.
+Simple defaults stay simple: `PRIMARY=auto`, `RENDER=true`. Empty variables are
+unset. Scope belongs in the value; generated names such as `PRIMARY_SHORT` and
+`SUBTITLE_SHORT_VERTICAL_FONT_SIZE` are no longer read. Process environment and
+`.env` resolve independently: scopes omitted in a higher-priority source inherit
+from lower-priority sources. Conflicting assignments and duplicate output
+variables in `.env` fail validation.
+
 Within each configuration source,
 variant settings override class settings, which override shared settings,
 independently per field and argument order. Contradictory assignments to the same
@@ -497,23 +514,20 @@ multicuts ./interview.mp4 --output-dir ./interview-cuts \
 
 | Control | CLI example | Environment |
 | --- | --- | --- |
-| Render a class | `--render long=false` | `RENDER_LONG` |
-| Render a variant | `--render short:horizontal-blur=false` | `RENDER_SHORT_HORIZONTAL_BLUR` |
+| Render a class | `--render long=false` | `RENDER="long=false"` |
+| Render a variant | `--render short:horizontal-blur=false` | `RENDER="short:horizontal-blur=false"` |
 | Shared captions | `--subtitle-enabled false` | `SUBTITLE_ENABLED` |
-| Class captions | `--subtitle-enabled short=true` | `SUBTITLE_SHORT_ENABLED` |
-| Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_SHORT_VERTICAL_ENABLED` |
+| Class captions | `--subtitle-enabled short=true` | `SUBTITLE_ENABLED="short=true"` |
+| Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_ENABLED="short:vertical=false"` |
 | Shared font size | `--subtitle-font-size 4%` | `SUBTITLE_FONT_SIZE` |
-| Class font size | `--subtitle-font-size short=5%` | `SUBTITLE_SHORT_FONT_SIZE` |
-| Variant font size | `--subtitle-font-size short:vertical=6%` | `SUBTITLE_SHORT_VERTICAL_FONT_SIZE` |
-| Variant template | `--subtitle-template long:horizontal=yellow-pop` | `SUBTITLE_LONG_HORIZONTAL_TEMPLATE` |
-| Custom templates | `--subtitle-template-dir short:vertical=./templates` | `SUBTITLE_SHORT_VERTICAL_TEMPLATE_DIR` |
+| Class font size | `--subtitle-font-size short=5%` | `SUBTITLE_FONT_SIZE="short=5%"` |
+| Variant font size | `--subtitle-font-size short:vertical=6%` | `SUBTITLE_FONT_SIZE="short:vertical=6%"` |
+| Variant template | `--subtitle-template long:horizontal=yellow-pop` | `SUBTITLE_TEMPLATE="long:horizontal=yellow-pop"` |
+| Custom templates | `--subtitle-template-dir short:vertical=./templates` | `SUBTITLE_TEMPLATE_DIR="short:vertical=./templates"` |
 
-Environment names use uppercase and underscores. For output fields, append the
-scope: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`. For subtitle fields,
-insert the scope after `SUBTITLE_`: `SUBTITLE_FONT_SIZE`, `SUBTITLE_SHORT_FONT_SIZE`,
-`SUBTITLE_SHORT_VERTICAL_FONT_SIZE`. Omit the scope for shared values. Class render
-settings gate every output of that class; named render settings select individual
-outputs within enabled classes.
+Environment names use uppercase and underscores; scopes stay in the value:
+`WIDTH="short=720 long:horizontal=1920"`. Named render settings can enable an
+output under a disabled class, following variant > class > shared priority.
 
 Dimensions must be positive even pixel counts. **Width and height define the
 ratio**, with horizontal outputs wider than tall, vertical outputs taller than
@@ -726,10 +740,10 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
-| `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
-| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
-| `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
-| `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
+| `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`. |
+| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
+| `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
+| `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`. |
 
 #### Subtitles
 
@@ -739,7 +753,7 @@ All options below accept grouped values or repeated flags and use
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-enabled [SCOPE=]VALUE...` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`, `SUBTITLE_SHORT_ENABLED`, `SUBTITLE_SHORT_VERTICAL_ENABLED`, etc. |
+| `--subtitle-enabled [SCOPE=]VALUE...` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`. |
 | `--subtitle-template [SCOPE=]VALUE...` | Template name; default: `yellow-pop`. |
 | `--subtitle-template-dir [SCOPE=]VALUE...` | Path to a custom template directory. |
 
@@ -933,7 +947,7 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <details>
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
-Settings take precedence in this order: **CLI flags → process environment → `.env` → built-in defaults**. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+Output settings take precedence in this order: **CLI flags → process environment → `.env` → JSON preset → defaults**. Other settings use CLI → process environment → `.env` → defaults. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
 
 `--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
 

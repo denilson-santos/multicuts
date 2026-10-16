@@ -132,15 +132,12 @@ def test_output_boolean_sources_and_scope_precedence(
     clip_class, configured_in, field, tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
-    name = (
-        f"SUBTITLE_{clip_class.upper()}_ENABLED"
-        if field == "subtitle-enabled"
-        else f"{field.upper()}_{clip_class.upper()}"
-    )
+    name = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
+    raw = f"{clip_class}=false"
     if configured_in == "dotenv":
-        (tmp_path / ".env").write_text(f"{name}=false\n", encoding="utf-8")
+        (tmp_path / ".env").write_text(f"{name}={raw}\n", encoding="utf-8")
     else:
-        monkeypatch.setenv(name, "false")
+        monkeypatch.setenv(name, raw)
 
     def effective(config):
         return (
@@ -165,12 +162,7 @@ def test_output_boolean_sources_and_scope_precedence(
 def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     parent = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
-    child = (
-        "SUBTITLE_LONG_ENABLED"
-        if field == "subtitle-enabled"
-        else field.upper() + "_LONG"
-    )
-    (tmp_path / ".env").write_text(f"{child}=false\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(f"{parent}=long=false\n", encoding="utf-8")
     monkeypatch.setenv(parent, "true")
     config = parse_run_config(_args())
     assert config.clips_for("long")
@@ -179,7 +171,7 @@ def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypa
 
 @pytest.mark.parametrize(
     "name",
-    ["RENDER_SHORT", "SUBTITLE_ENABLED", "SUBTITLE_SHORT_ENABLED"],
+    ["RENDER", "SUBTITLE_ENABLED"],
 )
 def test_output_settings_reject_invalid_booleans(name, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -234,8 +226,7 @@ def test_cli_options_override_process_environment_and_dotenv(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
         "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\n"
-        "OVERLAP_THRESHOLD=0.7\nSUBTITLE_SHORT_ENABLED=false\n"
-        "SUBTITLE_LONG_ENABLED=false\n",
+        "OVERLAP_THRESHOLD=0.7\nSUBTITLE_ENABLED=short=false long=false\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LLM_MODEL", "process-model")
