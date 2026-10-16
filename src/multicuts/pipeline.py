@@ -428,11 +428,9 @@ def run_pipeline(
     try:
         logger.info("Run %s started; output: %s", run_id, root)
         logger.info(
-            "Output classes: short=%s, long=%s; variants: short=%s, long=%s",
-            config.short_clips_enabled,
-            config.long_clips_enabled,
-            config.variants_for("short"),
-            config.variants_for("long"),
+            "Render policies: short=%s, long=%s",
+            config.render_for("short"),
+            config.render_for("long"),
         )
         logger.info("[1/6] Acquiring source and checking media")
         requested_range = config.clip_range or config.search_range

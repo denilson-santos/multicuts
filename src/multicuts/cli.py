@@ -36,7 +36,7 @@ from multicuts.output_config import (
 )
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
-from multicuts.variants import VARIANTS, OutputOptions
+from multicuts.variants import VARIANTS, OutputOptions, RenderMode
 
 PipelineRunner = Callable[[AppConfig], RunResult]
 logger = logging.getLogger(__name__)
@@ -222,6 +222,19 @@ def _parse_boolean(raw: object, name: str) -> bool:
     raise ConfigurationError(f"{name} must be a boolean")
 
 
+def _parse_render(raw: object, name: str, *, named: bool = False) -> RenderMode:
+    if isinstance(raw, str) and raw.strip().casefold() == "primary":
+        if named:
+            raise ConfigurationError(
+                f"{name}: primary is allowed only at all, short, or long scope"
+            )
+        return "primary"
+    try:
+        return _parse_boolean(raw, name)
+    except ConfigurationError as exc:
+        raise ConfigurationError(f"{name} must be true, false, or primary") from exc
+
+
 def _capture_output_option(
     ctx: typer.Context, param: TyperOption, value: object
 ) -> None:
@@ -239,9 +252,11 @@ def _capture_output_option(
             boolean = field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS
         else:
             key = output_key(scope, name)
-            boolean = name in ("render", "variants")
+            boolean = False
         normalized: object = supplied
-        if boolean:
+        if name == "render":
+            normalized = _parse_render(supplied, "--render", named=":" in scope)
+        elif boolean:
             normalized = _parse_boolean(supplied, f"--{name.replace('_', '-')}")
         if key in captured and captured[key] != normalized:
             raise ConfigurationError(
@@ -256,12 +271,11 @@ class _OutputCommand(TyperCommand):
     def __init__(self, name: str | None, **kwargs: Any) -> None:
         super().__init__(name, **kwargs)
         controls = {
-            "render": "true/false (default: true). "
-            "Class scopes gate all their outputs.",
-            "variants": "true/false for additional outputs (default: true); "
-            "all, short, or long only. Named --render settings override this default.",
-            "primary": "Preferred variant name; all, short, or long only "
-            "(defaults: short=vertical, long=horizontal).",
+            "render": "true: all compatible outputs; false: none; "
+            "primary: only the primary (all/short/long scopes). Default: true. "
+            "Named variants accept true/false. Per source: variant > class > all.",
+            "primary": "auto (default): follow source orientation, "
+            "or a preferred variant name. All, short, or long scopes only.",
             "width": "Positive even pixels. If height is omitted, derive it from "
             "the default variant ratio and round to even pixels. "
             "With both dimensions, their ratio is used; preserve variant orientation.",
@@ -398,7 +412,7 @@ def _output_settings(
 
     outputs: list[OutputOptions] = []
     result: dict[str, object] = {
-        "render_variants": boolean("variants", ("all",), True),
+        "render": _parse_render(value("render", ("all",), True), "RENDER"),
         "subtitles_enabled": boolean("subtitle_enabled", ("all",), True),
         "subtitle_template": str(value("subtitle_template", ("all",), "yellow-pop")),
         "subtitle_template_dir": directory(("all",)),
@@ -406,16 +420,13 @@ def _output_settings(
     }
     for clip_class in ("short", "long"):
         scopes = (clip_class, "all")
-        result[f"{clip_class}_clips_enabled"] = boolean("render", scopes, True)
-        result[f"{clip_class}_variants_enabled"] = boolean("variants", scopes, True)
+        result[f"{clip_class}_render"] = _parse_render(
+            value("render", scopes, True), f"RENDER_{clip_class.upper()}"
+        )
         result[f"{clip_class}_subtitles_enabled"] = boolean(
             "subtitle_enabled", scopes, True
         )
-        result[f"{clip_class}_primary"] = str(
-            value(
-                "primary", scopes, "vertical" if clip_class == "short" else "horizontal"
-            )
-        )
+        result[f"{clip_class}_primary"] = str(value("primary", scopes, "auto"))
         for variant in (None, *VARIANTS):
             scopes = (
                 (clip_class, "all")
@@ -425,7 +436,7 @@ def _output_settings(
             enabled = None
             if variant is not None:
                 key = output_key(scopes[0], "render")
-                found = resolve((key, output_key(clip_class, "variants"), "variants"))
+                found = resolve(tuple(output_key(scope, "render") for scope in scopes))
                 if found is not None and found[0] == key:
                     enabled = _parse_boolean(found[1], key.upper())
             dimensions: dict[str, int | None] = {}
@@ -471,7 +482,7 @@ app = typer.Typer(
         "for specific outputs. Boolean values are true/false."
     ),
     epilog=(
-        "Examples: --render long=false --variants short=false "
+        "Examples: --render long=false --render short=primary "
         "publishes primary shorts. "
         "--subtitle-enabled false --subtitle-enabled short:vertical=true captions "
         "only vertical shorts. Scopes: all, short, long, TYPE:VARIANT."

@@ -52,8 +52,8 @@ def test_scoped_settings_have_order_independent_specificity(reverse):
         ["--subtitle-enabled", "short=true"],
         ["--subtitle-enabled", "short:vertical=false"],
         ["--render", "false"],
-        ["--render", "short=true"],
-        ["--variants", "false"],
+        ["--render", "short=primary"],
+        ["--primary", "short=vertical"],
         ["--render", "short:horizontal-blur=true"],
     ]
     config = parse(
@@ -63,7 +63,7 @@ def test_scoped_settings_have_order_independent_specificity(reverse):
             for flag in option
         )
     )
-    assert config.short_clips_enabled and not config.long_clips_enabled
+    assert config.clips_for("short") and not config.clips_for("long")
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert config.outputs_for("short", media) == ("vertical", "horizontal-blur")
     vertical = config.for_output("short", "vertical")
@@ -80,7 +80,6 @@ def test_json_scopes_and_variant_switches(tmp_path):
         tmp_path,
         {
             "render": {"all": False, "short": True, "short:horizontal": False},
-            "variants": {"all": False, "short": True},
             "subtitles": {
                 "all": {"enabled": False, "font_size": "4%"},
                 "short": {"enabled": True, "font_size": "5%"},
@@ -93,7 +92,7 @@ def test_json_scopes_and_variant_switches(tmp_path):
         },
     )
     config = parse("--config", path)
-    assert not config.render_variants and config.variants_for("short")
+    assert config.render_for("short") is True
     assert not config.clips_for("long")
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert len(config.outputs_for("short", media)) == 5
@@ -110,22 +109,21 @@ def test_cli_and_environment_override_more_specific_file_values(tmp_path, monkey
     path = preset(
         tmp_path,
         {
-            "variants": {"short": False},
             "render": {"long": False, "short:horizontal": False},
             "subtitles": {"short:vertical": {"font_size": "6%", "enabled": True}},
         },
     )
     (tmp_path / ".env").write_text(
-        "SUBTITLE_FONT_SIZE=7%\nVARIANTS=true\n", encoding="utf-8"
+        "SUBTITLE_FONT_SIZE=7%\nRENDER=true\n", encoding="utf-8"
     )
     config = parse("--config", path)
     assert config.for_output("short", "vertical").subtitle_options.font_size == "7%"
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert "horizontal" in config.outputs_for("short", media)
-    assert config.variants_for("short")
+    assert config.render_for("short") is True
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "8%")
     monkeypatch.setenv("RENDER_LONG", "true")
-    assert parse("--config", path).long_clips_enabled
+    assert parse("--config", path).clips_for("long")
     monkeypatch.setenv("SUBTITLE_SHORT_VERTICAL_FONT_SIZE", "9%")
     config = parse(
         "--config", path, "--subtitle-font-size", "10%", "--subtitle-enabled", "false"
@@ -320,7 +318,7 @@ def test_dimension_inheritance_and_source_precedence(tmp_path, monkeypatch):
     assert vertical.dimensions_for("long", "vertical-blur") == (720, 1280)
 
 
-@pytest.mark.parametrize("field", ["variants", "primary"])
+@pytest.mark.parametrize("field", ["primary"])
 def test_primary_controls_reject_named_variant_scopes(field):
     with pytest.raises(ConfigurationError, match="scopes must be all, short, or long"):
         parse("--" + field, "short:vertical=true")
@@ -335,7 +333,14 @@ def test_dimensions_require_positive_even_integers(field, raw):
 
 def test_invalid_enabled_dimensions_fail_during_output_planning():
     config = parse(
-        "--variants", "false", "--width", "short=720", "--height", "short=720"
+        "--render",
+        "primary",
+        "--primary",
+        "short=vertical",
+        "--width",
+        "short=720",
+        "--height",
+        "short=720",
     )
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     with pytest.raises(ConfigurationError, match="dimensions must be vertical"):
@@ -383,6 +388,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch):
     [
         "--no-render",
         "--no-variants",
+        "--variants",
         "--short-clips",
         "--short-aspect-ratio",
         "--aspect-ratio",
@@ -403,6 +409,9 @@ def test_removed_flags_are_rejected(flag):
         "SHORT_CLIPS_ENABLED",
         "LONG_CLIPS_ENABLED",
         "RENDER_VARIANTS",
+        "VARIANTS",
+        "VARIANTS_SHORT",
+        "VARIANTS_LONG",
         "SHORT_VARIANTS_ENABLED",
         "LONG_VARIANTS_ENABLED",
         "SHORT_SUBTITLES_ENABLED",
@@ -427,12 +436,12 @@ def test_removed_environment_names_do_not_configure_outputs(name, monkeypatch):
     monkeypatch.setenv(name, "obsolete-value")
     config = parse()
     assert config.clips_for("short") and config.clips_for("long")
-    assert config.variants_for("short") and config.variants_for("long")
+    assert config.render_for("short") is True and config.render_for("long") is True
     assert config.dimensions_for("short", "vertical") == (1080, 1920)
     assert config.dimensions_for("long", "horizontal") == (1920, 1080)
     assert config.dimensions_for("short", "square") == (1080, 1080)
-    assert config.short_primary == "vertical"
-    assert config.long_primary == "horizontal"
+    assert config.short_primary == "auto"
+    assert config.long_primary == "auto"
     assert config.for_output("short", "horizontal-blur").subtitles_for("short")
 
 
@@ -464,7 +473,10 @@ def test_dimensions_define_each_variant_ratio_independently(
             "square": (1080, 1080),
         }[variant.removesuffix("-blur")]
     )
-    assert config.primary_for(kind) == ("vertical" if kind == "short" else "horizontal")
+    assert (
+        config.primary_for(kind, MediaInfo(60, 640, 360, 640, 360, 0, None))
+        == "horizontal"
+    )
 
 
 @pytest.mark.parametrize(
@@ -525,7 +537,7 @@ def test_dimension_fields_resolve_independently_across_sources(tmp_path, monkeyp
     )
     assert config.dimensions_for("short", "horizontal") == (1440, 1080)
     assert config.aspect_ratio_for("short", "horizontal") == "4:3"
-    assert config.primary_for("short") == "square"
+    assert config.short_primary == "square"
     assert config.dimensions_for("short", "square") == (1920, 1920)
 
 
@@ -544,8 +556,8 @@ def test_primary_selects_named_output_without_changing_dimensions(variant):
     config = parse(
         "--primary",
         f"short={variant}",
-        "--variants",
-        "short=false",
+        "--render",
+        "short=primary",
         "--width",
         "short:horizontal=2520",
         "--height",
@@ -561,6 +573,160 @@ def test_primary_selects_named_output_without_changing_dimensions(variant):
 def test_primary_rejects_removed_or_unknown_values(value):
     with pytest.raises(ConfigurationError, match="must name an output variant"):
         parse("--primary", "short=" + value)
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+@pytest.mark.parametrize("mode", ["true", "primary"])
+@pytest.mark.parametrize(
+    ("dimensions", "primary", "count"),
+    [
+        ((2520, 1080), "horizontal", 6),
+        ((1080, 1350), "vertical", 4),
+        ((1080, 1080), "square", 5),
+    ],
+)
+def test_auto_primary_follows_source_orientation_for_both_classes(
+    kind, mode, dimensions, primary, count
+):
+    width, height = dimensions
+    media = MediaInfo(360, width, height, width, height, 0, None)
+    config = parse("--render", f"{kind}={mode}")
+    assert config.primary_for(kind, media) == primary
+    outputs = config.outputs_for(kind, media)
+    assert outputs[0] == primary
+    assert len(outputs) == (1 if mode == "primary" else count)
+
+
+def test_auto_primary_uses_presentation_geometry():
+    media = MediaInfo(60, 1920, 1080, 1080, 1920, 0, None, rotation_degrees=90)
+    config = parse("--render", "primary")
+    assert config.outputs_for("short", media) == ("vertical",)
+    assert config.outputs_for("long", media) == ("vertical",)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("parent", ["false", "short=false"])
+def test_named_render_can_enable_an_output_under_a_disabled_parent(parent, reverse):
+    assignments = [parent, "short:square=true"]
+    if reverse:
+        assignments.reverse()
+    config = parse(*(flag for value in assignments for flag in ("--render", value)))
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.clips_for("short")
+    assert config.outputs_for("short", media) == ("square",)
+    assert config.clips_for("long") is (parent != "false")
+
+
+def test_primary_only_with_named_addition_and_disabled_primary():
+    config = parse("--render", "primary", "--render", "short:square=true")
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("horizontal", "square")
+    assert config.outputs_for("long", media) == ("horizontal",)
+    config = parse(
+        "--render",
+        "primary",
+        "--render",
+        "short:square=true",
+        "--render",
+        "short:horizontal=false",
+    )
+    assert config.outputs_for("short", media) == ("square",)
+
+
+@pytest.mark.parametrize("source", ["dotenv", "process", "json"])
+@pytest.mark.parametrize("value", ["true", "false", "primary"])
+def test_cli_render_policy_overrides_lower_priority_named_settings(
+    source, value, tmp_path, monkeypatch
+):
+    flags = []
+    if source == "json":
+        flags = ["--config", preset(tmp_path, {"render": {"short:square": True}})]
+    elif source == "process":
+        monkeypatch.setenv("RENDER_SHORT_SQUARE", "true")
+    else:
+        (tmp_path / ".env").write_text("RENDER_SHORT_SQUARE=true\n", encoding="utf-8")
+    config = parse(*flags, "--render", "short=" + value)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    outputs = config.outputs_for("short", media)
+    assert len(outputs) == {"true": 6, "false": 0, "primary": 1}[value]
+
+
+def test_process_render_policy_overrides_dotenv_and_preset_named_settings(
+    tmp_path, monkeypatch
+):
+    path = preset(tmp_path, {"render": {"short:square": True}})
+    (tmp_path / ".env").write_text("RENDER_SHORT_VERTICAL=true\n", encoding="utf-8")
+    monkeypatch.setenv("RENDER", "primary")
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert parse("--config", path).outputs_for("short", media) == ("horizontal",)
+
+
+@pytest.mark.parametrize("source", ["dotenv", "process", "json"])
+def test_primary_render_and_auto_primary_are_available_in_all_sources(
+    source, tmp_path, monkeypatch
+):
+    flags = []
+    if source == "json":
+        flags = [
+            "--config",
+            preset(
+                tmp_path,
+                {
+                    "render": {"all": "primary", "short:square": True},
+                    "primary": {"all": "auto", "long": "square"},
+                },
+            ),
+        ]
+    else:
+        settings = {
+            "RENDER": "primary",
+            "RENDER_SHORT_SQUARE": "true",
+            "PRIMARY": "auto",
+            "PRIMARY_LONG": "square",
+        }
+        if source == "process":
+            for key, value in settings.items():
+                monkeypatch.setenv(key, value)
+        else:
+            (tmp_path / ".env").write_text(
+                "\n".join(f"{key}={value}" for key, value in settings.items()) + "\n",
+                encoding="utf-8",
+            )
+    config = parse(*flags)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("horizontal", "square")
+    assert config.outputs_for("long", media) == ("square",)
+
+
+@pytest.mark.parametrize("source", ["cli", "dotenv", "process", "json"])
+def test_named_render_rejects_primary_value(source, tmp_path, monkeypatch):
+    flags = []
+    if source == "cli":
+        flags = ["--render", "short:vertical=primary"]
+    elif source == "json":
+        flags = [
+            "--config",
+            preset(tmp_path, {"render": {"short:vertical": "primary"}}),
+        ]
+    elif source == "process":
+        monkeypatch.setenv("RENDER_SHORT_VERTICAL", "primary")
+    else:
+        (tmp_path / ".env").write_text(
+            "RENDER_SHORT_VERTICAL=primary\n", encoding="utf-8"
+        )
+    with pytest.raises(ConfigurationError):
+        parse(*flags)
+
+
+@pytest.mark.parametrize("value", [0, 1, None, [], {}, "true", "false", "all"])
+def test_render_preset_values_are_strict(value, tmp_path):
+    with pytest.raises(ConfigurationError):
+        parse("--config", preset(tmp_path, {"render": {"all": value}}))
+
+
+def test_removed_variants_preset_group_is_rejected(tmp_path):
+    with pytest.raises(ConfigurationError, match="accepts only"):
+        parse("--config", preset(tmp_path, {"variants": {}}))
 
 
 @pytest.mark.parametrize("flag", ["--render", "--width", "--subtitle-font-size"])

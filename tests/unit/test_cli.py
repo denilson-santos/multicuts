@@ -127,7 +127,7 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
 @pytest.mark.parametrize("configured_in", ["dotenv", "process"])
-@pytest.mark.parametrize("field", ["render", "variants", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
 def test_output_boolean_sources_and_scope_precedence(
     clip_class, configured_in, field, tmp_path, monkeypatch
 ):
@@ -146,8 +146,6 @@ def test_output_boolean_sources_and_scope_precedence(
         return (
             config.clips_for(clip_class)
             if field == "render"
-            else config.variants_for(clip_class)
-            if field == "variants"
             else config.for_output(clip_class, "vertical").subtitles_for(clip_class)
         )
 
@@ -163,7 +161,7 @@ def test_output_boolean_sources_and_scope_precedence(
         assert effective(config) is True
 
 
-@pytest.mark.parametrize("field", ["render", "variants", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
 def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     parent = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
@@ -176,18 +174,17 @@ def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypa
     monkeypatch.setenv(parent, "true")
     config = parse_run_config(_args())
     assert config.clips_for("long")
-    assert config.variants_for("long")
     assert config.for_output("long", "vertical").subtitles_for("long")
 
 
 @pytest.mark.parametrize(
     "name",
-    ["RENDER_SHORT", "VARIANTS_LONG", "SUBTITLE_ENABLED", "SUBTITLE_SHORT_ENABLED"],
+    ["RENDER_SHORT", "SUBTITLE_ENABLED", "SUBTITLE_SHORT_ENABLED"],
 )
 def test_output_settings_reject_invalid_booleans(name, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(name, "sometimes")
-    with pytest.raises(ConfigurationError, match="must be a boolean"):
+    with pytest.raises(ConfigurationError, match="must be"):
         parse_run_config(_args())
 
 
@@ -211,13 +208,13 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(tmp_path, monkeypat
     for name in ("LLM_EFFORT", "ASR_MODEL", "ASR_BACKEND"):
         monkeypatch.delenv(name, raising=False)
     config = parse_run_config(_args())
-    assert config.short_primary == "vertical"
-    assert config.long_primary == "horizontal"
-    assert config.render_variants
+    assert config.short_primary == "auto"
+    assert config.long_primary == "auto"
+    assert config.render is True
     assert config.square_size == 1080
     for clip_class in ("short", "long"):
         assert config.clips_for(clip_class)
-        assert config.variants_for(clip_class)
+        assert config.render_for(clip_class) is True
         assert config.for_output(clip_class, "vertical").subtitles_for(clip_class)
     assert config.language is None
     assert config.transcription_model == "turbo"

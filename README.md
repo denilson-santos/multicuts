@@ -255,8 +255,8 @@ This example uses Portuguese audio. Set `--lang` to your source language when kn
 
 | Class | Duration | Preferred primary output |
 | --- | --- | --- |
-| 📱 Short | 180 seconds or less | Vertical (9:16, 1080×1920) |
-| 🖥️ Long | More than 180 seconds | Horizontal (16:9, 1920×1080), or vertical for vertical sources |
+| 📱 Short | 180 seconds or less | Source orientation (`auto`) |
+| 🖥️ Long | More than 180 seconds | Source orientation (`auto`) |
 
 Both classes have the same source-aware variants, all enabled by default:
 
@@ -278,15 +278,18 @@ Subtitles are generated afterward against each final canvas and have their own
 settings and sidecars. Default dimensions are 1080×1920, 1920×1080, and
 1080×1080. Use `--width [SCOPE=]VALUE` and `--height [SCOPE=]VALUE` to resize outputs.
 
-Use `--variants false` for only the primary output, or `--variants short=false`
-to apply this choice only to shorts. A named setting such as
-`--render short:horizontal-blur=true` overrides the additional-output default.
+Use `--render primary` for only the primary output, or `--render short=primary`
+to apply this choice only to shorts. Both classes default to `--primary auto`: a
+horizontal source selects `horizontal`, a vertical source selects `vertical`, and
+a square source selects `square`. A named setting such as
+`--render short:horizontal-blur=true` adds that output to the selection.
 If the preferred primary is unavailable or disabled, the first enabled supported
 variant becomes primary. Explicitly enabling an unsupported variant fails before
 transcription. Every enabled class must retain at least one supported output.
 
-Both classes are enabled by default. `--render long=false` disables long cuts and
-all their variants. At least one class must remain enabled. Shared proposal
+Both classes are enabled by default. `--render long=false` disables long cuts;
+a more specific setting such as `--render long:square=true` enables only that
+variant for longs. At least one class must remain enabled. Shared proposal
 discovery still covers both classes and reuses its cache; disabled classes skip
 editorial judgment, selection, and rendering.
 
@@ -352,14 +355,14 @@ Direct modes render your chosen interval or the entire source as one cut.
 They skip AI discovery, boundary adjustments, ranking, and rejection;
 no AI backend, model, or credentials are required.
 
-One cut can produce several formats. The examples below use `--variants false` to
+One cut can produce several formats. The examples below use `--render primary` to
 produce one output video; omit it to include the configured additional formats.
 
 #### Render one interval
 
 ```bash
 multicuts ./source.mp4 --output-dir ./cuts \
-  --clip-range 00:01:30.25 00:02:45 --variants false
+  --clip-range 00:01:30.25 00:02:45 --render primary
 ```
 
 Local files use the exact requested bounds. YouTube cuts can include extra
@@ -368,7 +371,7 @@ keyframe data; see [Range precision](#range-precision) before choosing an interv
 #### Use the entire source as one cut
 
 ```bash
-multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --variants false
+multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --render primary
 ```
 
 This includes silence before and after speech, using the probed video duration.
@@ -454,10 +457,12 @@ independently per field and argument order. Contradictory assignments to the sam
 field/scope are rejected. Boolean values are explicit: `true` or `false`.
 
 `--render`, `--width`, `--height`, and every `--subtitle-*` option support all three
-scope levels. `--primary` and `--variants` accept only `all`, `short`, or `long`.
-`--primary` chooses a preferred variant name, independently of its dimensions;
-`--variants` controls whether additional compatible outputs are included. Defaults
-are `short=vertical`, `long=horizontal`, and additional outputs enabled. The
+scope levels. `--render` accepts `true` (all compatible variants), `false` (none), or `primary`
+(only the principal output). Named variant scopes accept only `true`/`false`;
+`primary` is available at `all`, `short`, or `long` scope.
+`--primary` accepts only `all`, `short`, or `long`; its value is `auto` (the default
+for both classes) or a variant name. It chooses a preferred output independently
+of its dimensions. `auto` follows the source orientation, not its exact ratio. The
 source-orientation table above applies to both classes; no extra `original`
 output is generated.
 
@@ -465,14 +470,14 @@ To publish only primary short cuts:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
-  --render long=false --variants short=false
+  --render long=false --render short=primary
 ```
 
 To publish only 21:9 horizontal cuts without captions:
 
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
-  --primary horizontal --variants false --width 2520 --height 1080 \
+  --primary horizontal --render primary --width 2520 --height 1080 \
   --subtitle-enabled false
 ```
 
@@ -517,7 +522,7 @@ vertical-short subtitle placement:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
-  --variants false --render short:horizontal-blur=true \
+  --primary short=vertical --render primary --render short:horizontal-blur=true \
   --subtitle-enabled short:horizontal-blur=false \
   --subtitle-position short:vertical=top-center \
   --subtitle-font-size short:vertical=5%
@@ -529,10 +534,9 @@ Use `--config ./outputs.json` to reuse output and subtitle settings:
 
 ```json
 {
-  "variants": {"all": false},
   "primary": {"short": "vertical"},
   "width": {"short:vertical": 720},
-  "render": {"long": false, "short:horizontal-blur": true},
+  "render": {"all": "primary", "long": false, "short:horizontal-blur": true},
   "subtitles": {
     "all": {"template": "yellow-pop", "font_size": "4%"},
     "short:vertical": {"font_size": "5%", "position": "top-center"},
@@ -546,9 +550,9 @@ multicuts ./podcast.mp4 --output-dir ./cuts --config ./outputs.json \
   --subtitle-font-size short:vertical=6%
 ```
 
-`render` maps scopes to booleans. `variants` maps `all`, `short`, or `long` to
-booleans controlling additional formats. `primary` maps the same class/shared
-scopes to one of the six variant names. `width` and `height` map shared/class/variant
+`render` maps scopes to JSON booleans, or the string `"primary"` at
+`all`/`short`/`long` scope. `primary` maps class/shared scopes to `"auto"` or
+one of the six variant names. `width` and `height` map shared/class/variant
 scopes to positive even JSON integers. `subtitles` maps scopes to `enabled`,
 `template`, `template_dir`, and presentation fields written in snake_case.
 Lengths and other textual settings use strings; boolean fields use JSON
@@ -583,7 +587,7 @@ Adjust a template directly from the command line. Only supplied fields replace
 template values; omitted settings inherit. For example:
 
 ```bash
-multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --variants false \
+multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --render primary \
   --subtitle-template yellow-pop \
   --subtitle-position bottom-center --subtitle-margin-bottom 8% \
   --subtitle-font-size 4.5% --subtitle-text-case original \
@@ -666,7 +670,7 @@ optional output/subtitle preset, then defaults. Source priority is applied befor
 scope specificity, independently for each field. For example:
 
 - `--subtitle-enabled false --subtitle-enabled short:vertical=true` captions only vertical shorts.
-- `--variants false --variants long=true` adds formats only for longs.
+- `--render primary --render long=true` renders primary shorts and all compatible long variants.
 
 See the option tables below and `.env.example` for environment variable names.
 Output settings use only the scoped controls documented here and in `--help`.
@@ -708,9 +712,8 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
-| `--render [SCOPE=]VALUE` | `true`/`false`; enable classes or named outputs. Defaults to enabled. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
-| `--variants [SCOPE=]VALUE` | `true`/`false` for additional formats; scopes: `all`, `short`, `long`. Default: `true`. Environment: `VARIANTS`, `VARIANTS_SHORT`, `VARIANTS_LONG`. |
-| `--primary [SCOPE=]VALUE` | Preferred variant name; scopes: `all`, `short`, `long`. Defaults: short `vertical`, long `horizontal`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
+| `--render [SCOPE=]VALUE` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
+| `--primary [SCOPE=]VALUE` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
 | `--width [SCOPE=]VALUE` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
 | `--height [SCOPE=]VALUE` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
 

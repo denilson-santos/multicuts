@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from math import gcd
 from pathlib import Path
+from typing import Literal
 
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo
@@ -16,6 +17,15 @@ VARIANTS = (
     "vertical-blur",
     "square-blur",
 )
+RenderMode = bool | Literal["primary"]
+
+
+def source_orientation(media: MediaInfo) -> str:
+    """Classify the displayed frame, including rotation and pixel aspect ratio."""
+    width, height = media.presentation_width, media.presentation_height
+    return (
+        "horizontal" if width > height else "vertical" if width < height else "square"
+    )
 
 
 def aspect_ratio(width: int, height: int) -> str:
@@ -26,10 +36,10 @@ def aspect_ratio(width: int, height: int) -> str:
 
 def available_variants(media: MediaInfo) -> tuple[str, ...]:
     """Use presentation dimensions, including rotation and pixel aspect ratio."""
-    width, height = media.presentation_width, media.presentation_height
-    if width > height:
+    orientation = source_orientation(media)
+    if orientation == "horizontal":
         return VARIANTS
-    if width < height:
+    if orientation == "vertical":
         return "vertical", "square", "horizontal-blur", "square-blur"
     return "horizontal", "vertical", "square", "horizontal-blur", "vertical-blur"
 

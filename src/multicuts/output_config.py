@@ -18,7 +18,7 @@ SUBTITLE_FIELDS = frozenset(
         *(field.name for field in fields(SubtitleOptions)),
     }
 )
-OUTPUT_FIELDS = frozenset({"render", "variants", "primary", "width", "height"})
+OUTPUT_FIELDS = frozenset({"render", "primary", "width", "height"})
 
 
 def output_scope(scope: str) -> str:
@@ -42,7 +42,7 @@ def subtitle_key(scope: str, field: str) -> str:
 
 def output_key(scope: str, field: str) -> str:
     suffix = output_scope(scope)
-    if field in ("variants", "primary") and ":" in scope:
+    if field == "primary" and ":" in scope:
         raise ConfigurationError(
             f"--{field.replace('_', '-')} scopes must be all, short, or long"
         )
@@ -84,7 +84,7 @@ def load_output_config(path: Path | None) -> dict[str, object]:
         ) from exc
     if not isinstance(data, dict) or data.keys() - (OUTPUT_FIELDS | {"subtitles"}):
         raise ConfigurationError(
-            "--config accepts only render, variants, primary, width, height, "
+            "--config accepts only render, primary, width, height, "
             "and subtitles objects"
         )
     result: dict[str, object] = {}
@@ -117,12 +117,14 @@ def load_output_config(path: Path | None) -> dict[str, object]:
                     result[subtitle_key(scope, field)] = raw
             else:
                 key = output_key(scope, group)
-                if group in ("render", "variants"):
-                    valid = type(value) is bool
+                if group == "render":
+                    valid = type(value) is bool or (
+                        ":" not in scope and value == "primary"
+                    )
                 elif group in ("width", "height"):
                     valid = type(value) is int and value > 0 and value % 2 == 0
                 else:
-                    valid = value in VARIANTS
+                    valid = value in ("auto", *VARIANTS)
                 if not valid:
                     raise ConfigurationError(f"Invalid --config {group} value")
                 result[key] = value

@@ -9,7 +9,14 @@ from pathlib import Path
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo, TimeRange
 from multicuts.subtitles import SubtitleOptions
-from multicuts.variants import VARIANTS, OutputOptions, aspect_ratio, available_variants
+from multicuts.variants import (
+    VARIANTS,
+    OutputOptions,
+    RenderMode,
+    aspect_ratio,
+    available_variants,
+    source_orientation,
+)
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -32,8 +39,8 @@ class AppConfig:
     overlap_threshold: float = 0.60
     language: str | None = None
     transcription_model: str = "turbo"
-    short_primary: str = "vertical"
-    long_primary: str = "horizontal"
+    short_primary: str = "auto"
+    long_primary: str = "auto"
     vertical_width: int = 1080
     vertical_height: int = 1920
     horizontal_width: int = 1920
@@ -49,14 +56,12 @@ class AppConfig:
     llm_effort: str | None = None
     editorial_context: str | None = None
     asr_backend: str = "whisperx"
-    render_variants: bool = True
+    render: RenderMode = True
     square_size: int = 1080
     short_subtitles_enabled: bool | None = None
     long_subtitles_enabled: bool | None = None
-    short_clips_enabled: bool = True
-    long_clips_enabled: bool = True
-    short_variants_enabled: bool | None = None
-    long_variants_enabled: bool | None = None
+    short_render: RenderMode | None = None
+    long_render: RenderMode | None = None
     search_range: TimeRange | None = None
     clip_range: TimeRange | None = None
     full_video: bool = False
@@ -156,8 +161,8 @@ class AppConfig:
                 "Transcription model and subtitle template must not be empty"
             )
         for name in ("short_primary", "long_primary"):
-            if getattr(self, name) not in VARIANTS:
-                raise ConfigurationError(f"{name} must name an output variant")
+            if getattr(self, name) not in ("auto", *VARIANTS):
+                raise ConfigurationError(f"{name} must name an output variant or auto")
         if (
             type(self.vertical_width) is not int
             or type(self.vertical_height) is not int
@@ -207,33 +212,40 @@ class AppConfig:
             "keep_intermediates",
             "force_recompute",
             "verbose",
-            "render_variants",
-            "short_clips_enabled",
-            "long_clips_enabled",
         ):
             if type(getattr(self, name)) is not bool:
                 raise ConfigurationError(f"{name} must be boolean")
-        if not self.short_clips_enabled and not self.long_clips_enabled:
+        for name in ("render", "short_render", "long_render"):
+            value = getattr(self, name)
+            if value is None and name != "render":
+                continue
+            if type(value) is not bool and value != "primary":
+                raise ConfigurationError(f"{name} must be true, false, or primary")
+        if not any(self.clips_for(name) for name in ("short", "long")):
             raise ConfigurationError("Enable at least one clip class: short or long")
         for name in (
             "short_subtitles_enabled",
             "long_subtitles_enabled",
-            "short_variants_enabled",
-            "long_variants_enabled",
         ):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
                 raise ConfigurationError(f"{name} must be boolean or unset")
 
     def clips_for(self, clip_class: str) -> bool:
-        """Return whether a class and all its output versions are enabled."""
+        """Include a class when its policy or a named output enables rendering."""
+        return self.render_for(clip_class) is not False or any(
+            option.clip_class == clip_class
+            and option.variant is not None
+            and option.enabled is True
+            for option in self.output_options
+        )
+
+    def render_for(self, clip_class: str) -> RenderMode:
+        """Return the class render policy, inheriting the shared default."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Clip class must be short or long")
-        return (
-            self.short_clips_enabled
-            if clip_class == "short"
-            else self.long_clips_enabled
-        )
+        override = self.short_render if clip_class == "short" else self.long_render
+        return self.render if override is None else override
 
     @property
     def direct_clip(self) -> bool:
@@ -245,17 +257,6 @@ class AppConfig:
         if self.full_video:
             return "full_video"
         return "custom" if self.clip_range is not None else "automatic"
-
-    def variants_for(self, clip_class: str) -> bool:
-        """Inherit the shared variant switch unless the class overrides it."""
-        if not self.clips_for(clip_class):
-            return False
-        override = (
-            self.short_variants_enabled
-            if clip_class == "short"
-            else self.long_variants_enabled
-        )
-        return self.render_variants if override is None else override
 
     def subtitles_for(self, clip_class: str) -> bool:
         """Read the caption decision for the current effective render config."""
@@ -273,9 +274,10 @@ class AppConfig:
         if not self.clips_for(clip_class):
             return ()
         available = available_variants(media)
-        primary = self.primary_for(clip_class)
+        primary = self.primary_for(clip_class, media)
         if primary not in available:
             primary = available[0]
+        mode = self.render_for(clip_class)
         overrides = {
             option.variant: option.enabled
             for option in self.output_options
@@ -292,7 +294,7 @@ class AppConfig:
             if (
                 overrides.get(name)
                 if overrides.get(name) is not None
-                else name == primary or self.variants_for(clip_class)
+                else mode is True or (mode == "primary" and name == primary)
             )
         )
         if not outputs:
@@ -301,14 +303,16 @@ class AppConfig:
             self.for_output(clip_class, name)
         return outputs
 
-    def primary_for(self, clip_class: str) -> str:
+    def primary_for(self, clip_class: str, media: MediaInfo) -> str:
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Clip class must be short or long")
-        return self.short_primary if clip_class == "short" else self.long_primary
+        preferred = self.short_primary if clip_class == "short" else self.long_primary
+        return source_orientation(media) if preferred == "auto" else preferred
 
     def dimensions_for(self, clip_class: str, variant: str) -> tuple[int, int]:
         """Merge dimensions per field; derive a missing side from the default canvas."""
-        self.primary_for(clip_class)
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Clip class must be short or long")
         if variant not in VARIANTS:
             raise ConfigurationError("Unknown output variant")
         orientation = variant.removesuffix("-blur")

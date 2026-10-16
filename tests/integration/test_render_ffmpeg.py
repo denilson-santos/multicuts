@@ -46,8 +46,9 @@ pytestmark = pytest.mark.integration
         ),
     ],
 )
+@pytest.mark.parametrize("render_mode", [True, "primary"])
 def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
-    source_size: str, expected: set[str], tmp_path: Path
+    source_size: str, expected: set[str], render_mode, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -75,7 +76,8 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
         tmp_path / "out",
         full_video=True,
         subtitles_enabled=False,
-        long_clips_enabled=False,
+        render=render_mode,
+        long_render=False,
         vertical_width=90,
         vertical_height=160,
         horizontal_width=160,
@@ -94,7 +96,13 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["transcription"] is None
     (clip,) = manifest["clips"]
-    assert {item["variant"] for item in clip["variants"]} == expected
+    primary = {"160x90": "horizontal", "120x160": "vertical", "120x120": "square"}[
+        source_size
+    ]
+    assert clip["variants"][0]["variant"] == primary
+    assert {item["variant"] for item in clip["variants"]} == (
+        {primary} if render_mode == "primary" else expected
+    )
     for output in clip["variants"]:
         media = inspect_media_path(result.manifest_path.parent / output["video"])
         size = {"9:16": (90, 160), "16:9": (160, 90), "1:1": (90, 90)}[
@@ -179,8 +187,7 @@ def test_rotated_source_pixels_and_subtitles_follow_presentation_geometry(
         str(source_path),
         tmp_path / "out",
         full_video=True,
-        short_primary="horizontal" if rotation == 180 else "vertical",
-        render_variants=False,
+        render="primary",
         output_options=(
             OutputOptions(
                 "short",
@@ -353,7 +360,7 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
         clip_range=interval,
         full_video=interval is None,
         subtitles_enabled=subtitles,
-        render_variants=False,
+        render="primary",
         short_primary="horizontal",
         horizontal_width=320,
         horizontal_height=180,
@@ -520,7 +527,7 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         "codex",
         "test",
         clip_range=TimeRange(0.5, 2.5) if custom else None,
-        long_clips_enabled=False,
+        long_render=False,
         short_primary=primary_variant,
         short_subtitles_enabled=primary_subtitles,
         output_options=tuple(
@@ -934,7 +941,7 @@ def test_blurred_custom_canvas_preserves_native_foreground_ratio(
         tmp_path / "out",
         full_video=True,
         short_primary=variant,
-        render_variants=False,
+        render="primary",
         subtitles_enabled=False,
         output_options=(OutputOptions("short", variant, width=width, height=height),),
     )

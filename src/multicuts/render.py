@@ -73,8 +73,10 @@ def _crop_filter(media: MediaInfo, width: int, height: int) -> str:
     )
 
 
-def _geometry(config: AppConfig, clip_class: str) -> tuple[str, int, int]:
-    variant = config.render_variant or config.primary_for(clip_class)
+def _geometry(
+    config: AppConfig, clip_class: str, media: MediaInfo
+) -> tuple[str, int, int]:
+    variant = config.render_variant or config.primary_for(clip_class, media)
     width, height = config.dimensions_for(clip_class, variant)
     return aspect_ratio(width, height), width, height
 
@@ -199,7 +201,7 @@ def render_raw(
         source.acquired_range is not None and proposal.end > source.acquired_range.end
     ):
         raise RenderingError("Clip interval exceeds the acquired source interval")
-    ratio, width, height = _geometry(config, proposal.clip_class)
+    ratio, width, height = _geometry(config, proposal.clip_class, media)
     command = [
         "ffmpeg",
         "-hide_banner",
