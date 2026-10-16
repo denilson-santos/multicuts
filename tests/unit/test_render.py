@@ -55,7 +55,7 @@ def test_blur_render_rejects_invalid_output_and_preserves_existing_files(
         "test",
         horizontal_width=640,
         horizontal_height=360,
-        short_aspect_ratio="16:9",
+        short_primary="horizontal",
         render_variant="horizontal-blur",
     )
     if failure == "geometry":

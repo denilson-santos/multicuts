@@ -36,7 +36,7 @@ from multicuts.output_config import (
 )
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
-from multicuts.variants import VARIANT_RATIOS, OutputOptions
+from multicuts.variants import VARIANTS, OutputOptions
 
 PipelineRunner = Callable[[AppConfig], RunResult]
 logger = logging.getLogger(__name__)
@@ -260,12 +260,14 @@ class _OutputCommand(TyperCommand):
             "Class scopes gate all their outputs.",
             "variants": "true/false for additional outputs (default: true); "
             "all, short, or long only. Named --render settings override this default.",
-            "aspect_ratio": "Primary format: original, 9:16, 16:9, or 1:1; "
-            "all, short, or long only (defaults: short=9:16, long=16:9).",
+            "primary": "Preferred variant name; all, short, or long only "
+            "(defaults: short=vertical, long=horizontal).",
             "width": "Positive even pixels. If height is omitted, derive it from "
-            "the variant ratio and round to even pixels. Unavailable for original.",
+            "the default variant ratio and round to even pixels. "
+            "With both dimensions, their ratio is used; preserve variant orientation.",
             "height": "Positive even pixels. If width is omitted, derive it from "
-            "the variant ratio and round to even pixels. Unavailable for original.",
+            "the default variant ratio and round to even pixels. "
+            "With both dimensions, their ratio is used; preserve variant orientation.",
         }
         subtitle_help = {
             "enabled": "Caption switch (default: true).",
@@ -409,10 +411,12 @@ def _output_settings(
         result[f"{clip_class}_subtitles_enabled"] = boolean(
             "subtitle_enabled", scopes, True
         )
-        result[f"{clip_class}_aspect_ratio"] = str(
-            value("aspect_ratio", scopes, "9:16" if clip_class == "short" else "16:9")
+        result[f"{clip_class}_primary"] = str(
+            value(
+                "primary", scopes, "vertical" if clip_class == "short" else "horizontal"
+            )
         )
-        for variant in (None, *VARIANT_RATIOS, "original"):
+        for variant in (None, *VARIANTS):
             scopes = (
                 (clip_class, "all")
                 if variant is None
@@ -473,7 +477,7 @@ app = typer.Typer(
         "only vertical shorts. Scopes: all, short, long, TYPE:VARIANT."
         " Output options are repeatable: [SCOPE=]VALUE; omitted scope means all. "
         "VARIANT: horizontal, vertical, square, horizontal-blur, vertical-blur, "
-        "square-blur, original."
+        "square-blur."
     ),
 )
 def run_command(

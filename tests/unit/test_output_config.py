@@ -17,7 +17,15 @@ def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for name in tuple(os.environ):
         if name.startswith(
-            ("SUBTITLE_", "RENDER", "VARIANTS", "ASPECT_RATIO", "WIDTH", "HEIGHT")
+            (
+                "SUBTITLE_",
+                "RENDER",
+                "VARIANTS",
+                "PRIMARY",
+                "ASPECT_RATIO",
+                "WIDTH",
+                "HEIGHT",
+            )
         ):
             monkeypatch.delenv(name)
 
@@ -250,14 +258,14 @@ def test_help_has_one_repeatable_option_per_presentation_field():
 @pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
 def test_primary_format_and_dimensions_are_scoped(source, tmp_path, monkeypatch):
     settings = {
-        "aspect_ratio": {"short": "1:1"},
+        "primary": {"short": "square"},
         "width": {"short:square": 720, "long:horizontal-blur": 640},
     }
     flags = []
     if source == "cli":
         flags = [
-            "--aspect-ratio",
-            "short=1:1",
+            "--primary",
+            "short=square",
             "--width",
             "short:square=720",
             "--width",
@@ -267,7 +275,7 @@ def test_primary_format_and_dimensions_are_scoped(source, tmp_path, monkeypatch)
         flags = ["--config", preset(tmp_path, settings)]
     else:
         values = {
-            "ASPECT_RATIO_SHORT": "1:1",
+            "PRIMARY_SHORT": "square",
             "WIDTH_SHORT_SQUARE": "720",
             "WIDTH_LONG_HORIZONTAL_BLUR": "640",
         }
@@ -283,36 +291,36 @@ def test_primary_format_and_dimensions_are_scoped(source, tmp_path, monkeypatch)
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert config.outputs_for("short", media)[0] == "square"
     square = config.for_output("short", "square")
-    assert square.square_size == 720
+    assert square.dimensions_for("short", "square") == (720, 720)
     blur = config.for_output("long", "horizontal-blur")
-    assert (blur.horizontal_width, blur.horizontal_height) == (640, 360)
-    assert config.for_output("long", "horizontal").horizontal_width == 1920
-    assert config.for_output("short", "vertical").vertical_width == 1080
+    assert blur.dimensions_for("long", "horizontal-blur") == (640, 360)
+    assert config.dimensions_for("long", "horizontal") == (1920, 1080)
+    assert config.dimensions_for("short", "vertical") == (1080, 1920)
 
 
 def test_dimension_inheritance_and_source_precedence(tmp_path, monkeypatch):
     path = preset(
-        tmp_path, {"width": {"short:vertical": 360}, "aspect_ratio": {"short": "1:1"}}
+        tmp_path, {"width": {"short:vertical": 360}, "primary": {"short": "square"}}
     )
     (tmp_path / ".env").write_text("WIDTH_SHORT_VERTICAL=720\n", encoding="utf-8")
     monkeypatch.setenv("WIDTH", "1080")
     config = parse("--config", path)
     vertical = config.for_output("short", "vertical")
-    assert (vertical.vertical_width, vertical.vertical_height) == (1080, 1920)
-    config = parse("--config", path, "--width", "short=720", "--aspect-ratio", "16:9")
-    assert config.short_aspect_ratio == config.long_aspect_ratio == "16:9"
+    assert vertical.dimensions_for("short", "vertical") == (1080, 1920)
+    config = parse("--config", path, "--width", "short=720", "--primary", "horizontal")
+    assert config.short_primary == config.long_primary == "horizontal"
     vertical = config.for_output("short", "vertical")
-    assert (vertical.vertical_width, vertical.vertical_height) == (720, 1280)
+    assert vertical.dimensions_for("short", "vertical") == (720, 1280)
     horizontal = config.for_output("short", "horizontal")
-    assert (horizontal.horizontal_width, horizontal.horizontal_height) == (720, 406)
-    assert config.for_output("short", "square").square_size == 720
+    assert horizontal.dimensions_for("short", "horizontal") == (720, 406)
+    assert config.dimensions_for("short", "square") == (720, 720)
     monkeypatch.delenv("WIDTH")
     config = parse("--height", "long:vertical-blur=1280")
     vertical = config.for_output("long", "vertical-blur")
-    assert (vertical.vertical_width, vertical.vertical_height) == (720, 1280)
+    assert vertical.dimensions_for("long", "vertical-blur") == (720, 1280)
 
 
-@pytest.mark.parametrize("field", ["variants", "aspect-ratio"])
+@pytest.mark.parametrize("field", ["variants", "primary"])
 def test_primary_controls_reject_named_variant_scopes(field):
     with pytest.raises(ConfigurationError, match="scopes must be all, short, or long"):
         parse("--" + field, "short:vertical=true")
@@ -325,20 +333,12 @@ def test_dimensions_require_positive_even_integers(field, raw):
         parse("--" + field, "short:vertical=" + raw)
 
 
-@pytest.mark.parametrize("ratio", ["9:16", "original"])
-def test_invalid_enabled_dimensions_fail_during_output_planning(ratio):
+def test_invalid_enabled_dimensions_fail_during_output_planning():
     config = parse(
-        "--aspect-ratio",
-        "short=" + ratio,
-        "--variants",
-        "false",
-        "--width",
-        "short=720",
-        "--height",
-        "short=720",
+        "--variants", "false", "--width", "short=720", "--height", "short=720"
     )
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
-    with pytest.raises(ConfigurationError, match="dimensions|Original framing"):
+    with pytest.raises(ConfigurationError, match="dimensions must be vertical"):
         config.outputs_for("short", media)
 
 
@@ -348,8 +348,8 @@ def test_invalid_enabled_dimensions_fail_during_output_planning(ratio):
         {"width": {"all": True}},
         {"height": {"short": "720"}},
         {"width": {"short:vertical": 721}},
-        {"aspect_ratio": {"short": "2:1"}},
-        {"aspect_ratio": {"short:vertical": "9:16"}},
+        {"primary": {"short": "2:1"}},
+        {"primary": {"short:vertical": "9:16"}},
     ],
 )
 def test_new_preset_fields_are_strict(contents, tmp_path):
@@ -385,6 +385,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch):
         "--no-variants",
         "--short-clips",
         "--short-aspect-ratio",
+        "--aspect-ratio",
         "--square-size",
         "--no-subtitles",
         "--no-subtitle-bold",
@@ -411,6 +412,9 @@ def test_removed_flags_are_rejected(flag):
         "SHORT_HORIZONTAL_BLUR_ENABLED",
         "SUBTITLES_ENABLED",
         "SHORT_ASPECT_RATIO",
+        "ASPECT_RATIO",
+        "ASPECT_RATIO_SHORT",
+        "ASPECT_RATIO_LONG",
         "LONG_ASPECT_RATIO",
         "VERTICAL_WIDTH",
         "VERTICAL_HEIGHT",
@@ -424,9 +428,147 @@ def test_removed_environment_names_do_not_configure_outputs(name, monkeypatch):
     config = parse()
     assert config.clips_for("short") and config.clips_for("long")
     assert config.variants_for("short") and config.variants_for("long")
-    assert config.for_output("short", "vertical").vertical_width == 1080
-    assert config.for_output("long", "horizontal").horizontal_height == 1080
-    assert config.for_output("short", "square").square_size == 1080
-    assert config.short_aspect_ratio == "9:16"
-    assert config.long_aspect_ratio == "16:9"
+    assert config.dimensions_for("short", "vertical") == (1080, 1920)
+    assert config.dimensions_for("long", "horizontal") == (1920, 1080)
+    assert config.dimensions_for("short", "square") == (1080, 1080)
+    assert config.short_primary == "vertical"
+    assert config.long_primary == "horizontal"
     assert config.for_output("short", "horizontal-blur").subtitles_for("short")
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+@pytest.mark.parametrize(
+    ("variant", "width", "height", "ratio"),
+    [
+        ("horizontal", 2520, 1080, "7:3"),
+        ("vertical", 1080, 1350, "4:5"),
+        ("square", 720, 720, "1:1"),
+        ("horizontal-blur", 2400, 1000, "12:5"),
+        ("vertical-blur", 1000, 1600, "5:8"),
+        ("square-blur", 640, 640, "1:1"),
+    ],
+)
+def test_dimensions_define_each_variant_ratio_independently(
+    kind, variant, width, height, ratio
+):
+    scope = f"{kind}:{variant}"
+    config = parse("--width", f"{scope}={width}", "--height", f"{scope}={height}")
+    assert config.dimensions_for(kind, variant) == (width, height)
+    assert config.aspect_ratio_for(kind, variant) == ratio
+    other = "long" if kind == "short" else "short"
+    assert (
+        config.dimensions_for(other, variant)
+        == {
+            "horizontal": (1920, 1080),
+            "vertical": (1080, 1920),
+            "square": (1080, 1080),
+        }[variant.removesuffix("-blur")]
+    )
+    assert config.primary_for(kind) == ("vertical" if kind == "short" else "horizontal")
+
+
+@pytest.mark.parametrize(
+    ("variant", "width", "height"),
+    [
+        ("horizontal", 1080, 1350),
+        ("horizontal-blur", 1000, 1000),
+        ("vertical", 1350, 1080),
+        ("vertical-blur", 1000, 1000),
+        ("square", 1080, 720),
+        ("square-blur", 720, 1080),
+    ],
+)
+def test_dimension_pairs_enforce_variant_orientation_before_output(
+    variant, width, height
+):
+    config = parse(
+        "--width", f"short:{variant}={width}", "--height", f"short:{variant}={height}"
+    )
+    media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
+    with pytest.raises(ConfigurationError, match="dimensions must be"):
+        config.outputs_for("short", media)
+
+
+def test_invalid_dimensions_on_disabled_output_do_not_block_other_outputs():
+    config = parse(
+        "--render",
+        "short:vertical=false",
+        "--width",
+        "short:vertical=720",
+        "--height",
+        "short:vertical=720",
+    )
+    media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
+    assert "vertical" not in config.outputs_for("short", media)
+    assert len(config.outputs_for("short", media)) == 5
+
+
+def test_dimension_fields_resolve_independently_across_sources(tmp_path, monkeypatch):
+    path = preset(
+        tmp_path,
+        {
+            "width": {"short:horizontal": 2520},
+            "height": {"short:horizontal": 1080},
+            "primary": {"short": "horizontal"},
+        },
+    )
+    monkeypatch.setenv("WIDTH_SHORT", "1920")
+    config = parse("--config", path)
+    assert config.dimensions_for("short", "horizontal") == (1920, 1080)
+    config = parse(
+        "--config",
+        path,
+        "--width",
+        "short:horizontal=1440",
+        "--primary",
+        "short=square",
+    )
+    assert config.dimensions_for("short", "horizontal") == (1440, 1080)
+    assert config.aspect_ratio_for("short", "horizontal") == "4:3"
+    assert config.primary_for("short") == "square"
+    assert config.dimensions_for("short", "square") == (1920, 1920)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "horizontal",
+        "vertical",
+        "square",
+        "horizontal-blur",
+        "vertical-blur",
+        "square-blur",
+    ],
+)
+def test_primary_selects_named_output_without_changing_dimensions(variant):
+    config = parse(
+        "--primary",
+        f"short={variant}",
+        "--variants",
+        "short=false",
+        "--width",
+        "short:horizontal=2520",
+        "--height",
+        "short:horizontal=1080",
+    )
+    media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
+    assert config.outputs_for("short", media) == (variant,)
+    assert config.dimensions_for("short", "horizontal") == (2520, 1080)
+    assert config.outputs_for("long", media)[0] == "horizontal"
+
+
+@pytest.mark.parametrize("value", ["original", "16:9", "9:16", "1:1", "wide"])
+def test_primary_rejects_removed_or_unknown_values(value):
+    with pytest.raises(ConfigurationError, match="must name an output variant"):
+        parse("--primary", "short=" + value)
+
+
+@pytest.mark.parametrize("flag", ["--render", "--width", "--subtitle-font-size"])
+def test_original_is_not_an_output_scope(flag):
+    with pytest.raises(ConfigurationError, match="scope"):
+        parse(flag, "short:original=true")
+
+
+def test_preset_rejects_removed_aspect_ratio_group(tmp_path):
+    with pytest.raises(ConfigurationError, match="accepts only"):
+        parse("--config", preset(tmp_path, {"aspect_ratio": {"short": "original"}}))

@@ -1,38 +1,37 @@
 """Source-aware output variants shared by short and long cuts."""
 
 from dataclasses import dataclass
+from math import gcd
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo
 from multicuts.subtitles import SubtitleOptions
 
-VARIANT_RATIOS = {
-    "horizontal": "16:9",
-    "vertical": "9:16",
-    "square": "1:1",
-    "horizontal-blur": "16:9",
-    "vertical-blur": "9:16",
-    "square-blur": "1:1",
-}
+VARIANTS = (
+    "horizontal",
+    "vertical",
+    "square",
+    "horizontal-blur",
+    "vertical-blur",
+    "square-blur",
+)
+
+
+def aspect_ratio(width: int, height: int) -> str:
+    """Report the exact ratio of a final pixel canvas."""
+    divisor = gcd(width, height)
+    return f"{width // divisor}:{height // divisor}"
 
 
 def available_variants(media: MediaInfo) -> tuple[str, ...]:
     """Use presentation dimensions, including rotation and pixel aspect ratio."""
     width, height = media.presentation_width, media.presentation_height
     if width > height:
-        return tuple(VARIANT_RATIOS)
+        return VARIANTS
     if width < height:
         return "vertical", "square", "horizontal-blur", "square-blur"
     return "horizontal", "vertical", "square", "horizontal-blur", "vertical-blur"
-
-
-def variant_ratio(variant: str) -> str:
-    if variant == "original":
-        return "original"
-    if variant not in VARIANT_RATIOS:
-        raise ConfigurationError("Unknown output variant")
-    return VARIANT_RATIOS[variant]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,10 +51,7 @@ class OutputOptions:
     def __post_init__(self) -> None:
         if self.clip_class not in ("short", "long"):
             raise ConfigurationError("Output class must be short or long")
-        if self.variant is not None and self.variant not in (
-            *VARIANT_RATIOS,
-            "original",
-        ):
+        if self.variant is not None and self.variant not in VARIANTS:
             raise ConfigurationError("Unknown output variant")
         for name in ("enabled", "subtitles_enabled"):
             value = getattr(self, name)

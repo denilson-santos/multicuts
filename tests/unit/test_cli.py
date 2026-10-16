@@ -112,7 +112,15 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
 
     for name in tuple(os.environ):
         if name.startswith(
-            ("RENDER", "VARIANTS", "ASPECT_RATIO", "WIDTH", "HEIGHT", "SUBTITLE_")
+            (
+                "RENDER",
+                "VARIANTS",
+                "ASPECT_RATIO",
+                "PRIMARY",
+                "WIDTH",
+                "HEIGHT",
+                "SUBTITLE_",
+            )
         ):
             monkeypatch.delenv(name)
 
@@ -203,8 +211,8 @@ def test_cli_defaults_seek_both_classes_without_a_clip_quota(tmp_path, monkeypat
     for name in ("LLM_EFFORT", "ASR_MODEL", "ASR_BACKEND"):
         monkeypatch.delenv(name, raising=False)
     config = parse_run_config(_args())
-    assert config.short_aspect_ratio == "9:16"
-    assert config.long_aspect_ratio == "16:9"
+    assert config.short_primary == "vertical"
+    assert config.long_primary == "horizontal"
     assert config.render_variants
     assert config.square_size == 1080
     for clip_class in ("short", "long"):

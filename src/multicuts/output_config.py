@@ -8,7 +8,7 @@ from pathlib import Path
 
 from multicuts.errors import ConfigurationError
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
-from multicuts.variants import VARIANT_RATIOS
+from multicuts.variants import VARIANTS
 
 SUBTITLE_FIELDS = frozenset(
     {
@@ -18,7 +18,7 @@ SUBTITLE_FIELDS = frozenset(
         *(field.name for field in fields(SubtitleOptions)),
     }
 )
-OUTPUT_FIELDS = frozenset({"render", "variants", "aspect_ratio", "width", "height"})
+OUTPUT_FIELDS = frozenset({"render", "variants", "primary", "width", "height"})
 
 
 def output_scope(scope: str) -> str:
@@ -26,9 +26,7 @@ def output_scope(scope: str) -> str:
     if scope == "all":
         return ""
     clip_class, separator, variant = scope.partition(":")
-    if clip_class not in ("short", "long") or (
-        separator and variant not in (*VARIANT_RATIOS, "original")
-    ):
+    if clip_class not in ("short", "long") or (separator and variant not in VARIANTS):
         raise ConfigurationError(
             "Output scope must be all, short, long, or TYPE:VARIANT "
             "(horizontal, vertical, square, horizontal-blur, "
@@ -44,7 +42,7 @@ def subtitle_key(scope: str, field: str) -> str:
 
 def output_key(scope: str, field: str) -> str:
     suffix = output_scope(scope)
-    if field in ("variants", "aspect_ratio") and ":" in scope:
+    if field in ("variants", "primary") and ":" in scope:
         raise ConfigurationError(
             f"--{field.replace('_', '-')} scopes must be all, short, or long"
         )
@@ -86,7 +84,7 @@ def load_output_config(path: Path | None) -> dict[str, object]:
         ) from exc
     if not isinstance(data, dict) or data.keys() - (OUTPUT_FIELDS | {"subtitles"}):
         raise ConfigurationError(
-            "--config accepts only render, variants, aspect_ratio, width, height, "
+            "--config accepts only render, variants, primary, width, height, "
             "and subtitles objects"
         )
     result: dict[str, object] = {}
@@ -124,7 +122,7 @@ def load_output_config(path: Path | None) -> dict[str, object]:
                 elif group in ("width", "height"):
                     valid = type(value) is int and value > 0 and value % 2 == 0
                 else:
-                    valid = value in ("original", "9:16", "16:9", "1:1")
+                    valid = value in VARIANTS
                 if not valid:
                     raise ConfigurationError(f"Invalid --config {group} value")
                 result[key] = value

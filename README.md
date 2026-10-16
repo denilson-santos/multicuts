@@ -29,7 +29,7 @@
 | 🧠 **Editorial review** | Find complete ideas, refine nearby opening and closing boundaries, and select clips for general or topic-aware audiences. |
 | 🏆 **Explainable ranking** | See a 0–100 score, its component scores, and the editorial reason in each clip's JSON. |
 | 💬 **Styled subtitles** | Burn subtitles with `multisubs` templates, using the source transcript's word timings. |
-| 🎞️ **Flexible framing** | Choose vertical, horizontal, square, or original framing and customize output dimensions. |
+| 🎞️ **Flexible framing** | Choose named crop/blur variants and customize their output dimensions. |
 | ♻️ **Reusable analysis** | Reuse transcription and AI results when changing subtitle style or framing. |
 | 📦 **Organized output** | Get MP4 clips, per-clip metadata, and a run manifest in a separate folder for each invocation. |
 
@@ -262,16 +262,18 @@ Both classes have the same source-aware variants, all enabled by default:
 
 | Variant | Horizontal source | Vertical source | Square source |
 | --- | :---: | :---: | :---: |
-| `horizontal` — 16:9 crop | ✓ | | ✓ |
-| `vertical` — 9:16 crop | ✓ | ✓ | ✓ |
+| `horizontal` — landscape crop (default 16:9) | ✓ | | ✓ |
+| `vertical` — portrait crop (default 9:16) | ✓ | ✓ | ✓ |
 | `square` — 1:1 crop | ✓ | ✓ | ✓ |
 | `horizontal-blur` — vertical video over blurred video | ✓ | ✓ | ✓ |
 | `vertical-blur` — horizontal video over blurred video | ✓ | | ✓ |
 | `square-blur` — vertical video over blurred video | ✓ | ✓ | |
 
 Orientation uses presentation dimensions, including rotation, for any source aspect
-ratio. Plain outputs use a centered crop. Blurred outputs center the complete 9:16
-or 16:9 foreground over an enlarged, blurred copy, with neither layer mirrored.
+ratio. Plain outputs use a centered crop. Blurred outputs center a vertical or
+horizontal foreground over an enlarged, blurred copy, with neither layer mirrored. A source already in the foreground
+orientation keeps its native ratio; other sources use a 9:16 vertical or 16:9
+horizontal center crop.
 Subtitles are generated afterward against each final canvas and have their own
 settings and sidecars. Default dimensions are 1080×1920, 1920×1080, and
 1080×1080. Use `--width [SCOPE=]VALUE` and `--height [SCOPE=]VALUE` to resize outputs.
@@ -452,11 +454,12 @@ independently per field and argument order. Contradictory assignments to the sam
 field/scope are rejected. Boolean values are explicit: `true` or `false`.
 
 `--render`, `--width`, `--height`, and every `--subtitle-*` option support all three
-scope levels. `--aspect-ratio` and `--variants` accept only `all`, `short`, or `long`:
-they choose the preferred primary format and whether to include additional
-formats. Defaults are `short=9:16`, `long=16:9`, and additional formats enabled.
-The source-orientation table above applies to both classes. `original` preserves
-the source framing and adds an original version to the matrix.
+scope levels. `--primary` and `--variants` accept only `all`, `short`, or `long`.
+`--primary` chooses a preferred variant name, independently of its dimensions;
+`--variants` controls whether additional compatible outputs are included. Defaults
+are `short=vertical`, `long=horizontal`, and additional outputs enabled. The
+source-orientation table above applies to both classes; no extra `original`
+output is generated.
 
 To publish only primary short cuts:
 
@@ -465,11 +468,12 @@ multicuts ./podcast.mp4 --output-dir ./cuts \
   --render long=false --variants short=false
 ```
 
-To keep the source framing and disable subtitles:
+To publish only 21:9 horizontal cuts without captions:
 
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
-  --aspect-ratio original --variants false --subtitle-enabled false
+  --primary horizontal --variants false --width 2520 --height 1080 \
+  --subtitle-enabled false
 ```
 
 | Control | CLI example | Environment |
@@ -492,12 +496,21 @@ insert the scope after `SUBTITLE_`: `SUBTITLE_FONT_SIZE`, `SUBTITLE_SHORT_FONT_S
 settings gate every output of that class; named render settings select individual
 outputs within enabled classes.
 
-Dimensions must be positive even pixel counts. Set one dimension to derive the
-other from the variant ratio, rounded to the nearest even pixel; if both are set,
-they must preserve that ratio within one pixel of rounding. For example,
-`--width short:vertical=720` produces 720×1280 vertical shorts. A class or shared
-width/height applies to each supported variant. `original` preserves native
-geometry and does not accept width/height overrides.
+Dimensions must be positive even pixel counts. **Width and height define the
+ratio**, with horizontal outputs wider than tall, vertical outputs taller than
+wide, and square outputs having equal sides. For example:
+
+```bash
+--width short:horizontal=2520 --height short:horizontal=1080
+--width short:vertical=1080 --height short:vertical=1350
+```
+
+These configure 21:9 horizontal and 4:5 vertical shorts independently. If only one
+dimension is supplied, derive the other using the variant's default ratio, rounded
+to even pixels. A class/shared dimension applies to every enabled variant in its
+scope; each resulting orientation is validated before ASR. Metadata reports the
+exact reduced ratio of the final pixel dimensions. Changing `--primary` only
+selects which enabled version is primary; it does not change any dimensions.
 
 For example, add one companion variant, disable its captions, and change
 vertical-short subtitle placement:
@@ -517,7 +530,7 @@ Use `--config ./outputs.json` to reuse output and subtitle settings:
 ```json
 {
   "variants": {"all": false},
-  "aspect_ratio": {"short": "9:16"},
+  "primary": {"short": "vertical"},
   "width": {"short:vertical": 720},
   "render": {"long": false, "short:horizontal-blur": true},
   "subtitles": {
@@ -534,10 +547,9 @@ multicuts ./podcast.mp4 --output-dir ./cuts --config ./outputs.json \
 ```
 
 `render` maps scopes to booleans. `variants` maps `all`, `short`, or `long` to
-booleans controlling additional formats. `aspect_ratio` maps the same class/shared
-scopes to `original`, `9:16`, `16:9`, or `1:1` strings. `width` and `height` map
-shared/class/variant scopes to positive even JSON integers. `subtitles` maps
-scopes to `enabled`,
+booleans controlling additional formats. `primary` maps the same class/shared
+scopes to one of the six variant names. `width` and `height` map shared/class/variant
+scopes to positive even JSON integers. `subtitles` maps scopes to `enabled`,
 `template`, `template_dir`, and presentation fields written in snake_case.
 Lengths and other textual settings use strings; boolean fields use JSON
 `true`/`false`. Relative `fonts_dir` and `template_dir` paths resolve from the
@@ -698,9 +710,9 @@ Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
 | `--render [SCOPE=]VALUE` | `true`/`false`; enable classes or named outputs. Defaults to enabled. Environment: `RENDER`, `RENDER_SHORT`, `RENDER_SHORT_VERTICAL`, etc. |
 | `--variants [SCOPE=]VALUE` | `true`/`false` for additional formats; scopes: `all`, `short`, `long`. Default: `true`. Environment: `VARIANTS`, `VARIANTS_SHORT`, `VARIANTS_LONG`. |
-| `--aspect-ratio [SCOPE=]VALUE` | Preferred primary: `9:16`, `16:9`, `1:1`, `original`; scopes: `all`, `short`, `long`. Defaults: short `9:16`, long `16:9`. Environment: `ASPECT_RATIO`, `ASPECT_RATIO_SHORT`, `ASPECT_RATIO_LONG`. |
-| `--width [SCOPE=]VALUE` | Positive even pixel width; derive height if omitted. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
-| `--height [SCOPE=]VALUE` | Positive even pixel height; derive width if omitted. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
+| `--primary [SCOPE=]VALUE` | Preferred variant name; scopes: `all`, `short`, `long`. Defaults: short `vertical`, long `horizontal`. Environment: `PRIMARY`, `PRIMARY_SHORT`, `PRIMARY_LONG`. |
+| `--width [SCOPE=]VALUE` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`, `WIDTH_SHORT`, `WIDTH_SHORT_VERTICAL`, etc. |
+| `--height [SCOPE=]VALUE` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`, `HEIGHT_LONG`, `HEIGHT_LONG_HORIZONTAL`, etc. |
 
 #### Subtitles
 

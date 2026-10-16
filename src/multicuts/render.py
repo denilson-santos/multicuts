@@ -23,6 +23,7 @@ from multicuts.models import (
     Transcript,
 )
 from multicuts.subtitles import SubtitleOptions
+from multicuts.variants import aspect_ratio
 
 
 class SubtitleProvider(Protocol):
@@ -56,11 +57,9 @@ def _even(value: int) -> int:
     return value - value % 2
 
 
-def _crop_filter(media: MediaInfo, aspect_ratio: str, width: int, height: int) -> str:
+def _crop_filter(media: MediaInfo, width: int, height: int) -> str:
     source_width = _even(media.presentation_width)
     source_height = _even(media.presentation_height)
-    if aspect_ratio == "original":
-        return f"scale={source_width}:{source_height}:flags=lanczos,setsar=1"
     if source_width * height >= source_height * width:
         crop_width = _even(source_height * width // height)
         crop_height = source_height
@@ -74,32 +73,29 @@ def _crop_filter(media: MediaInfo, aspect_ratio: str, width: int, height: int) -
     )
 
 
-def _geometry(
-    config: AppConfig, clip_class: str, media: MediaInfo
-) -> tuple[str, int, int]:
-    ratio = (
-        config.short_aspect_ratio if clip_class == "short" else config.long_aspect_ratio
-    )
-    if ratio == "9:16":
-        return ratio, config.vertical_width, config.vertical_height
-    if ratio == "16:9":
-        return ratio, config.horizontal_width, config.horizontal_height
-    if ratio == "1:1":
-        return ratio, config.square_size, config.square_size
-    return ratio, _even(media.presentation_width), _even(media.presentation_height)
+def _geometry(config: AppConfig, clip_class: str) -> tuple[str, int, int]:
+    variant = config.render_variant or config.primary_for(clip_class)
+    width, height = config.dimensions_for(clip_class, variant)
+    return aspect_ratio(width, height), width, height
 
 
 def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str:
-    # The foreground is a vertical crop except for vertical canvases, which
-    # preserve a horizontal crop. Both layers remain uncaptioned until layout.
-    foreground_ratio = "16:9" if variant == "vertical-blur" else "9:16"
-    if foreground_ratio == "16:9":
-        fg_width, fg_height = width, _even(width * 9 // 16)
+    source_width, source_height = media.presentation_width, media.presentation_height
+    if variant == "vertical-blur":
+        fg_ratio_width, fg_ratio_height = (
+            (source_width, source_height) if source_width > source_height else (16, 9)
+        )
+        fg_width = width
+        fg_height = max(2, _even(width * fg_ratio_height // fg_ratio_width))
     else:
-        fg_width, fg_height = _even(height * 9 // 16), height
+        fg_ratio_width, fg_ratio_height = (
+            (source_width, source_height) if source_width < source_height else (9, 16)
+        )
+        fg_height = height
+        fg_width = max(2, _even(height * fg_ratio_width // fg_ratio_height))
     return (
         f"[0:{media.video_stream_index}]"
-        f"{_crop_filter(media, foreground_ratio, fg_width, fg_height)},"
+        f"{_crop_filter(media, fg_width, fg_height)},"
         "split=2[base][fg];"
         f"[base]scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
@@ -203,7 +199,7 @@ def render_raw(
         source.acquired_range is not None and proposal.end > source.acquired_range.end
     ):
         raise RenderingError("Clip interval exceeds the acquired source interval")
-    ratio, width, height = _geometry(config, proposal.clip_class, media)
+    ratio, width, height = _geometry(config, proposal.clip_class)
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -232,7 +228,7 @@ def render_raw(
                 "-map",
                 f"0:{media.video_stream_index}",
                 "-vf",
-                _crop_filter(media, ratio, width, height),
+                _crop_filter(media, width, height),
             ]
         )
     if media.audio_stream_index is not None:

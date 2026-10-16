@@ -20,7 +20,7 @@ from multicuts.models import (
 )
 from multicuts.pipeline import run_pipeline
 from multicuts.render import render_final, render_raw
-from multicuts.variants import VARIANT_RATIOS, OutputOptions
+from multicuts.variants import VARIANTS, OutputOptions
 
 pytestmark = pytest.mark.integration
 
@@ -179,8 +179,16 @@ def test_rotated_source_pixels_and_subtitles_follow_presentation_geometry(
         str(source_path),
         tmp_path / "out",
         full_video=True,
-        short_aspect_ratio="original",
+        short_primary="horizontal" if rotation == 180 else "vertical",
         render_variants=False,
+        output_options=(
+            OutputOptions(
+                "short",
+                "horizontal" if rotation == 180 else "vertical",
+                width=media.presentation_width,
+                height=media.presentation_height,
+            ),
+        ),
     )
     raw, raw_media, _ = render_raw(
         AcquiredSource(source_path, "rotation-fixture"),
@@ -346,7 +354,9 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
         full_video=interval is None,
         subtitles_enabled=subtitles,
         render_variants=False,
-        short_aspect_ratio="original",
+        short_primary="horizontal",
+        horizontal_width=320,
+        horizontal_height=180,
     )
 
     def render(source, media, clip, current, *, output, work):
@@ -404,11 +414,11 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
     assert not (result.manifest_path.parent / ".work").exists()
 
 
-@pytest.mark.parametrize("primary_ratio", ["9:16", "16:9"])
+@pytest.mark.parametrize("primary_variant", ["vertical", "horizontal"])
 @pytest.mark.parametrize("primary_subtitles", [False, True])
 @pytest.mark.parametrize("custom", [False, True])
 def test_pipeline_renders_different_primary_and_variant_subtitles(
-    primary_ratio: str, primary_subtitles: bool, custom: bool, tmp_path: Path
+    primary_variant: str, primary_subtitles: bool, custom: bool, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -511,18 +521,21 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         "test",
         clip_range=TimeRange(0.5, 2.5) if custom else None,
         long_clips_enabled=False,
-        short_aspect_ratio=primary_ratio,
+        short_primary=primary_variant,
         short_subtitles_enabled=primary_subtitles,
         output_options=tuple(
-            OutputOptions("short", name, subtitles_enabled=not primary_subtitles)
-            for name in VARIANT_RATIOS
-            if name
-            != {"9:16": "vertical", "16:9": "horizontal", "original": "original"}[
-                primary_ratio
-            ]
+            OutputOptions(
+                "short",
+                name,
+                subtitles_enabled=not primary_subtitles,
+                width=560 if name == "horizontal-blur" else None,
+                height=240 if name == "horizontal-blur" else None,
+            )
+            for name in VARIANTS
+            if name != primary_variant
         ),
-        vertical_width=360,
-        vertical_height=640,
+        vertical_width=480,
+        vertical_height=600,
         horizontal_width=640,
         horizontal_height=360,
         square_size=360,
@@ -562,6 +575,11 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         assert all((root / path).is_file() for path in metadata["subtitle_files"])
         video = root / version["video"]
         media = inspect_media_path(video)
+        expected_size = config.dimensions_for("short", version["variant"])
+        assert (media.presentation_width, media.presentation_height) == expected_size
+        assert version["aspect_ratio"] == config.aspect_ratio_for(
+            "short", version["variant"]
+        )
         assert media.has_audio is custom
         assert media.duration == pytest.approx(2.0, abs=0.25)
         # Allow encoder delay, but reject losing a complete source frame.
@@ -599,9 +617,9 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
         assert (bright > 5) is expected
 
 
-@pytest.mark.parametrize("aspect_ratio", ["9:16", "1:1", "original"])
+@pytest.mark.parametrize("primary", ["vertical", "square", "horizontal"])
 def test_short_clip_is_published_with_requested_geometry_and_square_subtitles(
-    aspect_ratio: str, tmp_path: Path
+    primary: str, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -653,11 +671,13 @@ def test_short_clip_is_published_with_requested_geometry_and_square_subtitles(
         llm_backend="codex",
         llm_model="test",
         subtitles_enabled=True,
-        short_subtitles_enabled=aspect_ratio == "1:1",
+        short_subtitles_enabled=primary == "square",
         long_subtitles_enabled=False,
         vertical_width=360,
         vertical_height=640,
-        short_aspect_ratio=aspect_ratio,
+        short_primary=primary,
+        horizontal_width=640,
+        horizontal_height=360,
         square_size=360,
     )
     raw, raw_media, ratio = render_raw(
@@ -668,10 +688,12 @@ def test_short_clip_is_published_with_requested_geometry_and_square_subtitles(
         output=tmp_path / "work" / "raw.mp4",
         work=tmp_path / "work",
     )
-    expected_size = {"9:16": (360, 640), "1:1": (360, 360), "original": (640, 360)}[
-        aspect_ratio
-    ]
-    assert ratio == aspect_ratio
+    expected_size = {
+        "vertical": (360, 640),
+        "square": (360, 360),
+        "horizontal": (640, 360),
+    }[primary]
+    assert ratio == config.aspect_ratio_for("short", primary)
     assert (
         raw_media.presentation_width,
         raw_media.presentation_height,
@@ -743,7 +765,7 @@ def test_horizontal_blur_preserves_sharp_unmirrored_foreground_over_blurred_back
         "test",
         horizontal_width=640,
         horizontal_height=360,
-        short_aspect_ratio="16:9",
+        short_primary="horizontal",
         render_variant="horizontal-blur",
     )
     output = tmp_path / "clips" / "horizontal-blur.mp4"
@@ -842,7 +864,7 @@ def test_long_vertical_version_uses_vertical_dimensions(tmp_path: Path) -> None:
         tmp_path,
         "codex",
         "test",
-        long_aspect_ratio="9:16",
+        long_primary="vertical",
         vertical_width=180,
         vertical_height=320,
         subtitles_enabled=False,
@@ -859,3 +881,96 @@ def test_long_vertical_version_uses_vertical_dimensions(tmp_path: Path) -> None:
     assert (media.presentation_width, media.presentation_height) == (180, 320)
     assert media.duration == pytest.approx(181.0, abs=0.25)
     assert not media.has_audio
+
+
+@pytest.mark.parametrize(
+    ("variant", "source_size", "border_filter", "size", "samples"),
+    [
+        (
+            "horizontal-blur",
+            "160x200",
+            "drawbox=x=0:y=0:w=20:h=200:color=red:t=fill,"
+            "drawbox=x=140:y=0:w=20:h=200:color=lime:t=fill",
+            (280, 120),
+            ((97, 60), (182, 60)),
+        ),
+        (
+            "vertical-blur",
+            "280x120",
+            "drawbox=x=0:y=0:w=280:h=15:color=red:t=fill,"
+            "drawbox=x=0:y=105:w=280:h=15:color=lime:t=fill",
+            (120, 200),
+            ((60, 78), (60, 122)),
+        ),
+    ],
+)
+def test_blurred_custom_canvas_preserves_native_foreground_ratio(
+    variant, source_size, border_filter, size, samples, tmp_path
+):
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=blue:s={source_size}:r=25:d=0.8,{border_filter}",
+            "-c:v",
+            "mpeg4",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source = AcquiredSource(source_path, "sha256-v1:native-blur")
+    width, height = size
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        full_video=True,
+        short_primary=variant,
+        render_variants=False,
+        subtitles_enabled=False,
+        output_options=(OutputOptions("short", variant, width=width, height=height),),
+    )
+    result = run_pipeline(
+        config,
+        acquire=lambda _source, _work, *, time_range=None: source,
+        probe=lambda acquired: inspect_media_path(acquired.local_path),
+    )
+    (video,) = result.clip_paths
+    media = inspect_media_path(video)
+    assert (media.presentation_width, media.presentation_height) == size
+    data = json.loads(video.with_suffix(".json").read_text())
+    assert data["render"]["aspect_ratio"] == config.aspect_ratio_for("short", variant)
+    pixels = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    colors = [
+        tuple(pixels[(y * width + x) * 3 : (y * width + x) * 3 + 3]) for x, y in samples
+    ]
+    red, green = colors
+    assert red[0] > 170 and red[1] < 80 and red[2] < 80
+    assert green[1] > 170 and green[0] < 80 and green[2] < 80

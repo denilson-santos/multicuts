@@ -9,7 +9,7 @@ from pathlib import Path
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo, TimeRange
 from multicuts.subtitles import SubtitleOptions
-from multicuts.variants import OutputOptions, available_variants, variant_ratio
+from multicuts.variants import VARIANTS, OutputOptions, aspect_ratio, available_variants
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -32,8 +32,8 @@ class AppConfig:
     overlap_threshold: float = 0.60
     language: str | None = None
     transcription_model: str = "turbo"
-    short_aspect_ratio: str = "9:16"
-    long_aspect_ratio: str = "16:9"
+    short_primary: str = "vertical"
+    long_primary: str = "horizontal"
     vertical_width: int = 1080
     vertical_height: int = 1920
     horizontal_width: int = 1920
@@ -65,8 +65,8 @@ class AppConfig:
     render_variant: str | None = None
 
     def __post_init__(self) -> None:
-        if self.render_variant is not None:
-            variant_ratio(self.render_variant)
+        if self.render_variant is not None and self.render_variant not in VARIANTS:
+            raise ConfigurationError("Unknown output variant")
         if not isinstance(self.output_options, tuple) or any(
             not isinstance(option, OutputOptions) for option in self.output_options
         ):
@@ -155,9 +155,9 @@ class AppConfig:
             raise ConfigurationError(
                 "Transcription model and subtitle template must not be empty"
             )
-        for name in ("short_aspect_ratio", "long_aspect_ratio"):
-            if getattr(self, name) not in ("original", "9:16", "16:9", "1:1"):
-                raise ConfigurationError(f"{name} must be original, 9:16, 16:9, or 1:1")
+        for name in ("short_primary", "long_primary"):
+            if getattr(self, name) not in VARIANTS:
+                raise ConfigurationError(f"{name} must name an output variant")
         if (
             type(self.vertical_width) is not int
             or type(self.vertical_height) is not int
@@ -165,10 +165,10 @@ class AppConfig:
             or self.vertical_height <= 0
             or self.vertical_width % 2
             or self.vertical_height % 2
-            or abs(self.vertical_width * 16 - self.vertical_height * 9) > 16
+            or self.vertical_width >= self.vertical_height
         ):
             raise ConfigurationError(
-                "Vertical dimensions must be positive, even, and 9:16"
+                "Vertical dimensions must be positive, even, and taller than wide"
             )
         if (
             type(self.horizontal_width) is not int
@@ -177,10 +177,10 @@ class AppConfig:
             or self.horizontal_height <= 0
             or self.horizontal_width % 2
             or self.horizontal_height % 2
-            or abs(self.horizontal_width * 9 - self.horizontal_height * 16) > 16
+            or self.horizontal_width <= self.horizontal_height
         ):
             raise ConfigurationError(
-                "Horizontal dimensions must be positive, even, and 16:9"
+                "Horizontal dimensions must be positive, even, and wider than tall"
             )
         if type(self.block_chars) is not int or self.block_chars < 1000:
             raise ConfigurationError("BLOCK_CHARS must be at least 1000")
@@ -273,17 +273,9 @@ class AppConfig:
         if not self.clips_for(clip_class):
             return ()
         available = available_variants(media)
-        ratio = getattr(self, f"{clip_class}_aspect_ratio")
-        primary = {
-            "9:16": "vertical",
-            "16:9": "horizontal",
-            "1:1": "square",
-            "original": "original",
-        }[ratio]
-        if primary == "original":
-            available = (*available, "original")
-        elif primary not in available:
-            primary = "vertical"
+        primary = self.primary_for(clip_class)
+        if primary not in available:
+            primary = available[0]
         overrides = {
             option.variant: option.enabled
             for option in self.output_options
@@ -309,12 +301,67 @@ class AppConfig:
             self.for_output(clip_class, name)
         return outputs
 
+    def primary_for(self, clip_class: str) -> str:
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Clip class must be short or long")
+        return self.short_primary if clip_class == "short" else self.long_primary
+
+    def dimensions_for(self, clip_class: str, variant: str) -> tuple[int, int]:
+        """Merge dimensions per field; derive a missing side from the default canvas."""
+        self.primary_for(clip_class)
+        if variant not in VARIANTS:
+            raise ConfigurationError("Unknown output variant")
+        orientation = variant.removesuffix("-blur")
+        if orientation == "horizontal":
+            default_width, default_height = (
+                self.horizontal_width,
+                self.horizontal_height,
+            )
+        elif orientation == "vertical":
+            default_width, default_height = self.vertical_width, self.vertical_height
+        else:
+            default_width = default_height = self.square_size
+        width = height = None
+        for scope in (None, variant):
+            for option in self.output_options:
+                if option.clip_class == clip_class and option.variant == scope:
+                    if option.width is not None:
+                        width = option.width
+                    if option.height is not None:
+                        height = option.height
+        if width is None and height is None:
+            width, height = default_width, default_height
+        elif width is None:
+            assert height is not None
+            width = max(
+                2,
+                2 * ((height * default_width + default_height) // (2 * default_height)),
+            )
+        elif height is None:
+            height = max(
+                2, 2 * ((width * default_height + default_width) // (2 * default_width))
+            )
+        if (
+            (orientation == "horizontal" and width <= height)
+            or (orientation == "vertical" and width >= height)
+            or (orientation == "square" and width != height)
+        ):
+            raise ConfigurationError(
+                f"{clip_class}:{variant} dimensions must be {orientation} "
+                "(horizontal: width > height; vertical: height > width; "
+                "square: equal sides)"
+            )
+        return width, height
+
+    def aspect_ratio_for(self, clip_class: str, variant: str) -> str:
+        return aspect_ratio(*self.dimensions_for(clip_class, variant))
+
     def for_output(self, clip_class: str, variant: str) -> AppConfig:
         """Resolve captions and presentation before entering the render boundary."""
         enabled = self.subtitles_for(clip_class)
         template, template_dir = self.subtitle_template, self.subtitle_template_dir
         options = self.subtitle_options
-        width = height = None
+        self.dimensions_for(clip_class, variant)
         for scope in (None, variant):
             override = next(
                 (
@@ -333,47 +380,10 @@ class AppConfig:
             if override.subtitle_template_dir is not None:
                 template_dir = override.subtitle_template_dir
             options = replace(options, **override.subtitle_options.overrides())
-            if override.width is not None:
-                width = override.width
-            if override.height is not None:
-                height = override.height
-        dimensions: dict[str, int] = {}
-        ratio = variant_ratio(variant)
-        if width is not None or height is not None:
-            if ratio == "original":
-                raise ConfigurationError(
-                    "Original framing does not accept width/height"
-                )
-            numerator, denominator = (int(part) for part in ratio.split(":"))
-            if width is None:
-                assert height is not None
-                width = max(
-                    2, 2 * ((height * numerator + denominator) // (2 * denominator))
-                )
-            if height is None:
-                height = max(
-                    2, 2 * ((width * denominator + numerator) // (2 * numerator))
-                )
-            if abs(width * denominator - height * numerator) > max(
-                numerator, denominator
-            ):
-                raise ConfigurationError(
-                    f"{clip_class}:{variant} dimensions must preserve {ratio}"
-                )
-            if ratio == "1:1":
-                if width != height:
-                    raise ConfigurationError("Square dimensions must have equal sides")
-                dimensions["square_size"] = width
-            else:
-                orientation = "vertical" if numerator < denominator else "horizontal"
-                dimensions[f"{orientation}_width"] = width
-                dimensions[f"{orientation}_height"] = height
         return replace(
             self,
             **{
-                f"{clip_class}_aspect_ratio": ratio,
                 f"{clip_class}_subtitles_enabled": enabled,
-                **dimensions,
             },
             subtitle_template=template,
             subtitle_template_dir=template_dir,

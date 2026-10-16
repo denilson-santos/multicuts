@@ -9,7 +9,7 @@ import pytest
 from multicuts.cli import parse_run_config
 from multicuts.errors import ConfigurationError
 from multicuts.subtitles import SubtitleOptions
-from multicuts.variants import VARIANT_RATIOS
+from multicuts.variants import VARIANTS
 
 CASES = [
     ("position", "bottom-center"),
@@ -140,7 +140,7 @@ def test_missing_options_inherit():
 
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
-@pytest.mark.parametrize("variant", [None, *VARIANT_RATIOS])
+@pytest.mark.parametrize("variant", [None, *VARIANTS])
 def test_every_subtitle_field_is_available_for_each_class_and_variant(
     clip_class, variant
 ):
@@ -226,15 +226,15 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
             "--output-dir",
             "out",
             "--clip-full",
-            "--aspect-ratio",
-            "long=9:16",
+            "--primary",
+            "long=vertical",
         ]
     )
     assert config.for_output("long", "vertical").subtitles_for("long") is True
 
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
-@pytest.mark.parametrize("variant", list(VARIANT_RATIOS))
+@pytest.mark.parametrize("variant", list(VARIANTS))
 def test_each_named_render_and_caption_switch_is_available(
     clip_class, variant, monkeypatch
 ):

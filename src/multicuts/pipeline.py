@@ -64,7 +64,6 @@ from multicuts.render import (
     render_raw,
 )
 from multicuts.source import SourceAcquirer, acquire_source
-from multicuts.variants import variant_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +560,7 @@ def run_pipeline(
             clip_class = direct_clip.proposal.clip_class
             first_variant = config.outputs_for(clip_class, media)[0]
             first_config = config.for_output(clip_class, first_variant)
-            first_ratio = variant_ratio(first_variant)
+            first_ratio = config.aspect_ratio_for(clip_class, first_variant)
             logger.info("Preparing the exact local cut before transcription")
             prepared_raw = raw_renderer(
                 source,
@@ -804,7 +803,7 @@ def run_pipeline(
             variants: list[dict[str, object]] = []
             primary_video = root / "clips" / f"{stem}.mp4"
             for index, name in enumerate(outputs):
-                ratio = variant_ratio(name)
+                ratio = config.aspect_ratio_for(clip_class, name)
                 is_variant = index != 0
                 variant_stem = f"{stem}-{name}" if is_variant else stem
                 variant_work = work / variant_stem
@@ -818,8 +817,6 @@ def run_pipeline(
                     if name == "vertical-blur"
                     else "vertical_center_blur"
                     if name.endswith("-blur")
-                    else "original"
-                    if name == "original"
                     else "center_crop"
                 )
                 if prepared_raw is not None and index == 0:
