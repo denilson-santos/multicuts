@@ -105,11 +105,12 @@ class AppConfig:
             )
         if not isinstance(self.source, str) or not self.source.strip():
             raise ConfigurationError("source must not be empty")
-        if not self.direct_clip and self.llm_backend not in LLM_BACKENDS:
+        use_ai = not self.direct_clip or bool(self.llm_backend or self.llm_model)
+        if use_ai and self.llm_backend not in LLM_BACKENDS:
             raise ConfigurationError(
                 "LLM_BACKEND must be openai, anthropic, gemini, codex, claude, or agy"
             )
-        if not self.direct_clip and (
+        if use_ai and (
             not isinstance(self.llm_model, str) or not self.llm_model.strip()
         ):
             raise ConfigurationError("LLM_MODEL must not be empty")
@@ -123,7 +124,7 @@ class AppConfig:
             object.__setattr__(
                 self, "editorial_context", self.editorial_context.strip() or None
             )
-        if not self.direct_clip and self.llm_effort is not None:
+        if use_ai and self.llm_effort is not None:
             if not isinstance(self.llm_effort, str) or not self.llm_effort.strip():
                 raise ConfigurationError("LLM_EFFORT must be a supported effort level")
             effort = self.llm_effort.strip().lower()
@@ -137,7 +138,7 @@ class AppConfig:
             else:
                 object.__setattr__(self, "llm_effort", effort)
         if (
-            not self.direct_clip
+            use_ai
             and self.llm_backend == "gemini"
             and self.llm_effort is not None
             and self.llm_model.startswith("gemini-2.5-")

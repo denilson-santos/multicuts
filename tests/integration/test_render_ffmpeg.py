@@ -11,7 +11,7 @@ import pytest
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
 from multicuts.cli import parse_run_config
-from multicuts.clips import JudgedClip, Proposal
+from multicuts.clips import DIRECT_TITLE_SCHEMA, JudgedClip, Proposal
 from multicuts.media import inspect_media_path
 from multicuts.models import (
     AcquiredSource,
@@ -106,7 +106,16 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
     assert {item["variant"] for item in clip["variants"]} == (
         {primary} if render_mode == "primary" else expected
     )
+    root = result.manifest_path.parent
+    report = result.report_path.read_text(encoding="utf-8")
     for output in clip["variants"]:
+        video = root / output["video"]
+        assert video.parent.parent == root / "shorts"
+        assert video.name == f"{output['variant']}.mp4"
+        assert Path(output["metadata"]).name == f"{output['variant']}.json"
+        assert f"[MP4]({output['video']})" in report
+        assert f"[JSON]({output['metadata']})" in report
+        assert (root / output["metadata"]).is_file()
         media = inspect_media_path(result.manifest_path.parent / output["video"])
         size = {"9:16": (90, 160), "16:9": (160, 90), "1:1": (90, 90)}[
             output["aspect_ratio"]
@@ -350,8 +359,9 @@ def test_rotated_source_pixels_and_subtitles_follow_presentation_geometry(
 
 @pytest.mark.parametrize("interval", [None, TimeRange(0.64, 2.36)])
 @pytest.mark.parametrize("subtitles", [False, True])
-def test_direct_cuts_render_exact_media_interval_without_ai(
-    interval: TimeRange | None, subtitles: bool, tmp_path: Path
+@pytest.mark.parametrize("ai_title", [False, True])
+def test_direct_cuts_render_exact_media_interval_with_optional_ai_title(
+    interval: TimeRange | None, subtitles: bool, ai_title: bool, tmp_path: Path
 ) -> None:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -391,7 +401,7 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
         calls = 0
 
         def version(self) -> str:
-            assert subtitles, "Uncaptioned direct cuts must skip ASR"
+            assert subtitles or ai_title, "This cut does not need ASR"
             return provider_version
 
         def transcribe(
@@ -432,12 +442,20 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
             )
 
     class Backend:
+        calls = 0
+
         def complete(self, prompt: str, schema: dict[str, object]) -> object:
-            pytest.fail("Direct cuts must never call AI")
+            assert ai_title, "A cut without AI configuration must not call a backend"
+            assert schema == DIRECT_TITLE_SCHEMA
+            assert "complete" in prompt
+            self.calls += 1
+            return {"title": "A complete idea"}
 
     config = AppConfig(
         str(source_path),
         tmp_path / "out",
+        llm_backend="codex" if ai_title else "",
+        llm_model="test" if ai_title else "",
         clip_range=interval,
         full_video=interval is None,
         subtitles_enabled=subtitles,
@@ -454,16 +472,18 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
         return result
 
     transcriber = Transcriber()
+    ai = Backend()
     result = run_pipeline(
-        config, transcriber=transcriber, backend=Backend(), raw_renderer=render
+        config, transcriber=transcriber, backend=ai, raw_renderer=render
     )
     assert len(rendering_inputs) == 1
     assert (rendering_inputs[0] != source_path) == (interval is not None)
-    if subtitles:
+    if subtitles or ai_title:
         assert transcription_inputs == (
             rendering_outputs if interval is not None else rendering_inputs
         )
-    assert transcriber.calls == int(subtitles)
+    assert transcriber.calls == int(subtitles or ai_title)
+    assert ai.calls == int(ai_title)
     (video,) = result.clip_paths
     actual = inspect_media_path(video)
     start = interval.start if interval else 0.0
@@ -475,6 +495,8 @@ def test_direct_cuts_render_exact_media_interval_without_ai(
     assert metadata["start"] == pytest.approx(start, abs=0.000001)
     assert metadata["end"] == pytest.approx(end, abs=0.000001)
     assert metadata["viral_potential"] is None
+    assert metadata["title"] == ("A complete idea" if ai_title else "source")
+    assert (metadata["title_generation"] is not None) is ai_title
     assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
     manifest = json.loads(result.manifest_path.read_text())
     acquired_range = manifest["source"]["acquired_range"]
@@ -573,6 +595,8 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
 
     class Backend:
         def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            if schema == DIRECT_TITLE_SCHEMA:
+                return {"title": "Complete idea"}
             if "Find every" in prompt:
                 return {
                     "clips": [

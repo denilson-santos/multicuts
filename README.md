@@ -308,7 +308,7 @@ multicuts SOURCE --output-dir OUTPUT_DIR [OPTIONS]
 
 ### Choose a mode
 
-| Goal | Mode option | AI analysis |
+| Goal | Mode option | Discovery and review |
 | --- | --- | --- |
 | Discover and rank clips across the source | None (default) | Required |
 | Discover and rank clips within an interval | `--search-range START END` | Required |
@@ -354,8 +354,12 @@ zero clips. This applies to local files and YouTube URLs.
 ### Direct cuts
 
 Direct modes render your chosen interval or the entire source as one cut.
-They skip AI discovery, boundary adjustments, ranking, and rejection;
-no AI backend, model, or credentials are required.
+They skip AI discovery, boundary adjustments, ranking, and rejection.
+When `LLM_BACKEND` and `LLM_MODEL` are configured through flags, the environment,
+or `.env`, AI generates a title from the selected interval's transcript. Without
+AI configuration, the source filename or YouTube title is used. No backend or
+credentials are required to use the source title. A partial or invalid
+AI configuration is rejected before processing.
 
 One cut can produce several formats. The examples below use `--render primary` to
 produce one output video; omit it to include the configured additional formats.
@@ -380,10 +384,20 @@ This includes silence before and after speech, using the probed video duration.
 
 Both direct modes use the same framing and subtitle controls as automatic cuts.
 The cut's duration determines its class: up to 180 seconds is short; longer is
-long. That class must be enabled. Titles come from the source filename or YouTube
-title, and metadata has no editorial score. Direct cuts transcribe once for all
-versions when subtitles are needed; disabling subtitles for every published
-version skips transcription.
+long. That class must be enabled. Metadata has no editorial score. The generated
+title appears in each version's JSON, the cut directory name, and `report.md`.
+Direct cuts transcribe once for all versions when subtitles or AI titles are
+needed; disabling subtitles skips transcription only when AI title generation
+is also inactive. Title requests use the shared AI cache, and `--force-recompute`
+bypasses it. Provider failures, invalid titles, and intervals without usable
+transcript evidence fail explicitly.
+
+For example, to generate a title for a direct cut with explicit AI settings:
+
+```bash
+multicuts ./source.mp4 --output-dir ./cuts --clip-range 60 120 \
+  --render primary --llm-backend codex --llm-model MODEL
+```
 
 ### Range precision
 
@@ -878,35 +892,59 @@ Run `multicuts --help` for the same option groups in the terminal. Environment v
 
 ## Output and reruns
 
-Manifest schema 4 and clip metadata schema 2 record `selection_mode`
+Manifest schema 5 and clip metadata schema 2 record `selection_mode`
 (`automatic`, `custom`, or `full_video`). Direct cuts have null `viral_potential`
 and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
-editorially eligible counts. Their AI provenance fields are null. When ASR is
+editorially eligible counts. Their editorial AI provenance fields are null.
+A standalone title request is recorded under `title_generation` in the manifest
+and each version's JSON,
+with backend, model, effort, prompt version, editorial context, and cache reuse.
+This field is null when there is no standalone title request. When ASR is
 skipped, manifest `transcription` is null and clip `transcript_text` is empty.
 Manifest source provenance includes `original_duration`, `acquired_duration`,
 and `acquired_range` (null for full-source acquisition).
 Manifest `transcription.source_range` records the actual transcription interval,
 or null when a full-source transcript was used.
 
-Pass `--output-dir` on every invocation. Each run gets a unique directory:
+Pass `--output-dir` on every invocation. Each run gets a unique directory,
+identified by a UTC timestamp, source label, and random suffix. The source label
+uses the local filename or the YouTube video ID:
 
 ```text
 cuts/
 ├── runs/
-│   └── <run-id>/
+│   └── <timestamp>-<source-label>-<random>/
 │       ├── manifest.json
-│       └── clips/
-│           ├── <clip>.mp4
-│           ├── <clip>.json
-│           ├── <clip>-<variant>.mp4
-│           ├── <clip>-<variant>.json
-│           └── subtitles/
+│       ├── report.md
+│       ├── shorts/
+│       │   └── <rank>-<title>-<id>/
+│       │       ├── <variant>.mp4
+│       │       ├── <variant>.json
+│       │       └── subtitles/
+│       │           └── <variant>.{transcript.json,srt,ass}
+│       └── longs/
+│           └── ...
 └── .cache/
 ```
 
-- **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions use the variant name as a suffix, such as `-vertical`, `-horizontal-blur`, or `-square-blur`.
+- **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. Files are named after their variant, including the primary version, such as `vertical.mp4`, `horizontal-blur.mp4`, or `square-blur.mp4`. All versions of a cut share one directory under their duration class, directly inside the run directory. The parent directory identifies the cut; filenames do not repeat its title or ID. Only classes with selected cuts create directories.
 - **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. `render.variant` identifies the named crop or blur variant. Every captioned output owns its subtitle sidecars, generated for its final geometry; `render.subtitle_source_video` is null. `render.subtitle_container` records the central-video bounds for captioned horizontal/square blurred outputs and is null for full-canvas or disabled captions. `render.is_variant` distinguishes additional formats from the primary output.
-- **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their variant name, aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
+- **Manifest:** source provenance and display title, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their variant name, aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. `report` points to `report.md`. Paths are relative to the run directory. Selection and CLI clip counts count editorial cuts, not rendered versions.
+- **Report:** `report.md` lists each cut's full title, original source interval, duration, score when applicable, selection reason, and links to every video and metadata file. It identifies the primary variant and also records runs with no selected cuts. Direct cuts are explicitly unscored. The CLI summary includes both manifest and report locations.
+
+Output folders are named `shorts/` and `longs/`. Configuration scopes and JSON
+`class` values use `short` and `long`.
+
+Directory titles are lowercase ASCII slugs, with Latin accents transliterated,
+punctuation replaced by hyphens, and a maximum of 48 characters. Titles without
+usable characters fall back to `clip`; source labels fall back to `source`.
+The full original title stays in JSON and the report. Clip IDs are independent
+of the title and ranking; the rank is the global selection order within that run.
+
+For scripts consuming earlier output layouts, follow the manifest's paths instead
+of assuming a flat `clips/` directory or an unnamed primary variant. Completed
+runs retain their existing layout; no migration of old files is required. Cache
+identities and clip metadata schemas are unchanged.
 
 Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.
 

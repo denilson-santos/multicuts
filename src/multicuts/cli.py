@@ -643,15 +643,14 @@ def run_command(
     preset = load_output_config(config_file)
     output_settings = _output_settings(ctx.meta.get("output_options", {}), preset)
     direct = clip_range is not None or clip_full
-    backend = "" if direct else _value(llm_backend, "LLM_BACKEND", "")
-    llm_model_value = "" if direct else _value(llm_model, "LLM_MODEL", "")
-    if not isinstance(backend, str) or (not direct and not backend.strip()):
+    backend = _value(llm_backend, "LLM_BACKEND", "")
+    llm_model_value = _value(llm_model, "LLM_MODEL", "")
+    use_ai = not direct or bool(backend or llm_model_value)
+    if not isinstance(backend, str) or (use_ai and not backend.strip()):
         raise ConfigurationError("Set LLM_BACKEND or pass --llm-backend")
-    if not isinstance(llm_model_value, str) or (
-        not direct and not llm_model_value.strip()
-    ):
+    if not isinstance(llm_model_value, str) or (use_ai and not llm_model_value.strip()):
         raise ConfigurationError("Set LLM_MODEL or pass --llm-model")
-    effort_value = None if direct else _value(llm_effort, "LLM_EFFORT", None)
+    effort_value = _value(llm_effort, "LLM_EFFORT", None)
     if effort_value is not None and not isinstance(effort_value, str):
         raise ConfigurationError("LLM_EFFORT must be a string")
     config = AppConfig(
@@ -728,7 +727,8 @@ def _main(
             result = (pipeline or run_pipeline)(state.parsed_config)
         typer.echo(
             f"Run {result.run_id}: {result.outcome.value}; "
-            f"clips={len(result.clip_paths)}; manifest={result.manifest_path}"
+            f"clips={len(result.clip_paths)}; manifest={result.manifest_path}; "
+            f"report={result.report_path}"
         )
         return (
             EXIT_SUCCESS
