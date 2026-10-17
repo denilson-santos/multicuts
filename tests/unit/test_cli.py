@@ -344,7 +344,9 @@ def test_cli_requires_backend_and_model(
     )
 
 
-def test_cli_reports_zero_selection_as_success(tmp_path: Path) -> None:
+def test_cli_reports_zero_selection_as_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     def fake_pipeline(config: AppConfig) -> RunResult:
         assert config.source == "source.mp4"
         return RunResult(
@@ -352,6 +354,9 @@ def test_cli_reports_zero_selection_as_success(tmp_path: Path) -> None:
         )
 
     assert main(_args(), pipeline=fake_pipeline) == 0
+    summary = capsys.readouterr().out
+    assert f"manifest={tmp_path / 'manifest.json'}" in summary
+    assert f"report={tmp_path / 'report.md'}" in summary
 
 
 def test_cli_reports_provider_failure_without_fallback() -> None:

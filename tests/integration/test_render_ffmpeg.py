@@ -106,7 +106,16 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
     assert {item["variant"] for item in clip["variants"]} == (
         {primary} if render_mode == "primary" else expected
     )
+    root = result.manifest_path.parent
+    report = result.report_path.read_text(encoding="utf-8")
     for output in clip["variants"]:
+        video = root / output["video"]
+        assert video.parent.parent == root / "shorts"
+        assert video.name == f"{output['variant']}.mp4"
+        assert Path(output["metadata"]).name == f"{output['variant']}.json"
+        assert f"[MP4]({output['video']})" in report
+        assert f"[JSON]({output['metadata']})" in report
+        assert (root / output["metadata"]).is_file()
         media = inspect_media_path(result.manifest_path.parent / output["video"])
         size = {"9:16": (90, 160), "16:9": (160, 90), "1:1": (90, 90)}[
             output["aspect_ratio"]

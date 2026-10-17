@@ -109,6 +109,7 @@ continues sharing its source transcript without per-clip ASR.
 - `cache.py`: validated transcript and AI response caches.
 - `render.py`: FFmpeg encoding, final media validation, clip-local timed transcript, and public `multisubs` subtitle rendering.
 - `pipeline.py`: orchestration and output publication only.
+- `artifacts.py`: portable source labels, clip directory names, and the human-readable run report.
 
 External provider objects and wire responses stay in adapters. Domain decisions use project-owned data. No database, queues, async workflow, or generic provider registry is required.
 
@@ -123,20 +124,47 @@ The output root has two distinct parts:
   .cache/
     transcripts/<transcription-key>.json
     ai/<request-key>.json
-  runs/<timestamp>-<random>/
+  runs/<timestamp>-<source-label>-<random>/
     manifest.json
-    clips/<rank>-<class>-<id>.mp4
-    clips/<rank>-<class>-<id>.json
-    clips/<rank>-<class>-<id>-<variant>.{mp4,json}
-    clips/subtitles/<rank>-<class>-<id>.{transcript.json,srt,ass}
+    report.md
+    <shorts|longs>/<rank>-<title-slug>-<id>/
+      <variant>.{mp4,json}
+      subtitles/<variant>.{transcript.json,srt,ass}
     .work/  # optional after completion
 ```
+
+The run label comes from the local input filename or the parsed YouTube video ID,
+so acquisition never needs to move an active workspace after learning a remote
+title. Source labels and clip title slugs use bounded lowercase ASCII names,
+transliterating Latin accents and replacing punctuation with hyphens. Empty
+slugs fall back to `source` or `clip`. Original display titles remain in artifacts.
+Clip IDs retain their existing identity independently of title or global rank.
+Every variant, including the primary, uses its name as the filename, without
+repeating the cut's title, rank, or ID. Private workspaces remain isolated per cut
+and variant so repeated filenames cannot collide. Only selected cuts
+and their classes create clip directories. Class directories (`shorts/`, `longs/`)
+sit directly under the run directory. Domain/JSON class values and CLI scopes
+remain `short` and `long`. The shared caches keep their existing
+locations and keys.
 
 The transcript key includes media fingerprint, ASR backend/model, requested language, and provider/stage/schema versions. Its stage version is 4: older caches containing display or subtitle-grouped segments are recomputed once, and each backend uses a separate original-ASR transcript cache. Normalized transcripts also retain the resolved ASR backend and model. Word records preserve optional source segment indexes; cached words without this field remain readable and use interval-based association when building a clip. The AI key includes the normalized transcript content fingerprint (excluding resolved ASR backend/model provenance), AI backend/model/effort, prompt/schema, and task. Identical normalized transcripts can reuse AI responses even if ASR settings change. Adding word segment provenance changes the normalized fingerprint, so existing AI responses may be recomputed once while valid transcript caches still avoid ASR. Editorial context is part of each prompt, so changing it invalidates AI responses while reusing ASR. The AI response is only saved after successful validation. A cache mismatch or malformed JSON triggers recomputation; storage permission failures are artifact errors. `--force-recompute` bypasses both caches. A new run always renders its own outputs and writes a new manifest. Existing completed files are not overwritten.
 
 The manifest summarizes the source identity, transcription and AI provenance, cache hits, reviewed boundary adjustments, editorially eligible and selected counts, and clip references. Source provenance includes `original_duration`, `acquired_duration`, and `acquired_range` (including keyframe padding, null for full-source acquisition). Per-clip JSON contains the actual source interval, transcript unit IDs and text, title, rationale, score dimensions and weights, approval reason, render geometry, subtitle provenance, and output paths. It does not contain API keys or local absolute source paths.
 
-Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `variant`, `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent selected cuts and their primary videos. The primary version keeps the existing filename; companion versions use their named variant as a suffix, including `-horizontal-blur`, `-vertical-blur`, and `-square-blur`. Manifest schema 4 and clip schema 2 identify the selection mode. Direct cuts have no score or transcript boundary IDs; skipped transcription is null in the manifest. Automatic score meaning and cache payload schemas retain their meaning; the transcript cache stage advances to discard display or subtitle-grouped segments.
+Each manifest clip reference preserves its primary `video` and `metadata` paths and adds `variants`, listing every version's `variant`, `aspect_ratio`, `video`, and `metadata`. Each MP4 has its own JSON. The selected count and `RunResult.clip_paths` still represent selected cuts and their primary videos. Manifest schema 5 records the nested output layout, `source.title` display name, and relative `report` path; clip schema 2 still identifies the selection mode. Direct cuts have no score or transcript boundary IDs; skipped transcription is null in the manifest. Automatic score meaning and cache payload schemas retain their meaning; the transcript cache stage advances to discard display or subtitle-grouped segments.
+
+The Markdown report uses the selected project-owned clip models and actual
+published variant paths, including original-timeline bounds, duration, optional
+score, editorial approval reason, and links to videos and metadata. It marks the
+primary output, identifies unscored direct cuts, and explains zero-selection runs.
+Provider text is escaped as Markdown text. The report is atomically published
+without overwrite before the final manifest; an unsuccessful report write cannot
+leave a completed manifest. `RunResult.report_path` and the CLI summary expose its
+location.
+
+All artifact references remain relative so a completed run can be moved as a
+unit. Existing runs are never reorganized; consumers should read manifest paths
+rather than construct filenames or assume a flat clips directory.
 
 The manifest's `transcription.backend` and `transcription.model` record the configured ASR engine and model on cache hits and fresh transcriptions. ASR progress logs include both settings.
 `transcription.source_range` records the actual ASR interval on the original

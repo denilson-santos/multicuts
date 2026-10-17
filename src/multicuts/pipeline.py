@@ -21,6 +21,7 @@ from typing import Protocol
 from multicuts.adapters.backends import LlmBackend
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig
+from multicuts.artifacts import ReportClip, clip_artifact_stem, run_report, source_label
 from multicuts.cache import (
     ai_cache_key,
     load_ai_response,
@@ -97,6 +98,10 @@ class RunResult:
     clip_paths: tuple[Path, ...]
     warnings: tuple[str, ...] = ()
 
+    @property
+    def report_path(self) -> Path:
+        return self.manifest_path.with_name("report.md")
+
 
 def _publish_json(path: Path, payload: object, work: Path) -> None:
     temporary: Path | None = None
@@ -120,6 +125,24 @@ def _publish_json(path: Path, payload: object, work: Path) -> None:
         os.link(temporary, path)
     except (OSError, ValueError) as exc:
         raise ArtifactError("Could not publish run JSON artifact") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publish_report(path: Path, content: str, work: Path) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=work, prefix="report-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    except OSError as exc:
+        raise ArtifactError("Could not publish run report") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -422,6 +445,8 @@ def run_pipeline(
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         + "-"
+        + source_label(config.source)
+        + "-"
         + secrets.token_hex(5)
     )
     root = config.output_dir.expanduser().resolve(strict=False) / "runs" / run_id
@@ -442,6 +467,7 @@ def run_pipeline(
         source = acquire(
             config.source, work / "acquisition", time_range=requested_range
         )
+        source_name = source.title or source.local_path.stem
         if requested_range is None and source.acquired_range is not None:
             raise AcquisitionError("Unexpected partial source acquisition")
         if (source.source_kind == "youtube" and requested_range is not None) and (
@@ -789,6 +815,7 @@ def run_pipeline(
             )
         clips: list[Path] = []
         references: list[dict[str, object]] = []
+        report_clips: list[ReportClip] = []
         for rank, clip in enumerate(selected, start=1):
             clip_started = perf_counter()
             logger.info(
@@ -800,17 +827,18 @@ def run_pipeline(
                 clip.proposal.end,
                 f"{clip.score:.2f}" if isinstance(clip, JudgedClip) else "unscored",
             )
-            stem = f"{rank:03d}-{clip.proposal.clip_class}-{clip.proposal.id}"
+            stem = clip_artifact_stem(clip.proposal, rank)
             clip_class = clip.proposal.clip_class
+            clip_dir = root / f"{clip_class}s" / stem
             outputs = config.outputs_for(clip_class, media)
             variants: list[dict[str, object]] = []
-            primary_video = root / "clips" / f"{stem}.mp4"
+            report_videos: list[tuple[str, Path]] = []
+            primary_video = clip_dir / f"{outputs[0]}.mp4"
             for index, name in enumerate(outputs):
                 ratio = config.aspect_ratio_for(clip_class, name)
                 is_variant = index != 0
-                variant_stem = f"{stem}-{name}" if is_variant else stem
-                variant_work = work / variant_stem
-                final_path = root / "clips" / f"{variant_stem}.mp4"
+                variant_work = work / stem / name
+                final_path = clip_dir / f"{name}.mp4"
                 variant_config = config.for_output(clip_class, name)
                 if name in ("horizontal-blur", "square-blur"):
                     width, height = config.dimensions_for(clip_class, name)
@@ -893,15 +921,17 @@ def run_pipeline(
                     "metadata": metadata_path.relative_to(root).as_posix(),
                 }
                 variants.append(reference)
+                report_videos.append((name, final))
             logger.info(
                 "Clip %d/%d saved: %s, %d versions (%.1fs)",
                 rank,
                 len(selected),
-                primary_video.name,
+                primary_video.relative_to(root).as_posix(),
                 len(variants),
                 perf_counter() - clip_started,
             )
             clips.append(primary_video)
+            report_clips.append(ReportClip(clip, tuple(report_videos)))
             references.append(
                 {
                     "id": clip.proposal.id,
@@ -915,7 +945,8 @@ def run_pipeline(
                 }
             )
         manifest = {
-            "schema_version": 4,
+            "schema_version": 5,
+            "report": "report.md",
             "selection_mode": config.selection_mode,
             "requested_clip_range": {
                 "start": config.clip_range.start,
@@ -930,6 +961,7 @@ def run_pipeline(
             "created_at": datetime.now(timezone.utc).isoformat(),
             "outcome": "completed" if clips else "zero_selection",
             "source": {
+                "title": source_name,
                 "kind": source.source_kind,
                 "fingerprint": source.fingerprint,
                 "youtube_id": source.provider_id,
@@ -986,6 +1018,17 @@ def run_pipeline(
             },
             "clips": references,
         }
+        _publish_report(
+            root / "report.md",
+            run_report(
+                run_id=run_id,
+                source_name=source_name,
+                selection_mode=config.selection_mode,
+                clips=report_clips,
+                run_root=root,
+            ),
+            work,
+        )
         manifest_path = root / "manifest.json"
         _publish_json(manifest_path, manifest, work)
         logger.info(

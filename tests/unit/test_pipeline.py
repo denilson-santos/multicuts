@@ -19,7 +19,12 @@ from multicuts.clips import (
     parse_proposals,
     select_clips,
 )
-from multicuts.errors import AcquisitionError, ConfigurationError, ScoringError
+from multicuts.errors import (
+    AcquisitionError,
+    ArtifactError,
+    ConfigurationError,
+    ScoringError,
+)
 from multicuts.models import (
     AcquiredSource,
     MediaInfo,
@@ -282,6 +287,10 @@ def test_custom_cut_preserves_exact_bounds_without_ai_or_asr(
         )
         assert metadata["viral_potential"] is None
         assert metadata["transcript_unit_ids"] is None
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "Selection mode: `custom`" in report
+    assert "Not scored (direct cut)." in report
+    assert "not probabilities" not in report
 
 
 @pytest.mark.parametrize("duration", [30.0, 180.0, 180.5, 360.0])
@@ -513,7 +522,7 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
             )
             assert local.words[1].start == local.words[1].end
             assert local.words[1].source_segment_index == 0
-        output.parent.mkdir(exist_ok=True)
+        output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(raw, output)
         return output, (), None
 
@@ -948,6 +957,145 @@ def _run(
     )
 
 
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_output_groups_each_cut_and_labels_every_variant(
+    tmp_path: Path, subtitles: bool
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        subtitles_enabled=subtitles,
+    )
+    result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    root = result.manifest_path.parent
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert root.name == result.run_id
+    assert not (root / "clips").exists()
+    assert not (root / "short").exists()
+    assert not (root / "long").exists()
+    assert re.fullmatch(r"\d{8}T\d{6}-source-[0-9a-f]{10}", result.run_id)
+    assert manifest["source"]["title"] == "source"
+    assert manifest["report"] == "report.md"
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "Selected cuts: 2" in report
+    assert "Score: 80.00/100" in report
+    assert "Selection reason: Strong complete idea" in report
+    assert "00:00:00.000" in report and "00:06:00.000" in report
+    assert str(tmp_path) not in report
+    assert "[Run manifest](manifest.json)" in report
+    for reference in manifest["clips"]:
+        primary = root / reference["video"]
+        metadata = json.loads(primary.with_suffix(".json").read_text(encoding="utf-8"))
+        directory = primary.parent
+        class_directory = {"short": "shorts", "long": "longs"}[reference["class"]]
+        assert directory.parent == root / class_directory
+        assert directory.name.startswith(f"{metadata['rank']:03d}-")
+        assert directory.name.endswith(f"-{reference['id']}")
+        assert "-idea-" in directory.name
+        assert f"## {metadata['rank']:03d}. {metadata['title']}" in report
+        for variant in reference["variants"]:
+            video = root / variant["video"]
+            assert video.parent == directory
+            assert video.name == f"{variant['variant']}.mp4"
+            assert Path(variant["metadata"]).name == f"{variant['variant']}.json"
+            assert f"[MP4]({variant['video']})" in report
+            assert f"[JSON]({variant['metadata']})" in report
+            details = json.loads(
+                (root / variant["metadata"]).read_text(encoding="utf-8")
+            )
+            assert details["video"] == variant["video"]
+            for sidecar in details["subtitle_files"]:
+                path = root / sidecar
+                assert path.parent == directory / "subtitles"
+                assert path.name.startswith(video.stem + ".")
+                assert path.is_file()
+        primary_variant = reference["variants"][0]["variant"]
+        assert primary.name == f"{primary_variant}.mp4"
+        assert f"| {primary_variant} (primary) | [MP4]({reference['video']})" in report
+        assert metadata["render"]["variant"] == primary_variant
+        assert metadata["render"]["is_variant"] is False
+    assert not (root / ".work").exists()
+
+
+def test_output_preserves_titles_sanitizes_names_and_escapes_report_text(
+    tmp_path: Path,
+) -> None:
+    title = "../../A decisão | [watch](https://example.com) <script>\n## Heading"
+    reason = 'An explanation.\n# Fake heading <img src="remote"> &amp; [link](url)'
+
+    class Backend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            response = super().complete(prompt, schema)
+            assert isinstance(response, dict)
+            if "Find every" in prompt:
+                for proposal in response["clips"]:
+                    proposal["title"] = title
+            else:
+                response["reason"] = reason
+            return response
+
+    result = _run(tmp_path, FakeTranscriber(), Backend())
+    root = result.manifest_path.parent
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "[watch](https://example.com)" not in report
+    assert "<script>" not in report and '<img src="remote">' not in report
+    assert "\n## Heading" not in report and "\n# Fake heading" not in report
+    assert r"\[watch\]\(https://example.com\)" in report
+    assert r"\&amp;" in report
+    for video in result.clip_paths:
+        assert video.parent.parent in (root / "shorts", root / "longs")
+        assert re.fullmatch(r"[a-z0-9-]+", video.parent.name)
+        assert "a-decisao" in video.parent.name
+        metadata = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))
+        assert metadata["title"] == title
+        assert metadata["viral_potential"]["reason"] == reason
+
+
+def test_report_collision_preserves_existing_file_and_prevents_completed_manifest(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    reports: list[Path] = []
+
+    def raw_renderer(_source, media, _clip, _config, *, output, work):
+        output.parent.mkdir(parents=True)
+        output.write_bytes(b"raw")
+        return output, media, "16:9"
+
+    def final_renderer(raw, _media, _transcript, _clip, _config, *, output, work):
+        output.parent.mkdir(parents=True)
+        shutil.copyfile(raw, output)
+        report = output.parents[2] / "report.md"
+        report.write_text("Existing report\n", encoding="utf-8")
+        reports.append(report)
+        return output, (), None
+
+    config = AppConfig(
+        str(source),
+        tmp_path / "out",
+        full_video=True,
+        render="primary",
+        subtitles_enabled=False,
+    )
+    with pytest.raises(ArtifactError, match="Could not publish run report"):
+        run_pipeline(
+            config,
+            acquire=lambda _source, _work, *, time_range=None: AcquiredSource(
+                source, "sha256-v1:source"
+            ),
+            probe=lambda _: _media(),
+            raw_renderer=raw_renderer,
+            final_renderer=final_renderer,
+        )
+    (report,) = reports
+    assert report.read_text(encoding="utf-8") == "Existing report\n"
+    assert not report.with_name("manifest.json").exists()
+    assert not (report.parent / ".work").exists()
+
+
 def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     tmp_path: Path,
 ) -> None:
@@ -958,6 +1106,8 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert first_asr.settings == [("whisperx", "turbo")]
     assert first_ai.calls == 3
     assert len(first.clip_paths) == 2
+    first_outputs = {path: path.read_bytes() for path in first.clip_paths}
+    first_report = first.report_path.read_bytes()
     assert {"short", "long"} == {
         json.loads(path.with_suffix(".json").read_text())["class"]
         for path in first.clip_paths
@@ -969,13 +1119,16 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert second_asr.calls == 0
     assert second_ai.calls == 0
     assert first.manifest_path != second.manifest_path
+    assert first.report_path.read_bytes() == first_report
+    assert second.report_path.is_file()
+    assert all(path.read_bytes() == content for path, content in first_outputs.items())
     assert set(first.clip_paths).isdisjoint(second.clip_paths)
     manifest = json.loads(second.manifest_path.read_text())
     assert manifest["transcription"]["cache_hit"] is True
     assert manifest["transcription"]["backend"] == "whisperx"
     assert manifest["transcription"]["model"] == "turbo"
     assert manifest["analysis"]["ai_cache"] == {"hits": 3, "misses": 0}
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == 5
     assert manifest["analysis"]["editorially_eligible"] == 2
     assert manifest["analysis"]["selected"] == 2
     assert "minimum_score" not in manifest["analysis"]
@@ -1040,7 +1193,7 @@ def test_pipeline_publishes_social_formats_per_cut_and_preserves_primary_version
             )
             assert render["subtitle_source_video"] is None
             assert metadata["subtitle_files"] == []
-    assert len(list((root / "clips").glob("*.mp4"))) == 12
+    assert len(list(root.rglob("*.mp4"))) == 12
 
 
 @pytest.mark.parametrize("primary_variant", [None, *VARIANTS])
@@ -1063,7 +1216,7 @@ def test_disabled_variants_publish_only_primary_and_keep_caption_files(
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     root = result.manifest_path.parent
     manifest = json.loads(result.manifest_path.read_text())
-    assert len(result.clip_paths) == len(list((root / "clips").glob("*.mp4"))) == 2
+    assert len(result.clip_paths) == len(list(root.rglob("*.mp4"))) == 2
     assert not (root / ".work").exists()
     for reference in manifest["clips"]:
         assert len(reference["variants"]) == 1
@@ -1159,14 +1312,14 @@ def test_disabling_variants_reuses_caches_and_preserves_previous_outputs(
         "source.mp4", tmp_path / "out", "codex", "test-model", subtitles_enabled=False
     )
     first = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
-    first_outputs = list((first.manifest_path.parent / "clips").glob("*.mp4"))
+    first_outputs = list(first.manifest_path.parent.rglob("*.mp4"))
     assert len(first_outputs) == 12
     transcriber, backend = FakeTranscriber(), FakeBackend()
     second = _run(
         tmp_path, transcriber, backend, config=replace(config, render="primary")
     )
     assert transcriber.calls == backend.calls == 0
-    assert len(list((second.manifest_path.parent / "clips").glob("*.mp4"))) == 2
+    assert len(list(second.manifest_path.parent.rglob("*.mp4"))) == 2
     assert all(path.is_file() for path in first_outputs)
 
 
@@ -1464,7 +1617,7 @@ def test_disabled_clip_class_is_not_reviewed_or_published(
     assert manifest["analysis"]["proposed"] == manifest["analysis"]["selected"] == 1
     assert {clip["class"] for clip in manifest["clips"]} == {enabled}
     assert len(result.clip_paths) == 1
-    assert len(list((result.manifest_path.parent / "clips").glob("*.mp4"))) == 6
+    assert len(list(result.manifest_path.parent.rglob("*.mp4"))) == 6
 
 
 @pytest.mark.parametrize("short_variants", [False, True])
@@ -2047,6 +2200,10 @@ def test_zero_approved_clips_is_a_valid_completed_analysis(tmp_path: Path) -> No
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(empty=True))
     assert result.clip_paths == ()
     assert json.loads(result.manifest_path.read_text())["outcome"] == "zero_selection"
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "Selected cuts: 0" in report
+    assert "No cuts were selected." in report
+    assert "[MP4]" not in report
 
 
 @pytest.mark.parametrize("reject_long", [False, True])
@@ -2604,7 +2761,9 @@ def test_pipeline_publishes_revised_boundary_and_counts_adjustment(
     result = _run(tmp_path, FakeTranscriber(), RevisingBackend())
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["analysis"]["boundary_adjusted"] == 1
-    short_path = next(path for path in result.clip_paths if "short" in path.name)
+    short_path = next(
+        path for path in result.clip_paths if path.parent.parent.name == "shorts"
+    )
     short_metadata = json.loads(short_path.with_suffix(".json").read_text())
     assert (short_metadata["start"], short_metadata["end"]) == (60.0, 120.0)
     assert short_metadata["transcript_unit_ids"] == {"start": "u1", "end": "u1"}

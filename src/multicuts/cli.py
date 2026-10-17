@@ -728,7 +728,8 @@ def _main(
             result = (pipeline or run_pipeline)(state.parsed_config)
         typer.echo(
             f"Run {result.run_id}: {result.outcome.value}; "
-            f"clips={len(result.clip_paths)}; manifest={result.manifest_path}"
+            f"clips={len(result.clip_paths)}; manifest={result.manifest_path}; "
+            f"report={result.report_path}"
         )
         return (
             EXIT_SUCCESS
