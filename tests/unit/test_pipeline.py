@@ -1246,8 +1246,13 @@ def test_named_render_reenables_judgment_and_publication_for_its_class(
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
 def test_individual_blur_variant_and_subtitles_are_independent(
-    clip_class: str, tmp_path: Path
+    clip_class: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    validated = []
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda _self, **settings: validated.append(settings),
+    )
     options = SubtitleOptions(font_size="7%", position="top-center")
     config = AppConfig(
         "source.mp4",
@@ -1280,6 +1285,9 @@ def test_individual_blur_variant_and_subtitles_are_independent(
         ),
     )
     assert asr.calls == 1 and ai.calls == 0
+    assert validated == [
+        {"template": "amber-word", "template_dir": None, "options": options}
+    ]
     (video,) = result.clip_paths
     data = json.loads(video.with_suffix(".json").read_text())
     assert data["class"] == clip_class
@@ -2761,8 +2769,13 @@ def test_custom_canvas_metadata_captions_and_cache_follow_dimensions(
     ],
 )
 def test_blur_subtitle_containers_follow_the_source_and_keep_vertical_blur_full_canvas(
-    kind, dimensions, expected, tmp_path
+    kind, dimensions, expected, tmp_path, monkeypatch
 ):
+    validated = []
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda _self, **settings: validated.append(settings),
+    )
     config = AppConfig(
         "source.mp4",
         tmp_path / "out",
@@ -2782,6 +2795,13 @@ def test_blur_subtitle_containers_follow_the_source_and_keep_vertical_blur_full_
         source_media=_media(*dimensions),
     )
     assert transcriber.calls == 1
+    assert validated == [
+        {
+            "template": "yellow-pop",
+            "template_dir": None,
+            "options": config.subtitle_options,
+        }
+    ]
     manifest = json.loads(result.manifest_path.read_text())
     for cut in manifest["clips"]:
         for version in cut["variants"]:

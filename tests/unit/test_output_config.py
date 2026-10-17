@@ -361,14 +361,20 @@ def test_new_preset_fields_are_strict(contents, tmp_path):
         parse("--config", preset(tmp_path, contents))
 
 
-def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch):
+@pytest.mark.parametrize("force_color", [False, True])
+def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_color):
     import re
 
     from typer.testing import CliRunner
 
     monkeypatch.setenv("COLUMNS", "300")
+    if force_color:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
     result = CliRunner().invoke(app, ["--help"], color=False)
     assert result.exit_code == 0
+    help_text = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(
         encoding="utf-8"
     )
@@ -376,12 +382,10 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch):
         if getattr(param, "multiple", False):
             assert param.metavar == "[SCOPE=]VALUE..."
             flag = param.opts[0]
-            assert re.search(
-                re.escape(flag) + r"\s+\[SCOPE=\]VALUE\.\.\.", result.stdout
-            )
+            assert re.search(re.escape(flag) + r"\s+\[SCOPE=\]VALUE\.\.\.", help_text)
             assert f"`{flag} [SCOPE=]VALUE...`" in readme
-    assert "--no-render" not in result.stdout
-    assert "--no-subtitle" not in result.stdout
+    assert "--no-render" not in help_text
+    assert "--no-subtitle" not in help_text
 
 
 @pytest.mark.parametrize(
