@@ -72,10 +72,8 @@ def test_direct_modes_do_not_require_ai_settings(
     flags: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    # Irrelevant AI defaults must not prevent rendering a user-selected cut.
-    monkeypatch.setenv("LLM_BACKEND", "unused-backend")
-    monkeypatch.delenv("LLM_MODEL", raising=False)
-    monkeypatch.setenv("LLM_EFFORT", "unused-effort")
+    for name in ("LLM_BACKEND", "LLM_MODEL", "LLM_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
     config = parse_run_config(["source.mp4", "--output-dir", "out", *flags])
     assert config.direct_clip
     assert config.llm_backend == config.llm_model == ""
@@ -86,6 +84,60 @@ def test_direct_modes_do_not_require_ai_settings(
     else:
         assert config.full_video
         assert config.selection_mode == "full_video"
+
+
+@pytest.mark.parametrize("mode", [["--clip-full"], ["--clip-range", "0", "60"]])
+@pytest.mark.parametrize("configured_in", ["cli", "process", "dotenv"])
+def test_direct_modes_load_ai_title_settings(
+    mode: list[str], configured_in: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in ("LLM_BACKEND", "LLM_MODEL", "LLM_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    args = ["source.mp4", "--output-dir", "out", *mode]
+    if configured_in == "cli":
+        args += ["--llm-backend", "codex", "--llm-model", "test", "--llm-effort", "low"]
+    elif configured_in == "process":
+        monkeypatch.setenv("LLM_BACKEND", "codex")
+        monkeypatch.setenv("LLM_MODEL", "test")
+        monkeypatch.setenv("LLM_EFFORT", "low")
+    else:
+        (tmp_path / ".env").write_text(
+            "LLM_BACKEND=codex\nLLM_MODEL=test\nLLM_EFFORT=low\n", encoding="utf-8"
+        )
+    config = parse_run_config(args)
+    assert (config.llm_backend, config.llm_model, config.llm_effort) == (
+        "codex",
+        "test",
+        "low",
+    )
+
+
+@pytest.mark.parametrize(
+    ("settings", "error"),
+    [
+        ({"LLM_BACKEND": "codex"}, "LLM_MODEL"),
+        ({"LLM_MODEL": "test"}, "LLM_BACKEND"),
+        ({"LLM_BACKEND": "unknown", "LLM_MODEL": "test"}, "LLM_BACKEND"),
+        (
+            {"LLM_BACKEND": "codex", "LLM_MODEL": "test", "LLM_EFFORT": "invalid"},
+            "LLM_EFFORT",
+        ),
+    ],
+)
+def test_direct_modes_reject_incomplete_or_invalid_ai_settings(
+    settings: dict[str, str],
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in ("LLM_BACKEND", "LLM_MODEL", "LLM_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in settings.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ConfigurationError, match=error):
+        parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
 
 
 @pytest.mark.parametrize(

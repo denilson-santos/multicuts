@@ -88,9 +88,10 @@ local and full-video requests use the original file; unrestricted YouTube
 requests retain full acquisition. Failed preparation inputs are removed, and
 successful range sources follow normal intermediate cleanup.
 
-For captioned local `clip_range` runs, render the first required raw version
-before `_transcribe`, then consume it in the normal rendering loop. This gives
-ASR the exact output interval without another encode, avoiding word-alignment
+For local `clip_range` runs needing subtitles or AI title generation, render the
+first required raw version before `_transcribe`, then consume it in the normal
+rendering loop. This gives ASR the exact output interval without another encode,
+avoiding word-alignment
 changes caused by preceding keyframe padding. All variants share one transcript.
 A separate `AcquiredSource` points ASR at the raw cut, uses the requested interval
 as its source offset, and fingerprints the source, bounds, and
@@ -114,6 +115,22 @@ continues sharing its source transcript without per-clip ASR.
 External provider objects and wire responses stay in adapters. Domain decisions use project-owned data. No database, queues, async workflow, or generic provider registry is required.
 
 `AppConfig` selects the ASR backend and model with explicit defaults of `whisperx` and `turbo`. The CLI reads `ASR_BACKEND` / `ASR_MODEL`, overridden by `--asr-backend` / `--asr-model`; the former `TRANSCRIPTION_MODEL` variable is no longer consumed. The pipeline passes both settings through the transcriber boundary. `MultisubsAdapter` forwards them as `asr_backend` and `model_name` to the public `multisubs.transcribe_speech` API. Its `SpeechTranscript` contains original ASR segments before subtitle grouping or visual layout; the adapter validates only supported public fields and immediately builds project-owned models. Backend names are validated in configuration; provider-specific model/language compatibility and optional dependencies remain the provider's responsibility. An explicit legacy `model="default"` still omits `model_name`, while normal runs pass `turbo` explicitly.
+
+Direct cuts with a configured LLM backend/model use a standalone, structured
+`direct-title` request after building clip-local transcript text. The prompt uses
+only the rendered interval plus optional editorial context and a separate
+`direct-title-v1` contract. Domain validation rejects malformed, empty, or
+oversized titles. The pipeline replaces only the proposal title, sharing it
+across every output. This step skips discovery, boundary refinement, judgment,
+and scoring. It reuses `_ai_request` and the existing transcript cache; title
+settings and response identity do not change ASR cache keys. Full-source ASR is
+never repeated per version. Local custom-cut ASR still uses the exact raw cut,
+including when captions are disabled and only the title requires transcription.
+Without AI configuration, the original source display title remains the fallback.
+The manifest and per-version JSON record independent `title_generation`
+provenance (backend/model/effort, prompt version, context, cache hit), or null when
+no standalone title request ran. Editorial AI provenance remains null for direct
+cuts, and title-provider failures never fall back silently.
 
 ## Identity and artifacts
 

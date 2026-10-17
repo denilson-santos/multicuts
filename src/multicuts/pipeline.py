@@ -33,6 +33,8 @@ from multicuts.cache import (
 )
 from multicuts.clips import (
     DIMENSION_WEIGHTS,
+    DIRECT_TITLE_PROMPT_VERSION,
+    DIRECT_TITLE_SCHEMA,
     PROMPT_VERSION,
     PROPOSAL_SCHEMA,
     SCORE_VERSION,
@@ -42,8 +44,10 @@ from multicuts.clips import (
     Proposal,
     TimedUnit,
     context_blocks,
+    direct_title_prompt,
     judgment_prompt,
     judgment_schema,
+    parse_direct_title,
     parse_judgment,
     parse_proposals,
     proposal_prompt,
@@ -278,6 +282,7 @@ def _clip_metadata(
     layout: str = "center_crop",
     subtitle_source_video: Path | None = None,
     is_variant: bool = False,
+    title_generation: dict[str, object] | None = None,
 ) -> dict[str, object]:
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
@@ -288,6 +293,7 @@ def _clip_metadata(
         "rank": rank,
         "class": proposal.clip_class,
         "title": proposal.title,
+        "title_generation": title_generation,
         "start": proposal.start,
         "end": proposal.end,
         "duration": proposal.end - proposal.start,
@@ -377,6 +383,8 @@ def _direct_clip(
     source_duration: float,
     interval: TimeRange,
     transcript: Transcript | None,
+    *,
+    title: str | None = None,
 ) -> DirectClip:
     identity = f"{source.fingerprint}\0direct\0{interval.start}\0{interval.end}"
     return DirectClip(
@@ -395,7 +403,7 @@ def _direct_clip(
             ).text
             if transcript is not None
             else "",
-            title=(source.title or source.local_path.stem)[:120],
+            title=(title or source.title or source.local_path.stem)[:120],
             rationale="Source interval selected for the user's cut.",
         ),
         source_duration=source_duration,
@@ -543,6 +551,7 @@ def run_pipeline(
         for clip_class in ("short", "long"):
             if config.clips_for(clip_class):
                 config.outputs_for(clip_class, media)
+        needs_title = direct_range is not None and bool(config.llm_backend)
         needs_transcript = True
         if direct_range is not None:
             clip_class = (
@@ -553,7 +562,7 @@ def run_pipeline(
                     f"The cut interval is {clip_class}; use --render {clip_class}=true"
                 )
             outputs = config.outputs_for(clip_class, media)
-            needs_transcript = any(
+            needs_transcript = needs_title or any(
                 config.for_output(clip_class, name).subtitles_for(clip_class)
                 for name in outputs
             )
@@ -642,16 +651,19 @@ def run_pipeline(
                 perf_counter() - transcription_started,
             )
         else:
-            logger.info("[2/6] Transcription skipped; direct cut has no subtitles")
+            logger.info(
+                "[2/6] Transcription skipped; direct cut needs no subtitles or AI title"
+            )
         cache_stats = {"hits": 0, "misses": 0}
         proposals: dict[str, Proposal] = {}
         units: tuple[TimedUnit, ...] = ()
         eligible = 0
         boundary_adjusted = 0
+        title_generation: dict[str, object] | None = None
         selected: tuple[JudgedClip | DirectClip, ...]
         if direct_range is not None:
-            selected = (
-                _direct_clip(source, source_duration, direct_range, transcript),
+            direct_clip = _direct_clip(
+                source, source_duration, direct_range, transcript, title=source_name
             )
             logger.info(
                 "[3/6] Using %s interval %.2f-%.2fs",
@@ -659,6 +671,51 @@ def run_pipeline(
                 direct_range.start,
                 direct_range.end,
             )
+            if needs_title:
+                assert transcript is not None
+                logger.info(
+                    "Generating the cut title (backend=%s, model=%s, effort=%s)",
+                    config.llm_backend,
+                    config.llm_model,
+                    config.llm_effort or "auto",
+                )
+                prompt = direct_title_prompt(
+                    direct_clip.proposal, context=config.editorial_context
+                )
+                ai = backend or LlmBackend(
+                    config.llm_backend, config.llm_model, config.llm_effort
+                )
+                response = _ai_request(
+                    ai,
+                    config,
+                    source_fingerprint=source.fingerprint,
+                    transcript_fingerprint=transcript_content_fingerprint(transcript),
+                    task="direct-title",
+                    prompt=prompt,
+                    schema=DIRECT_TITLE_SCHEMA,
+                    validate=parse_direct_title,
+                    cache_stats=cache_stats,
+                )
+                direct_clip = replace(
+                    direct_clip,
+                    proposal=replace(
+                        direct_clip.proposal, title=parse_direct_title(response)
+                    ),
+                )
+                title_generation = {
+                    "backend": config.llm_backend,
+                    "model": config.llm_model,
+                    "effort": config.llm_effort,
+                    "prompt_version": DIRECT_TITLE_PROMPT_VERSION,
+                    "editorial_context": config.editorial_context,
+                    "cache_hit": cache_stats["hits"] > 0,
+                }
+                logger.info(
+                    "Cut title ready; cache: %d hits, %d misses",
+                    cache_stats["hits"],
+                    cache_stats["misses"],
+                )
+            selected = (direct_clip,)
             logger.info("[4/6] Editorial review skipped for user-selected cut")
             logger.info("[5/6] Selected one cut without an editorial score")
         else:
@@ -911,6 +968,7 @@ def run_pipeline(
                     run_root=root,
                     layout=layout,
                     is_variant=is_variant,
+                    title_generation=title_generation,
                 )
                 metadata_path = final.with_suffix(".json")
                 _publish_json(metadata_path, metadata, work)
@@ -947,6 +1005,7 @@ def run_pipeline(
         manifest = {
             "schema_version": 5,
             "report": "report.md",
+            "title_generation": title_generation,
             "selection_mode": config.selection_mode,
             "requested_clip_range": {
                 "start": config.clip_range.start,

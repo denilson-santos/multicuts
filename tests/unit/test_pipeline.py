@@ -12,6 +12,8 @@ import pytest
 from multicuts.app_config import AppConfig
 from multicuts.cli import parse_run_config
 from multicuts.clips import (
+    DIRECT_TITLE_PROMPT_VERSION,
+    DIRECT_TITLE_SCHEMA,
     TimedUnit,
     judgment_prompt,
     judgment_schema,
@@ -94,6 +96,8 @@ class FakeBackend:
 
     def complete(self, prompt: str, schema: dict[str, object]) -> object:
         self.calls += 1
+        if schema == DIRECT_TITLE_SCHEMA:
+            return {"title": "Direct idea"}
         if "Find every" in prompt:
             if self.invalid:
                 return {"clips": [{"class": "short", "start_id": "invented"}]}
@@ -287,10 +291,167 @@ def test_custom_cut_preserves_exact_bounds_without_ai_or_asr(
         )
         assert metadata["viral_potential"] is None
         assert metadata["transcript_unit_ids"] is None
+        assert metadata["title"] == "source"
+        assert metadata["title_generation"] is None
     report = result.report_path.read_text(encoding="utf-8")
     assert "Selection mode: `custom`" in report
     assert "Not scored (direct cut)." in report
     assert "not probabilities" not in report
+
+
+@pytest.mark.parametrize("full", [False, True])
+@pytest.mark.parametrize("subtitles", [False, True])
+def test_direct_cuts_generate_one_title_for_all_variants(
+    full: bool, subtitles: bool, tmp_path: Path
+) -> None:
+    title = "Estudar mais não é aprender mais"
+    prompts: list[str] = []
+
+    class Backend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            self.calls += 1
+            assert schema == DIRECT_TITLE_SCHEMA
+            prompts.append(prompt)
+            return {"title": f"  {title}  "}
+
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        full_video=full,
+        clip_range=None if full else TimeRange(60, 120),
+        subtitles_enabled=subtitles,
+        editorial_context="Conversa sobre hábitos.",
+    )
+    asr, ai = FakeTranscriber(), Backend()
+    result = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == ai.calls == 1
+    assert len(result.clip_paths) == 1
+    assert "Do not propose, reject, score, or adjust" in prompts[0]
+    assert "simple, everyday words" in prompts[0]
+    assert "40–80 characters" in prompts[0]
+    assert "never more than 120 characters" in prompts[0]
+    assert "Conversa sobre hábitos." in prompts[0]
+    assert "Point 1." in prompts[0]
+    assert ("Point 0." in prompts[0]) is full
+    assert ("Point 5." in prompts[0]) is full
+    manifest = json.loads(result.manifest_path.read_text())
+    provenance = manifest["title_generation"]
+    assert provenance == {
+        "backend": "codex",
+        "model": "test-model",
+        "effort": None,
+        "prompt_version": DIRECT_TITLE_PROMPT_VERSION,
+        "editorial_context": config.editorial_context,
+        "cache_hit": False,
+    }
+    assert manifest["analysis"]["backend"] is None
+    assert manifest["analysis"]["proposed"] == 0
+    assert manifest["analysis"]["editorially_eligible"] == 0
+    assert manifest["analysis"]["ai_cache"] == {"hits": 0, "misses": 1}
+    (reference,) = manifest["clips"]
+    assert reference["score"] is None
+    assert len(reference["variants"]) == 6
+    for variant in reference["variants"]:
+        metadata = json.loads(
+            (result.manifest_path.parent / variant["metadata"]).read_text()
+        )
+        assert metadata["title"] == title
+        assert metadata["title_generation"] == provenance
+        assert metadata["viral_potential"] is None
+        assert (metadata["start"], metadata["end"]) == ((0, 360) if full else (60, 120))
+        assert len(metadata["subtitle_files"]) == (3 if subtitles else 0)
+    assert "estudar-mais-nao-e-aprender-mais" in result.clip_paths[0].parent.name
+    assert title in result.report_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_direct_titles_reuse_cache_and_recompute_for_context_changes(
+    full: bool, tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        full_video=full,
+        clip_range=None if full else TimeRange(60, 120),
+        subtitles_enabled=False,
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    first = _run(tmp_path, asr, ai, config=config)
+    assert asr.calls == ai.calls == 1
+    first_report = first.report_path.read_bytes()
+    asr, ai = FakeTranscriber(), FakeBackend()
+    repeated = _run(tmp_path, asr, ai, config=replace(config, render="primary"))
+    assert asr.calls == ai.calls == 0
+    manifest = json.loads(repeated.manifest_path.read_text())
+    assert manifest["title_generation"]["cache_hit"] is True
+    assert first.report_path.read_bytes() == first_report
+    _run(tmp_path, asr, ai, config=replace(config, editorial_context="Study habits"))
+    assert asr.calls == 0 and ai.calls == 1
+    _run(tmp_path, asr, ai, config=replace(config, force_recompute=True))
+    assert asr.calls == 1 and ai.calls == 2
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"title": ""},
+        {"title": "  "},
+        {"title": 7},
+        {"title": "x" * 121},
+        {"title": "Valid", "extra": "field"},
+    ],
+)
+def test_direct_titles_reject_invalid_responses_without_publishing(
+    response: object, tmp_path: Path
+) -> None:
+    class Backend(FakeBackend):
+        def complete(self, prompt: str, schema: dict[str, object]) -> object:
+            self.calls += 1
+            return response
+
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        full_video=True,
+        subtitles_enabled=False,
+    )
+    ai = Backend()
+    with pytest.raises(ScoringError, match="invalid clip title"):
+        _run(tmp_path, FakeTranscriber(), ai, config=config)
+    assert ai.calls == 1
+    assert not list((config.output_dir / "runs").rglob("manifest.json"))
+    assert not list((config.output_dir / ".cache" / "ai").glob("*.json"))
+
+
+def test_direct_titles_require_timed_interval_evidence(tmp_path: Path) -> None:
+    class UnalignedTranscriber(FakeTranscriber):
+        def transcribe(self, *args, **kwargs) -> Transcript:
+            return replace(
+                super().transcribe(*args, **kwargs),
+                segments=(TranscriptSegment("Unaligned speech.", None, None),),
+                words=(),
+            )
+
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        full_video=True,
+        subtitles_enabled=False,
+    )
+    ai = FakeBackend()
+    with pytest.raises(ScoringError, match="empty transcript"):
+        _run(tmp_path, UnalignedTranscriber(), ai, config=config)
+    assert ai.calls == 0
 
 
 @pytest.mark.parametrize("duration", [30.0, 180.0, 180.5, 360.0])
@@ -556,9 +717,9 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         (600.25 - padding, 720.5 + padding) if mode == "custom" else (600.75, 710.25)
     )
     assert rendered == [expected, expected]
-    needs_asr = subtitles or mode == "automatic"
+    needs_asr = subtitles or bool(config.llm_backend)
     assert asr.calls == int(needs_asr)
-    assert ai.calls == (2 if mode == "automatic" else 0)
+    assert ai.calls == (2 if mode == "automatic" else 1)
     manifest = json.loads(repeated.manifest_path.read_text())
     assert manifest["requested_clip_range"] == (
         {"start": interval.start, "end": interval.end} if mode == "custom" else None
@@ -606,7 +767,7 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         )
     )
     assert asr.calls == 2 * int(needs_asr)
-    assert ai.calls == (4 if mode == "automatic" else 0)
+    assert ai.calls == (4 if mode == "automatic" else 2)
     assert acquisition_ranges == [interval, interval, changed]
 
 
@@ -754,7 +915,7 @@ def test_local_intervals_use_their_cache_or_a_compatible_complete_cache(
         return _run(tmp_path, asr, ai, config=current, extraction_calls=extracted)
 
     first, repeated = run(config), run(config)
-    needs_asr = subtitles or mode == "automatic"
+    needs_asr = subtitles or bool(config.llm_backend)
     assert asr.calls == int(needs_asr)
     assert extracted == [interval, interval]
     manifest = json.loads(repeated.manifest_path.read_text())
@@ -790,8 +951,8 @@ def test_local_intervals_use_their_cache_or_a_compatible_complete_cache(
     # A partial cache must never satisfy a request for the full source.
     full = replace(config, clip_range=None, search_range=None, full_video=True)
     full_result = run(full)
-    assert asr.calls == 2 * int(needs_asr) + int(subtitles)
-    if subtitles:
+    assert asr.calls == 2 * int(needs_asr) + int(subtitles or bool(full.llm_backend))
+    if subtitles or full.llm_backend:
         assert (
             json.loads(full_result.manifest_path.read_text())["transcription"][
                 "source_range"
@@ -808,7 +969,7 @@ def test_local_intervals_use_their_cache_or_a_compatible_complete_cache(
         )
     run(replace(config, force_recompute=True))
     assert extracted == [interval, interval, changed] + (
-        [interval] if subtitles else []
+        [interval] if subtitles or full.llm_backend else []
     ) + [interval]
 
 

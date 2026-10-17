@@ -308,7 +308,7 @@ multicuts SOURCE --output-dir OUTPUT_DIR [OPTIONS]
 
 ### Choose a mode
 
-| Goal | Mode option | AI analysis |
+| Goal | Mode option | Discovery and review |
 | --- | --- | --- |
 | Discover and rank clips across the source | None (default) | Required |
 | Discover and rank clips within an interval | `--search-range START END` | Required |
@@ -354,8 +354,12 @@ zero clips. This applies to local files and YouTube URLs.
 ### Direct cuts
 
 Direct modes render your chosen interval or the entire source as one cut.
-They skip AI discovery, boundary adjustments, ranking, and rejection;
-no AI backend, model, or credentials are required.
+They skip AI discovery, boundary adjustments, ranking, and rejection.
+When `LLM_BACKEND` and `LLM_MODEL` are configured through flags, the environment,
+or `.env`, AI generates a title from the selected interval's transcript. Without
+AI configuration, the source filename or YouTube title is used. No backend or
+credentials are required to use the source title. A partial or invalid
+AI configuration is rejected before processing.
 
 One cut can produce several formats. The examples below use `--render primary` to
 produce one output video; omit it to include the configured additional formats.
@@ -380,10 +384,20 @@ This includes silence before and after speech, using the probed video duration.
 
 Both direct modes use the same framing and subtitle controls as automatic cuts.
 The cut's duration determines its class: up to 180 seconds is short; longer is
-long. That class must be enabled. Titles come from the source filename or YouTube
-title, and metadata has no editorial score. Direct cuts transcribe once for all
-versions when subtitles are needed; disabling subtitles for every published
-version skips transcription.
+long. That class must be enabled. Metadata has no editorial score. The generated
+title appears in each version's JSON, the cut directory name, and `report.md`.
+Direct cuts transcribe once for all versions when subtitles or AI titles are
+needed; disabling subtitles skips transcription only when AI title generation
+is also inactive. Title requests use the shared AI cache, and `--force-recompute`
+bypasses it. Provider failures, invalid titles, and intervals without usable
+transcript evidence fail explicitly.
+
+For example, to generate a title for a direct cut with explicit AI settings:
+
+```bash
+multicuts ./source.mp4 --output-dir ./cuts --clip-range 60 120 \
+  --render primary --llm-backend codex --llm-model MODEL
+```
 
 ### Range precision
 
@@ -881,7 +895,11 @@ Run `multicuts --help` for the same option groups in the terminal. Environment v
 Manifest schema 5 and clip metadata schema 2 record `selection_mode`
 (`automatic`, `custom`, or `full_video`). Direct cuts have null `viral_potential`
 and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
-editorially eligible counts. Their AI provenance fields are null. When ASR is
+editorially eligible counts. Their editorial AI provenance fields are null.
+A standalone title request is recorded under `title_generation` in the manifest
+and each version's JSON,
+with backend, model, effort, prompt version, editorial context, and cache reuse.
+This field is null when there is no standalone title request. When ASR is
 skipped, manifest `transcription` is null and clip `transcript_text` is empty.
 Manifest source provenance includes `original_duration`, `acquired_duration`,
 and `acquired_range` (null for full-source acquisition).
