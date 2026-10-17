@@ -13,6 +13,31 @@ SUBTITLE_BOOLEAN_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class SubtitleContainer:
+    """A full-height vertical foreground inside a horizontal or square canvas."""
+
+    frame_width: int
+    height: int
+    left: int
+    width: int
+
+    def __post_init__(self) -> None:
+        if (
+            any(
+                type(value) is not int
+                for value in (self.frame_width, self.height, self.left, self.width)
+            )
+            or min(self.frame_width, self.height, self.width) <= 0
+            or self.left < 0
+            or self.left + self.width > self.frame_width
+        ):
+            raise ConfigurationError("Subtitle container must fit the final canvas")
+
+    def metadata(self) -> dict[str, int]:
+        return {"x": self.left, "y": 0, "width": self.width, "height": self.height}
+
+
+@dataclass(frozen=True, slots=True)
 class SubtitleOptions:
     """Unset fields inherit the template; units resolve against final geometry."""
 

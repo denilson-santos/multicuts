@@ -60,10 +60,12 @@ from multicuts.media import prepare_source_range, probe_media
 from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
 from multicuts.render import (
     clip_transcript,
+    foreground_dimensions,
     render_final,
     render_raw,
 )
 from multicuts.source import SourceAcquirer, acquire_source
+from multicuts.subtitles import SubtitleContainer
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +302,9 @@ def _clip_metadata(
             "subtitle_overrides": config.subtitle_options.metadata()
             if subtitles_enabled
             else {},
+            "subtitle_container": config.subtitle_container.metadata()
+            if subtitles_enabled and config.subtitle_container is not None
+            else None,
             "subtitle_provider": "multisubs" if subtitles_enabled else None,
             "subtitle_provider_version": transcript.provider_version
             if subtitles_enabled and transcript is not None
@@ -807,6 +812,16 @@ def run_pipeline(
                 variant_work = work / variant_stem
                 final_path = root / "clips" / f"{variant_stem}.mp4"
                 variant_config = config.for_output(clip_class, name)
+                if name in ("horizontal-blur", "square-blur"):
+                    width, height = config.dimensions_for(clip_class, name)
+                    fg_width, _ = foreground_dimensions(media, name, width, height)
+                    left = (width - fg_width) // 2
+                    variant_config = replace(
+                        variant_config,
+                        subtitle_container=SubtitleContainer(
+                            width, height, left - left % 2, fg_width
+                        ),
+                    )
                 logger.info(
                     "Rendering clip %d/%d version: %s", rank, len(selected), name
                 )

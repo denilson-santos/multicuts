@@ -336,3 +336,21 @@ def test_invalid_environment_booleans_fail_explicitly(name, monkeypatch):
     monkeypatch.setenv(name, "sometimes")
     with pytest.raises(ConfigurationError, match="must be a boolean"):
         parse()
+
+
+@pytest.mark.parametrize(
+    "dimensions",
+    [
+        (0, 360, 0, 202),
+        (640, 0, 0, 202),
+        (640, 360, -1, 202),
+        (640, 360, 600, 202),
+        (True, 360, 0, 202),
+        (640, 360, 0, 0),
+    ],
+)
+def test_subtitle_container_rejects_invalid_canvas_bounds(dimensions):
+    from multicuts.subtitles import SubtitleContainer
+
+    with pytest.raises(ConfigurationError, match="container must fit"):
+        SubtitleContainer(*dimensions)

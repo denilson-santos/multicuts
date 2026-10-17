@@ -22,7 +22,7 @@ from multicuts.models import (
     SubtitleArtifacts,
     Transcript,
 )
-from multicuts.subtitles import SubtitleOptions
+from multicuts.subtitles import SubtitleContainer, SubtitleOptions
 from multicuts.variants import aspect_ratio
 
 
@@ -38,6 +38,7 @@ class SubtitleProvider(Protocol):
         template_dir: Path | None,
         workspace: Path,
         options: SubtitleOptions | None = None,
+        container: SubtitleContainer | None = None,
     ) -> SubtitleArtifacts: ...
 
 
@@ -81,7 +82,10 @@ def _geometry(
     return aspect_ratio(width, height), width, height
 
 
-def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str:
+def foreground_dimensions(
+    media: MediaInfo, variant: str, width: int, height: int
+) -> tuple[int, int]:
+    """Share the fitted foreground geometry between composition and captions."""
     source_width, source_height = media.presentation_width, media.presentation_height
     if variant == "vertical-blur":
         fg_ratio_width, fg_ratio_height = (
@@ -95,13 +99,19 @@ def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str
         )
         fg_height = height
         fg_width = max(2, _even(height * fg_ratio_width // fg_ratio_height))
+    return fg_width, fg_height
+
+
+def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str:
+    fg_width, fg_height = foreground_dimensions(media, variant, width, height)
+    left, top = _even((width - fg_width) // 2), _even((height - fg_height) // 2)
     return (
         f"[0:{media.video_stream_index}]"
         f"{_crop_filter(media, fg_width, fg_height)},"
         "split=2[base][fg];"
         f"[base]scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[video]"
+        f"[bg][fg]overlay={left}:{top}:shortest=1,setsar=1[video]"
     )
 
 
@@ -438,6 +448,11 @@ def render_final(
         return output, (), None
     if transcript is None:
         raise RenderingError("Subtitles require a source transcript")
+    if config.subtitle_container is not None and (
+        config.subtitle_container.frame_width != raw_media.presentation_width
+        or config.subtitle_container.height != raw_media.presentation_height
+    ):
+        raise RenderingError("Subtitle container does not match the final canvas")
     provider = subtitle_provider or MultisubsAdapter()
     try:
         local = clip_transcript(
@@ -450,6 +465,11 @@ def render_final(
         )
     except ValueError as exc:
         raise RenderingError("Could not derive clip-local transcript") from exc
+    container_args = (
+        {"container": config.subtitle_container}
+        if config.subtitle_container is not None
+        else {}
+    )
     artifacts = provider.subtitle_clip(
         raw_path,
         local,
@@ -457,6 +477,7 @@ def render_final(
         template_dir=config.subtitle_template_dir,
         workspace=work / f"subtitles-{clip.proposal.id}",
         options=config.subtitle_options,
+        **container_args,
     )
     final_media = _inspect(artifacts.video_path)
     if (

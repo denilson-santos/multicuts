@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1061,3 +1062,157 @@ def test_blurred_custom_canvas_preserves_native_foreground_ratio(
     red, green = colors
     assert red[0] > 170 and red[1] < 80 and red[2] < 80
     assert green[1] > 170 and green[0] < 80 and green[2] < 80
+
+
+@pytest.mark.parametrize(
+    ("variant", "source_size", "size", "foreground"),
+    [
+        ("horizontal-blur", "320x180", (640, 360), (218, 202)),
+        ("square-blur", "320x180", (360, 360), (78, 202)),
+        ("horizontal-blur", "160x200", (640, 360), (176, 288)),
+        ("square-blur", "160x200", (360, 360), (36, 288)),
+        ("vertical-blur", "320x180", (360, 640), None),
+    ],
+)
+@pytest.mark.parametrize("placement", ["top-left", "bottom-right", "custom"])
+def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
+    variant, source_size, size, foreground, placement, tmp_path
+):
+    from multicuts.subtitles import SubtitleOptions
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "black.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={source_size}:r=25:d=1.2",
+            "-c:v",
+            "mpeg4",
+            str(source_path),
+        ],
+        check=True,
+    )
+    source = AcquiredSource(source_path, "sha256-v1:subtitle-container")
+    width, height = size
+    options = SubtitleOptions(
+        font_size="5%",
+        disable_cue_animations=True,
+        disable_word_animations=True,
+    )
+    if placement == "custom":
+        options = replace(
+            options,
+            position_x="10%",
+            position_y="50%",
+            anchor="middle-left",
+            max_width="80%",
+            max_height="20%",
+        )
+    else:
+        options = replace(options, position=placement)
+    config = AppConfig(
+        str(source_path),
+        tmp_path / "out",
+        full_video=True,
+        render="primary",
+        long_render=False,
+        short_primary=variant,
+        output_options=(OutputOptions("short", variant, width=width, height=height),),
+        subtitle_options=options,
+    )
+
+    class Transcriber:
+        calls = 0
+
+        def version(self):
+            return MultisubsAdapter().version()
+
+        def transcribe(self, *args, **kwargs):
+            self.calls += 1
+            return Transcript(
+                None,
+                "en",
+                1.2,
+                "ONE TWO",
+                (TranscriptSegment("ONE TWO", 0.1, 1.0),),
+                (Word("ONE", 0.1, 0.45), Word("TWO", 0.5, 0.95)),
+                "multisubs",
+                self.version(),
+            )
+
+    transcriber = Transcriber()
+    result = run_pipeline(
+        config,
+        acquire=lambda *a, **k: source,
+        probe=lambda acquired: inspect_media_path(acquired.local_path),
+        transcriber=transcriber,
+    )
+    assert transcriber.calls == 1
+    (video,) = result.clip_paths
+    media = inspect_media_path(video)
+    assert (media.presentation_width, media.presentation_height) == size
+    metadata = json.loads(video.with_suffix(".json").read_text())
+    expected = (
+        None
+        if foreground is None
+        else {
+            "x": foreground[0],
+            "y": 0,
+            "width": foreground[1],
+            "height": height,
+        }
+    )
+    assert metadata["render"]["subtitle_container"] == expected
+    ass_path = next(
+        path for path in metadata["subtitle_files"] if path.endswith(".ass")
+    )
+    ass = (result.manifest_path.parent / ass_path).read_text(encoding="utf-8")
+    assert f"PlayResX: {width}" in ass and f"PlayResY: {height}" in ass
+    style = next(line for line in ass.splitlines() if line.startswith("Style:"))
+    assert float(style.split(",")[2]) == (32 if variant == "vertical-blur" else 18)
+    frame = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-ss",
+            "0.65",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    lit = [
+        offset // 3
+        for offset in range(0, len(frame), 3)
+        if max(frame[offset : offset + 3]) > 150
+    ]
+    assert lit
+    left, right = min(i % width for i in lit), max(i % width for i in lit)
+    top, bottom = min(i // width for i in lit), max(i // width for i in lit)
+    if foreground is not None:
+        x, fg_width = foreground
+        assert x <= left <= right < x + fg_width
+        if placement == "top-left":
+            assert left < x + fg_width * 0.3 and top < height * 0.2
+        elif placement == "bottom-right":
+            assert right > x + fg_width * 0.7 and bottom > height * 0.8
+    elif placement == "bottom-right":
+        assert top > 500

@@ -2749,3 +2749,55 @@ def test_custom_canvas_metadata_captions_and_cache_follow_dimensions(
     metadata = json.loads(primary.with_suffix(".json").read_text())
     assert (metadata["render"]["width"], metadata["render"]["height"]) == (1600, 1000)
     assert metadata["render"]["aspect_ratio"] == "8:5"
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+@pytest.mark.parametrize(
+    ("dimensions", "expected"),
+    [
+        ((1920, 1080), {"horizontal-blur": (656, 606), "square-blur": (236, 606)}),
+        ((900, 1200), {"horizontal-blur": (554, 810), "square-blur": (134, 810)}),
+        ((720, 720), {"horizontal-blur": (656, 606)}),
+    ],
+)
+def test_blur_subtitle_containers_follow_the_source_and_keep_vertical_blur_full_canvas(
+    kind, dimensions, expected, tmp_path
+):
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        subtitles_enabled=True,
+        short_render=kind == "short",
+        long_render=kind == "long",
+        subtitle_options=SubtitleOptions(position="top-left"),
+    )
+    transcriber = FakeTranscriber()
+    result = _run(
+        tmp_path,
+        transcriber,
+        FakeBackend(),
+        config=config,
+        source_media=_media(*dimensions),
+    )
+    assert transcriber.calls == 1
+    manifest = json.loads(result.manifest_path.read_text())
+    for cut in manifest["clips"]:
+        for version in cut["variants"]:
+            metadata = json.loads(
+                (result.manifest_path.parent / version["metadata"]).read_text()
+            )
+            name = version["variant"]
+            render = metadata["render"]
+            if name in expected:
+                left, width = expected[name]
+                assert render["subtitle_container"] == {
+                    "x": left,
+                    "y": 0,
+                    "width": width,
+                    "height": 1080,
+                }
+            else:
+                assert render["subtitle_container"] is None
+            assert render["subtitle_overrides"] == {"position": "top-left"}

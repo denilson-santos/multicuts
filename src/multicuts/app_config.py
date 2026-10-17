@@ -8,7 +8,7 @@ from pathlib import Path
 
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo, TimeRange
-from multicuts.subtitles import SubtitleOptions
+from multicuts.subtitles import SubtitleContainer, SubtitleOptions
 from multicuts.variants import (
     VARIANTS,
     OutputOptions,
@@ -68,8 +68,13 @@ class AppConfig:
     subtitle_options: SubtitleOptions = SubtitleOptions()
     output_options: tuple[OutputOptions, ...] = ()
     render_variant: str | None = None
+    subtitle_container: SubtitleContainer | None = None
 
     def __post_init__(self) -> None:
+        if self.subtitle_container is not None and not isinstance(
+            self.subtitle_container, SubtitleContainer
+        ):
+            raise ConfigurationError("Subtitle container must use SubtitleContainer")
         if self.render_variant is not None and self.render_variant not in VARIANTS:
             raise ConfigurationError("Unknown output variant")
         if not isinstance(self.output_options, tuple) or any(
@@ -393,4 +398,5 @@ class AppConfig:
             subtitle_template_dir=template_dir,
             subtitle_options=options,
             render_variant=variant,
+            subtitle_container=None,
         )

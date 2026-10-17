@@ -274,8 +274,10 @@ ratio. Plain outputs use a centered crop. Blurred outputs center a vertical or
 horizontal foreground over an enlarged, blurred copy, with neither layer mirrored. A source already in the foreground
 orientation keeps its native ratio; other sources use a 9:16 vertical or 16:9
 horizontal center crop.
-Subtitles are generated afterward against each final canvas and have their own
-settings and sidecars. Default dimensions are 1080×1920, 1920×1080, and
+Subtitles are generated afterward and have their own settings and sidecars.
+In `horizontal-blur` and `square-blur`, their layout uses the sharp central video
+as its container, including margins, percentages, and custom coordinates.
+`vertical-blur` uses the entire final canvas, like plain variants. Default dimensions are 1080×1920, 1920×1080, and
 1080×1080. Use `--width [SCOPE=]VALUE...` and `--height [SCOPE=]VALUE...` to resize outputs.
 
 Use `--render primary` for only the primary output, or `--render short=primary`
@@ -631,8 +633,8 @@ applied per field. Explicit false values and valid zero lengths/opacity replace
 inherited values. Changing presentation reuses transcription and AI caches and
 does not run ASR again.
 
-Lengths accept `%` or `px`; percentages resolve against each final render's
-geometry or the corresponding font/layout metric. This includes blurred canvases.
+Lengths accept `%` or `px`; percentages resolve against the subtitle container
+or the corresponding font/layout metric.
 See [presentation options](#subtitle-positioning)
 and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#subtitle-configuration-reference)
 for units, valid values, and combinations.
@@ -768,10 +770,10 @@ Only explicitly supplied settings override the selected template.
 | `--subtitle-margin-right [SCOPE=]VALUE...` | Right margin as a percentage of width or pixels. |
 | `--subtitle-margin-top [SCOPE=]VALUE...` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
 | `--subtitle-margin-bottom [SCOPE=]VALUE...` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
-| `--subtitle-max-width [SCOPE=]VALUE...` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use render width. |
+| `--subtitle-max-width [SCOPE=]VALUE...` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use container width. |
 | `--subtitle-max-height [SCOPE=]VALUE...` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
-| `--subtitle-position-x [SCOPE=]VALUE...` | Horizontal anchor coordinate from the left edge of the final frame. |
-| `--subtitle-position-y [SCOPE=]VALUE...` | Vertical anchor coordinate from the top edge of the final frame. |
+| `--subtitle-position-x [SCOPE=]VALUE...` | Horizontal anchor coordinate from the left edge of the subtitle container. |
+| `--subtitle-position-y [SCOPE=]VALUE...` | Vertical anchor coordinate from the top edge of the subtitle container. |
 | `--subtitle-anchor [SCOPE=]VALUE...` | Required subtitle-box anchor for custom coordinates. |
 
 Only top positions accept `--subtitle-margin-top`; only bottom positions accept
@@ -903,7 +905,7 @@ cuts/
 ```
 
 - **MP4:** each rendered version, with subtitles enabled by default and configurable separately for shorts and longs. The primary version keeps the plain clip filename; companions use the variant name as a suffix, such as `-vertical`, `-horizontal-blur`, or `-square-blur`.
-- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. `render.variant` identifies the named crop or blur variant. Every captioned output owns its subtitle sidecars, generated for its final geometry; `render.subtitle_source_video` is null. `render.is_variant` distinguishes additional formats from the primary output.
+- **Clip JSON:** each version's social-media title, interval, scores, editorial explanation, and render layout. `render.variant` identifies the named crop or blur variant. Every captioned output owns its subtitle sidecars, generated for its final geometry; `render.subtitle_source_video` is null. `render.subtitle_container` records the central-video bounds for captioned horizontal/square blurred outputs and is null for full-canvas or disabled captions. `render.is_variant` distinguishes additional formats from the primary output.
 - **Manifest:** source provenance, model and prompt versions, cache hits, selection counts, and clip references. Each clip's `variants` lists all versions with their variant name, aspect ratio, video, and metadata paths; the existing `video` and `metadata` fields identify the primary version. Selection and CLI clip counts count editorial cuts, not rendered versions.
 
 Use the `title` field in each clip JSON when publishing. The AI is guided to use everyday words, a conversational tone, and a concrete hook in the first words, in the clip's language. Titles preferably use 40–80 characters (maximum 120); shorter titles are welcome without filler. The title stays grounded in the proposed transcript interval and avoids formal or complex wording, misleading clickbait, hashtags, and emojis.

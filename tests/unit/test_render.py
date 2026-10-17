@@ -371,9 +371,11 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             template_dir: Path | None,
             workspace: Path,
             options=None,
+            container=None,
         ) -> SubtitleArtifacts:
             assert video_path == raw
             assert options == config.subtitle_options
+            assert container is None
             assert clip.word_animation_safe == (
                 bool(words)
                 and all(w.start is not None and w.end is not None for w in words)
