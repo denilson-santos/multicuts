@@ -955,7 +955,7 @@ def test_public_builder_failure_becomes_configuration_error(monkeypatch) -> None
             template_dir=None,
             options=SubtitleOptions(font_weight="700", bold=False),
         )
-    assert "--subtitle-bold or --no-subtitle-bold" in str(error.value)
+    assert "--subtitle-bold true or --subtitle-bold false" in str(error.value)
 
 
 def test_missing_public_builder_requires_provider_upgrade() -> None:
@@ -1258,3 +1258,110 @@ def test_invalid_falsy_word_collection_is_not_treated_as_missing_alignment(
     payload["transcription"]["segments"][0]["words"] = bad_words
     with pytest.raises(TranscriptionError, match="segment 0 words"):
         _transcribe_json(json.dumps(payload), tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_foreground_container_translates_public_layout_without_changing_style(
+    explicit, tmp_path, monkeypatch
+):
+    from decimal import Decimal
+
+    from multicuts.subtitles import SubtitleContainer
+
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    container = SubtitleContainer(640, 360, 218, 202)
+
+    def length(value, unit):
+        return SimpleNamespace(value=Decimal(value), unit=unit)
+
+    layout = SimpleNamespace(
+        placement_mode="explicit" if explicit else "native-style",
+        margin_left=length("10", "%"),
+        margin_right=length("12", "px"),
+        position_x=length("50", "%"),
+        max_width=length("80", "%"),
+        anchor="bottom-center",
+    )
+    options = SubtitleOptions(
+        font_size="5%",
+        position_x="50%" if explicit else None,
+        position_y="90%" if explicit else None,
+        anchor="bottom-center" if explicit else None,
+        max_width="80%" if explicit else None,
+        max_height="10%" if explicit else None,
+    )
+    calls = []
+    configured = object()
+
+    def build(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(layout=layout) if len(calls) == 1 else configured
+
+    def render(speech, video, output_dir, **kwargs):
+        assert video == raw
+        assert kwargs["subtitle_config"] is configured
+        assert speech == multisubs._speech_transcript(_clip())
+        return _rendered_artifacts(output_dir)
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(provider, "build_subtitle_config", build, raising=False)
+    monkeypatch.setattr(provider, "render_transcript", render)
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.1.0")
+    MultisubsAdapter().subtitle_clip(
+        raw,
+        _clip(),
+        template="yellow-pop",
+        template_dir=None,
+        workspace=tmp_path / "work",
+        options=options,
+        container=container,
+    )
+    translated = calls[1]["overrides"]
+    assert calls[0]["overrides"] == options.overrides()
+    assert translated["font_size"] == "5%"
+    if explicit:
+        assert translated["position_x"] == "319px"
+        assert translated["max_width"] == "162px"
+        assert translated["position_y"] == "90%"
+        assert translated["max_height"] == "10%"
+        assert "margin_left" not in translated
+    else:
+        assert translated["margin_left"] == "238.2px"
+        assert translated["margin_right"] == "232px"
+        assert "position_x" not in translated
+
+
+def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monkeypatch):
+    from decimal import Decimal
+
+    from multicuts.subtitles import SubtitleContainer
+
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    layout = SimpleNamespace(
+        placement_mode="explicit",
+        anchor="bottom-center",
+        position_x=SimpleNamespace(value=Decimal(100), unit="%"),
+        max_width=SimpleNamespace(value=Decimal(80), unit="%"),
+    )
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(
+        provider,
+        "build_subtitle_config",
+        lambda **_: SimpleNamespace(layout=layout),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        provider, "render_transcript", lambda *a, **k: pytest.fail("render called")
+    )
+    monkeypatch.setattr(metadata, "version", lambda _name: "5.1.0")
+    with pytest.raises(ConfigurationError, match="central video container"):
+        MultisubsAdapter().subtitle_clip(
+            raw,
+            _clip(),
+            template="yellow-pop",
+            template_dir=None,
+            workspace=tmp_path / "work",
+            container=SubtitleContainer(640, 360, 218, 202),
+        )

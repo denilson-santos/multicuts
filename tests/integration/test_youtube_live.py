@@ -236,8 +236,8 @@ def test_partial_download_with_real_ytdlp_and_ffmpeg(
         tmp_path / "out",
         clip_range=interval,
         subtitles_enabled=subtitles,
-        render_variants=False,
-        short_aspect_ratio="original",
+        render="primary",
+        short_primary="horizontal",
     )
     try:
         result = run_pipeline(config, transcriber=transcriber, raw_renderer=render)

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
-from multicuts.models import TimeRange
-from multicuts.subtitles import SubtitleOptions
+from multicuts.models import MediaInfo, TimeRange
+from multicuts.subtitles import SubtitleContainer, SubtitleOptions
+from multicuts.variants import (
+    VARIANTS,
+    OutputOptions,
+    RenderMode,
+    aspect_ratio,
+    available_variants,
+    source_orientation,
+)
 
 LLM_BACKENDS = frozenset({"openai", "anthropic", "gemini", "codex", "claude", "agy"})
 ASR_BACKENDS = frozenset({"whisperx", "faster-whisper", "parakeet", "qwen"})
@@ -31,8 +39,8 @@ class AppConfig:
     overlap_threshold: float = 0.60
     language: str | None = None
     transcription_model: str = "turbo"
-    short_aspect_ratio: str = "9:16"
-    long_aspect_ratio: str = "16:9"
+    short_primary: str = "auto"
+    long_primary: str = "auto"
     vertical_width: int = 1080
     vertical_height: int = 1920
     horizontal_width: int = 1920
@@ -48,22 +56,34 @@ class AppConfig:
     llm_effort: str | None = None
     editorial_context: str | None = None
     asr_backend: str = "whisperx"
-    render_variants: bool = True
+    render: RenderMode = True
     square_size: int = 1080
     short_subtitles_enabled: bool | None = None
     long_subtitles_enabled: bool | None = None
-    short_clips_enabled: bool = True
-    long_clips_enabled: bool = True
-    short_variants_enabled: bool | None = None
-    long_variants_enabled: bool | None = None
-    short_variant_subtitles_enabled: bool | None = None
-    long_variant_subtitles_enabled: bool | None = None
+    short_render: RenderMode | None = None
+    long_render: RenderMode | None = None
     search_range: TimeRange | None = None
     clip_range: TimeRange | None = None
     full_video: bool = False
     subtitle_options: SubtitleOptions = SubtitleOptions()
+    output_options: tuple[OutputOptions, ...] = ()
+    render_variant: str | None = None
+    subtitle_container: SubtitleContainer | None = None
 
     def __post_init__(self) -> None:
+        if self.subtitle_container is not None and not isinstance(
+            self.subtitle_container, SubtitleContainer
+        ):
+            raise ConfigurationError("Subtitle container must use SubtitleContainer")
+        if self.render_variant is not None and self.render_variant not in VARIANTS:
+            raise ConfigurationError("Unknown output variant")
+        if not isinstance(self.output_options, tuple) or any(
+            not isinstance(option, OutputOptions) for option in self.output_options
+        ):
+            raise ConfigurationError("Output options must be a tuple of OutputOptions")
+        keys = [(option.clip_class, option.variant) for option in self.output_options]
+        if len(keys) != len(set(keys)):
+            raise ConfigurationError("Duplicate output options")
         if not isinstance(self.subtitle_options, SubtitleOptions):
             raise ConfigurationError("Subtitle options must use SubtitleOptions")
         for name in ("search_range", "clip_range"):
@@ -145,9 +165,9 @@ class AppConfig:
             raise ConfigurationError(
                 "Transcription model and subtitle template must not be empty"
             )
-        for name in ("short_aspect_ratio", "long_aspect_ratio"):
-            if getattr(self, name) not in ("original", "9:16", "16:9", "1:1"):
-                raise ConfigurationError(f"{name} must be original, 9:16, 16:9, or 1:1")
+        for name in ("short_primary", "long_primary"):
+            if getattr(self, name) not in ("auto", *VARIANTS):
+                raise ConfigurationError(f"{name} must name an output variant or auto")
         if (
             type(self.vertical_width) is not int
             or type(self.vertical_height) is not int
@@ -155,10 +175,10 @@ class AppConfig:
             or self.vertical_height <= 0
             or self.vertical_width % 2
             or self.vertical_height % 2
-            or self.vertical_width * 16 != self.vertical_height * 9
+            or self.vertical_width >= self.vertical_height
         ):
             raise ConfigurationError(
-                "Vertical dimensions must be positive, even, and 9:16"
+                "Vertical dimensions must be positive, even, and taller than wide"
             )
         if (
             type(self.horizontal_width) is not int
@@ -167,10 +187,10 @@ class AppConfig:
             or self.horizontal_height <= 0
             or self.horizontal_width % 2
             or self.horizontal_height % 2
-            or self.horizontal_width * 9 != self.horizontal_height * 16
+            or self.horizontal_width <= self.horizontal_height
         ):
             raise ConfigurationError(
-                "Horizontal dimensions must be positive, even, and 16:9"
+                "Horizontal dimensions must be positive, even, and wider than tall"
             )
         if type(self.block_chars) is not int or self.block_chars < 1000:
             raise ConfigurationError("BLOCK_CHARS must be at least 1000")
@@ -197,35 +217,40 @@ class AppConfig:
             "keep_intermediates",
             "force_recompute",
             "verbose",
-            "render_variants",
-            "short_clips_enabled",
-            "long_clips_enabled",
         ):
             if type(getattr(self, name)) is not bool:
                 raise ConfigurationError(f"{name} must be boolean")
-        if not self.short_clips_enabled and not self.long_clips_enabled:
+        for name in ("render", "short_render", "long_render"):
+            value = getattr(self, name)
+            if value is None and name != "render":
+                continue
+            if type(value) is not bool and value != "primary":
+                raise ConfigurationError(f"{name} must be true, false, or primary")
+        if not any(self.clips_for(name) for name in ("short", "long")):
             raise ConfigurationError("Enable at least one clip class: short or long")
         for name in (
             "short_subtitles_enabled",
             "long_subtitles_enabled",
-            "short_variants_enabled",
-            "long_variants_enabled",
-            "short_variant_subtitles_enabled",
-            "long_variant_subtitles_enabled",
         ):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
                 raise ConfigurationError(f"{name} must be boolean or unset")
 
     def clips_for(self, clip_class: str) -> bool:
-        """Return whether a class and all its output versions are enabled."""
+        """Include a class when its policy or a named output enables rendering."""
+        return self.render_for(clip_class) is not False or any(
+            option.clip_class == clip_class
+            and option.variant is not None
+            and option.enabled is True
+            for option in self.output_options
+        )
+
+    def render_for(self, clip_class: str) -> RenderMode:
+        """Return the class render policy, inheriting the shared default."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Clip class must be short or long")
-        return (
-            self.short_clips_enabled
-            if clip_class == "short"
-            else self.long_clips_enabled
-        )
+        override = self.short_render if clip_class == "short" else self.long_render
+        return self.render if override is None else override
 
     @property
     def direct_clip(self) -> bool:
@@ -238,19 +263,8 @@ class AppConfig:
             return "full_video"
         return "custom" if self.clip_range is not None else "automatic"
 
-    def variants_for(self, clip_class: str) -> bool:
-        """Inherit the shared variant switch unless the class overrides it."""
-        if not self.clips_for(clip_class):
-            return False
-        override = (
-            self.short_variants_enabled
-            if clip_class == "short"
-            else self.long_variants_enabled
-        )
-        return self.render_variants if override is None else override
-
-    def subtitles_for(self, clip_class: str, *, variant: bool = False) -> bool:
-        """Variants inherit their class subtitles unless explicitly overridden."""
+    def subtitles_for(self, clip_class: str) -> bool:
+        """Read the caption decision for the current effective render config."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Subtitle class must be short or long")
         override = (
@@ -258,13 +272,131 @@ class AppConfig:
             if clip_class == "short"
             else self.long_subtitles_enabled
         )
-        enabled = self.subtitles_enabled if override is None else override
-        if variant:
-            variant_override = (
-                self.short_variant_subtitles_enabled
-                if clip_class == "short"
-                else self.long_variant_subtitles_enabled
+        return self.subtitles_enabled if override is None else override
+
+    def outputs_for(self, clip_class: str, media: MediaInfo) -> tuple[str, ...]:
+        """Select and validate supported outputs before transcription."""
+        if not self.clips_for(clip_class):
+            return ()
+        available = available_variants(media)
+        primary = self.primary_for(clip_class, media)
+        if primary not in available:
+            primary = available[0]
+        mode = self.render_for(clip_class)
+        overrides = {
+            option.variant: option.enabled
+            for option in self.output_options
+            if option.clip_class == clip_class and option.variant is not None
+        }
+        for name, enabled in overrides.items():
+            if enabled and name not in available:
+                raise ConfigurationError(
+                    f"{clip_class}-{name} is unavailable for this source orientation"
+                )
+        outputs = tuple(
+            name
+            for name in dict.fromkeys((primary, *available))
+            if (
+                overrides.get(name)
+                if overrides.get(name) is not None
+                else mode is True or (mode == "primary" and name == primary)
             )
-            if variant_override is not None:
-                return variant_override
-        return enabled
+        )
+        if not outputs:
+            raise ConfigurationError(f"Enable at least one {clip_class} output variant")
+        for name in outputs:
+            self.for_output(clip_class, name)
+        return outputs
+
+    def primary_for(self, clip_class: str, media: MediaInfo) -> str:
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Clip class must be short or long")
+        preferred = self.short_primary if clip_class == "short" else self.long_primary
+        return source_orientation(media) if preferred == "auto" else preferred
+
+    def dimensions_for(self, clip_class: str, variant: str) -> tuple[int, int]:
+        """Merge dimensions per field; derive a missing side from the default canvas."""
+        if clip_class not in ("short", "long"):
+            raise ConfigurationError("Clip class must be short or long")
+        if variant not in VARIANTS:
+            raise ConfigurationError("Unknown output variant")
+        orientation = variant.removesuffix("-blur")
+        if orientation == "horizontal":
+            default_width, default_height = (
+                self.horizontal_width,
+                self.horizontal_height,
+            )
+        elif orientation == "vertical":
+            default_width, default_height = self.vertical_width, self.vertical_height
+        else:
+            default_width = default_height = self.square_size
+        width = height = None
+        for scope in (None, variant):
+            for option in self.output_options:
+                if option.clip_class == clip_class and option.variant == scope:
+                    if option.width is not None:
+                        width = option.width
+                    if option.height is not None:
+                        height = option.height
+        if width is None and height is None:
+            width, height = default_width, default_height
+        elif width is None:
+            assert height is not None
+            width = max(
+                2,
+                2 * ((height * default_width + default_height) // (2 * default_height)),
+            )
+        elif height is None:
+            height = max(
+                2, 2 * ((width * default_height + default_width) // (2 * default_width))
+            )
+        if (
+            (orientation == "horizontal" and width <= height)
+            or (orientation == "vertical" and width >= height)
+            or (orientation == "square" and width != height)
+        ):
+            raise ConfigurationError(
+                f"{clip_class}:{variant} dimensions must be {orientation} "
+                "(horizontal: width > height; vertical: height > width; "
+                "square: equal sides)"
+            )
+        return width, height
+
+    def aspect_ratio_for(self, clip_class: str, variant: str) -> str:
+        return aspect_ratio(*self.dimensions_for(clip_class, variant))
+
+    def for_output(self, clip_class: str, variant: str) -> AppConfig:
+        """Resolve captions and presentation before entering the render boundary."""
+        enabled = self.subtitles_for(clip_class)
+        template, template_dir = self.subtitle_template, self.subtitle_template_dir
+        options = self.subtitle_options
+        self.dimensions_for(clip_class, variant)
+        for scope in (None, variant):
+            override = next(
+                (
+                    item
+                    for item in self.output_options
+                    if item.clip_class == clip_class and item.variant == scope
+                ),
+                None,
+            )
+            if override is None:
+                continue
+            if override.subtitles_enabled is not None:
+                enabled = override.subtitles_enabled
+            if override.subtitle_template is not None:
+                template = override.subtitle_template
+            if override.subtitle_template_dir is not None:
+                template_dir = override.subtitle_template_dir
+            options = replace(options, **override.subtitle_options.overrides())
+        return replace(
+            self,
+            **{
+                f"{clip_class}_subtitles_enabled": enabled,
+            },
+            subtitle_template=template,
+            subtitle_template_dir=template_dir,
+            subtitle_options=options,
+            render_variant=variant,
+            subtitle_container=None,
+        )

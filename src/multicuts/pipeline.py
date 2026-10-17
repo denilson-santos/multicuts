@@ -60,12 +60,12 @@ from multicuts.media import prepare_source_range, probe_media
 from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
 from multicuts.render import (
     clip_transcript,
-    publish_subtitle_sidecars,
+    foreground_dimensions,
     render_final,
     render_raw,
-    render_short_horizontal,
 )
 from multicuts.source import SourceAcquirer, acquire_source
+from multicuts.subtitles import SubtitleContainer
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +291,7 @@ def _clip_metadata(
         if isinstance(clip, JudgedClip)
         else None,
         "render": {
+            "variant": config.render_variant,
             "is_variant": is_variant,
             "layout": layout,
             "aspect_ratio": ratio,
@@ -301,6 +302,9 @@ def _clip_metadata(
             "subtitle_overrides": config.subtitle_options.metadata()
             if subtitles_enabled
             else {},
+            "subtitle_container": config.subtitle_container.metadata()
+            if subtitles_enabled and config.subtitle_container is not None
+            else None,
             "subtitle_provider": "multisubs" if subtitles_enabled else None,
             "subtitle_provider_version": transcript.provider_version
             if subtitles_enabled and transcript is not None
@@ -389,9 +393,6 @@ def run_pipeline(
     final_renderer: Callable[
         ..., tuple[Path, tuple[Path, ...], str | None]
     ] = render_final,
-    horizontal_renderer: Callable[
-        ..., tuple[Path, MediaInfo]
-    ] = render_short_horizontal,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
     if config.subtitle_options.overrides():
@@ -400,6 +401,23 @@ def run_pipeline(
             template_dir=config.subtitle_template_dir,
             options=config.subtitle_options,
         )
+    # Presentation validation must not resolve geometry for unused outputs.
+    subtitle_config = replace(
+        config,
+        output_options=tuple(
+            replace(output, width=None, height=None) for output in config.output_options
+        ),
+    )
+    for output in config.output_options:
+        if output.subtitle_options.overrides() or output.subtitle_template is not None:
+            resolved = subtitle_config.for_output(
+                output.clip_class, output.variant or "vertical"
+            )
+            MultisubsAdapter().validate_subtitle_options(
+                template=resolved.subtitle_template,
+                template_dir=resolved.subtitle_template_dir,
+                options=resolved.subtitle_options,
+            )
     started = perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -415,11 +433,9 @@ def run_pipeline(
     try:
         logger.info("Run %s started; output: %s", run_id, root)
         logger.info(
-            "Output classes: short=%s, long=%s; variants: short=%s, long=%s",
-            config.short_clips_enabled,
-            config.long_clips_enabled,
-            config.variants_for("short"),
-            config.variants_for("long"),
+            "Render policies: short=%s, long=%s",
+            config.render_for("short"),
+            config.render_for("long"),
         )
         logger.info("[1/6] Acquiring source and checking media")
         requested_range = config.clip_range or config.search_range
@@ -498,6 +514,9 @@ def run_pipeline(
                     source.acquired_range.start,
                     source.acquired_range.end,
                 )
+        for clip_class in ("short", "long"):
+            if config.clips_for(clip_class):
+                config.outputs_for(clip_class, media)
         needs_transcript = True
         if direct_range is not None:
             clip_class = (
@@ -505,21 +524,12 @@ def run_pipeline(
             )
             if not config.clips_for(clip_class):
                 raise ConfigurationError(
-                    f"The cut interval is {clip_class}; enable --{clip_class}-clips"
+                    f"The cut interval is {clip_class}; use --render {clip_class}=true"
                 )
-            primary_ratio = (
-                config.short_aspect_ratio
-                if clip_class == "short"
-                else config.long_aspect_ratio
-            )
-            square_output = primary_ratio == "1:1" or (
-                primary_ratio == "original"
-                and media.presentation_width == media.presentation_height
-            )
-            needs_transcript = config.subtitles_for(clip_class) or (
-                config.variants_for(clip_class)
-                and not square_output
-                and config.subtitles_for(clip_class, variant=True)
+            outputs = config.outputs_for(clip_class, media)
+            needs_transcript = any(
+                config.for_output(clip_class, name).subtitles_for(clip_class)
+                for name in outputs
             )
         if original_source is not None and requested_range is not None:
             logger.info(
@@ -551,27 +561,15 @@ def run_pipeline(
             # not the source's preceding keyframe padding. This is one ASR pass.
             direct_clip = _direct_clip(source, source_duration, direct_range, None)
             clip_class = direct_clip.proposal.clip_class
-            ratio_field = f"{clip_class}_aspect_ratio"
-            primary_ratio = getattr(config, ratio_field)
-            square_output = primary_ratio == "1:1" or (
-                primary_ratio == "original"
-                and media.presentation_width == media.presentation_height
-            )
-            first_ratio = (
-                "9:16"
-                if clip_class == "short"
-                and (
-                    primary_ratio == "16:9"
-                    or (config.variants_for(clip_class) and not square_output)
-                )
-                else primary_ratio
-            )
+            first_variant = config.outputs_for(clip_class, media)[0]
+            first_config = config.for_output(clip_class, first_variant)
+            first_ratio = config.aspect_ratio_for(clip_class, first_variant)
             logger.info("Preparing the exact local cut before transcription")
             prepared_raw = raw_renderer(
                 source,
                 media,
                 direct_clip,
-                replace(config, **{ratio_field: first_ratio}),
+                first_config,
                 output=work / "direct-source" / "raw.mp4",
                 work=work / "direct-source",
             )
@@ -803,169 +801,74 @@ def run_pipeline(
                 f"{clip.score:.2f}" if isinstance(clip, JudgedClip) else "unscored",
             )
             stem = f"{rank:03d}-{clip.proposal.clip_class}-{clip.proposal.id}"
-            is_short = clip.proposal.clip_class == "short"
-            ratio_field = "short_aspect_ratio" if is_short else "long_aspect_ratio"
-            subtitle_field = f"{clip.proposal.clip_class}_subtitles_enabled"
-            primary_ratio = getattr(config, ratio_field)
-            # The horizontal short consumes the completed vertical version so its
-            # captions stay inside the foreground, never in the blurred background.
-            square_output = primary_ratio == "1:1" or (
-                primary_ratio == "original"
-                and media.presentation_width == media.presentation_height
-            )
-            published_ratios = (
-                (primary_ratio,)
-                if not config.variants_for(clip.proposal.clip_class) or square_output
-                else tuple(
-                    dict.fromkeys(
-                        ("9:16", primary_ratio, "16:9", "1:1")
-                        if is_short
-                        else (primary_ratio, "16:9", "9:16", "1:1")
-                    )
-                )
-            )
-            ratios = (
-                tuple(dict.fromkeys(("9:16", *published_ratios)))
-                if is_short and "16:9" in published_ratios
-                else published_ratios
-            )
+            clip_class = clip.proposal.clip_class
+            outputs = config.outputs_for(clip_class, media)
             variants: list[dict[str, object]] = []
-            vertical: (
-                tuple[Path, MediaInfo, Path, tuple[Path, ...], str | None, bool] | None
-            ) = None
             primary_video = root / "clips" / f"{stem}.mp4"
-            for ratio in ratios:
-                label = {
-                    "9:16": "vertical",
-                    "16:9": "horizontal",
-                    "original": "original",
-                    "1:1": "square",
-                }[ratio]
-                variant_stem = stem if ratio == primary_ratio else f"{stem}-{label}"
+            for index, name in enumerate(outputs):
+                ratio = config.aspect_ratio_for(clip_class, name)
+                is_variant = index != 0
+                variant_stem = f"{stem}-{name}" if is_variant else stem
                 variant_work = work / variant_stem
                 final_path = root / "clips" / f"{variant_stem}.mp4"
-                publish_variant = ratio in published_ratios
-                if not publish_variant:
-                    final_path = variant_work / "foreground.mp4"
-                # A private vertical foreground follows the horizontal output's
-                # caption decision, even when variants are disabled.
-                is_variant = (ratio if publish_variant else "16:9") != primary_ratio
-                subtitles_enabled = config.subtitles_for(
-                    clip.proposal.clip_class, variant=is_variant
-                )
-                variant_config = replace(
-                    config,
-                    **{
-                        ratio_field: ratio,
-                        subtitle_field: subtitles_enabled,
-                    },
-                )
-                if publish_variant:
-                    logger.info(
-                        "Rendering clip %d/%d version: %s", rank, len(selected), label
-                    )
-                else:
-                    logger.info(
-                        "Preparing foreground for horizontal clip %d/%d",
-                        rank,
-                        len(selected),
-                    )
-                subtitle_source = None
-                layout = "original" if ratio == "original" else "center_crop"
-                if is_short and ratio == "16:9":
-                    if vertical is None:
-                        raise ArtifactError(
-                            "Horizontal short requires a vertical version"
-                        )
-                    (
-                        raw,
-                        vertical_media,
-                        vertical_final,
-                        sidecars,
-                        template,
-                        vertical_subtitles,
-                    ) = vertical
-                    reuse_vertical = (
-                        "9:16" in published_ratios
-                        and vertical_subtitles == subtitles_enabled
-                    )
-                    foreground = vertical_final
-                    if vertical_subtitles != subtitles_enabled:
-                        if subtitles_enabled:
-                            foreground_work = variant_work / "foreground"
-                            foreground, sidecars, template = final_renderer(
-                                raw,
-                                vertical_media,
-                                transcript,
-                                clip,
-                                variant_config,
-                                output=foreground_work / "foreground.mp4",
-                                work=foreground_work,
-                            )
-                        else:
-                            foreground, sidecars, template = raw, (), None
-                    final, rendered_media = horizontal_renderer(
-                        raw,
-                        foreground,
-                        vertical_media,
+                variant_config = config.for_output(clip_class, name)
+                if name in ("horizontal-blur", "square-blur"):
+                    width, height = config.dimensions_for(clip_class, name)
+                    fg_width, _ = foreground_dimensions(media, name, width, height)
+                    left = (width - fg_width) // 2
+                    variant_config = replace(
                         variant_config,
-                        output=final_path,
-                        work=variant_work,
+                        subtitle_container=SubtitleContainer(
+                            width, height, left - left % 2, fg_width
+                        ),
                     )
-                    layout = "vertical_center_blur"
-                    if reuse_vertical:
-                        subtitle_source = vertical_final
-                    else:
-                        sidecars = publish_subtitle_sidecars(sidecars, final)
+                logger.info(
+                    "Rendering clip %d/%d version: %s", rank, len(selected), name
+                )
+                layout = (
+                    "horizontal_center_blur"
+                    if name == "vertical-blur"
+                    else "vertical_center_blur"
+                    if name.endswith("-blur")
+                    else "center_crop"
+                )
+                if prepared_raw is not None and index == 0:
+                    raw, rendered_media, rendered_ratio = prepared_raw
+                    prepared_raw = None
                 else:
-                    if prepared_raw is not None and prepared_raw[2] == ratio:
-                        raw, rendered_media, rendered_ratio = prepared_raw
-                        prepared_raw = None
-                    else:
-                        raw, rendered_media, rendered_ratio = raw_renderer(
-                            source,
-                            media,
-                            clip,
-                            variant_config,
-                            output=variant_work / "raw.mp4",
-                            work=variant_work,
-                        )
-                    if rendered_ratio != ratio:
-                        raise ArtifactError(
-                            "Raw renderer returned an unexpected aspect ratio"
-                        )
-                    if variant_config.subtitles_for(clip.proposal.clip_class):
-                        logger.info(
-                            "Adding subtitles to clip %d/%d (version=%s, template=%s)",
-                            rank,
-                            len(selected),
-                            label,
-                            config.subtitle_template,
-                        )
-                    final, sidecars, template = final_renderer(
-                        raw,
-                        rendered_media,
-                        transcript,
+                    raw, rendered_media, rendered_ratio = raw_renderer(
+                        source,
+                        media,
                         clip,
                         variant_config,
-                        output=final_path,
+                        output=variant_work / "raw.mp4",
                         work=variant_work,
                     )
-                    if is_short and ratio == "9:16":
-                        vertical = (
-                            raw,
-                            rendered_media,
-                            final,
-                            sidecars,
-                            template,
-                            subtitles_enabled,
-                        )
+                if rendered_ratio != ratio:
+                    raise ArtifactError(
+                        "Raw renderer returned an unexpected aspect ratio"
+                    )
+                if variant_config.subtitles_for(clip_class):
+                    logger.info(
+                        "Adding subtitles to clip %d/%d (version=%s, template=%s)",
+                        rank,
+                        len(selected),
+                        name,
+                        variant_config.subtitle_template,
+                    )
+                final, sidecars, template = final_renderer(
+                    raw,
+                    rendered_media,
+                    transcript,
+                    clip,
+                    variant_config,
+                    output=final_path,
+                    work=variant_work,
+                )
                 if final != final_path or not final.is_file():
                     raise ArtifactError(
                         "Final renderer did not publish the expected clip"
                     )
-                if not publish_variant:
-                    continue
                 metadata = _clip_metadata(
                     clip,
                     rank=rank,
@@ -979,12 +882,12 @@ def run_pipeline(
                     config=variant_config,
                     run_root=root,
                     layout=layout,
-                    subtitle_source_video=subtitle_source,
                     is_variant=is_variant,
                 )
                 metadata_path = final.with_suffix(".json")
                 _publish_json(metadata_path, metadata, work)
-                reference = {
+                reference: dict[str, object] = {
+                    "variant": name,
                     "aspect_ratio": ratio,
                     "video": final.relative_to(root).as_posix(),
                     "metadata": metadata_path.relative_to(root).as_posix(),

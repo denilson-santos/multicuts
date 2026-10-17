@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from multicuts.app_config import AppConfig
+from multicuts.cli import parse_run_config
 from multicuts.clips import (
     TimedUnit,
     judgment_prompt,
@@ -30,6 +31,7 @@ from multicuts.models import (
 from multicuts.pipeline import run_pipeline
 from multicuts.render import clip_transcript
 from multicuts.subtitles import SubtitleOptions
+from multicuts.variants import VARIANTS, OutputOptions
 
 
 class FakeTranscriber:
@@ -267,7 +269,7 @@ def test_custom_cut_preserves_exact_bounds_without_ai_or_asr(
     assert manifest["analysis"]["editorially_eligible"] == 0
     assert manifest["analysis"]["selected"] == 1
     assert manifest["clips"][0]["score"] is None
-    assert len(manifest["clips"][0]["variants"]) == 3
+    assert len(manifest["clips"][0]["variants"]) == 6
     for version in manifest["clips"][0]["variants"]:
         metadata = json.loads(
             (result.manifest_path.parent / version["metadata"]).read_text()
@@ -291,7 +293,7 @@ def test_full_video_uses_media_bounds_including_silence(
         tmp_path / "out",
         full_video=True,
         subtitles_enabled=False,
-        render_variants=False,
+        render="primary",
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     media = replace(_media(), duration=duration)
@@ -312,7 +314,11 @@ def test_custom_subtitles_cache_the_exact_cut_separately_from_full_source(
         tmp_path / "out",
         clip_range=TimeRange(10.25, 120.5),
         short_subtitles_enabled=not variant_subtitles,
-        short_variant_subtitles_enabled=variant_subtitles,
+        output_options=tuple(
+            OutputOptions("short", name, subtitles_enabled=variant_subtitles)
+            for name in VARIANTS
+            if name != "horizontal"
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     _run(tmp_path, asr, FakeBackend(empty=True))
@@ -347,9 +353,9 @@ def test_custom_subtitles_cache_the_exact_cut_separately_from_full_source(
 @pytest.mark.parametrize(
     ("ratio", "variants", "square_source"),
     [
-        ("9:16", False, False),
-        ("1:1", True, False),
-        ("original", True, True),
+        ("vertical", False, False),
+        ("square", False, False),
+        ("square", False, True),
     ],
 )
 def test_direct_cut_skips_asr_when_captioned_variants_are_not_published(
@@ -359,10 +365,12 @@ def test_direct_cut_skips_asr_when_captioned_variants_are_not_published(
         "source.mp4",
         tmp_path / "out",
         clip_range=TimeRange(1, 60),
-        short_aspect_ratio=ratio,
-        render_variants=variants,
+        short_primary=ratio,
+        render=True if variants else "primary",
         short_subtitles_enabled=False,
-        short_variant_subtitles_enabled=True,
+        output_options=(
+            OutputOptions("short", "horizontal-blur", subtitles_enabled=True),
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(
@@ -382,8 +390,8 @@ def test_direct_cut_skips_asr_when_captioned_variants_are_not_published(
     "kwargs",
     [
         {"clip_range": TimeRange(1, 361)},
-        {"clip_range": TimeRange(1, 60), "short_clips_enabled": False},
-        {"full_video": True, "long_clips_enabled": False},
+        {"clip_range": TimeRange(1, 60), "short_render": False},
+        {"full_video": True, "long_render": False},
     ],
 )
 def test_invalid_direct_cut_fails_before_asr(tmp_path: Path, kwargs: dict) -> None:
@@ -493,7 +501,7 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         return (
             output,
             replace(media, duration=clip.proposal.end - clip.proposal.start),
-            "original",
+            "16:9",
         )
 
     def final_renderer(raw, _media, transcript, clip, config, *, output, work):
@@ -517,8 +525,8 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
         clip_range=interval if mode == "custom" else None,
         search_range=interval if mode == "automatic" else None,
         subtitles_enabled=subtitles,
-        render_variants=False,
-        short_aspect_ratio="original",
+        render="primary",
+        short_primary="horizontal",
     )
     asr, ai = Transcriber(), Backend()
 
@@ -617,12 +625,12 @@ def test_youtube_custom_cut_uses_acquired_duration_for_class_and_subtitles(
         "https://youtu.be/abc123",
         tmp_path / "out",
         clip_range=requested,
-        short_clips_enabled=not long_enabled,
-        long_clips_enabled=long_enabled,
+        short_render="primary" if not long_enabled else False,
+        long_render="primary" if long_enabled else False,
         short_subtitles_enabled=True,
         long_subtitles_enabled=False,
-        render_variants=False,
-        long_aspect_ratio="original",
+        render="primary",
+        long_primary="horizontal",
     )
 
     def render(_source, _media, clip, _config, *, output, work):
@@ -630,7 +638,7 @@ def test_youtube_custom_cut_uses_acquired_duration_for_class_and_subtitles(
         assert (clip.proposal.start, clip.proposal.end) == (98, 281)
         output.parent.mkdir(parents=True)
         output.write_bytes(b"raw")
-        return output, media, "original"
+        return output, media, "16:9"
 
     def finish(raw, _media, transcript, clip, _config, *, output, work):
         assert transcript is None
@@ -728,7 +736,7 @@ def test_local_intervals_use_their_cache_or_a_compatible_complete_cache(
         clip_range=interval if mode == "custom" else None,
         search_range=interval if mode == "automatic" else None,
         subtitles_enabled=subtitles,
-        render_variants=False,
+        render="primary",
     )
     asr, ai = FakeTranscriber(), Backend()
     extracted: list[TimeRange] = []
@@ -815,9 +823,7 @@ def test_local_range_recomputes_when_complete_cache_is_invalid(
         content["transcript"][field] = value
         complete.write_text(json.dumps(content), encoding="utf-8")
     interval = TimeRange(90.25, 120.5)
-    config = AppConfig(
-        "source.mp4", output_dir, clip_range=interval, render_variants=False
-    )
+    config = AppConfig("source.mp4", output_dir, clip_range=interval, render="primary")
     extracted: list[TimeRange] = []
     result = _run(
         tmp_path, asr, FakeBackend(), config=config, extraction_calls=extracted
@@ -878,33 +884,13 @@ def _run(
             )
         else:
             output.write_bytes(b"raw")
-        ratio = (
-            _config.short_aspect_ratio
-            if clip.proposal.clip_class == "short"
-            else _config.long_aspect_ratio
-        )
-        if ratio == "9:16":
-            return (
-                output,
-                _media_factory(_config.vertical_width, _config.vertical_height),
-                ratio,
-            )
-        if ratio == "16:9":
-            return (
-                output,
-                _media_factory(_config.horizontal_width, _config.horizontal_height),
-                ratio,
-            )
-        if ratio == "1:1":
-            return (
-                output,
-                _media_factory(_config.square_size, _config.square_size),
-                ratio,
-            )
+        kind = clip.proposal.clip_class
+        variant = _config.render_variant or _config.primary_for(kind, _media)
+        width, height = _config.dimensions_for(kind, variant)
         return (
             output,
-            _media_factory(_media.presentation_width, _media.presentation_height),
-            ratio,
+            _media_factory(width, height),
+            _config.aspect_ratio_for(kind, variant),
         )
 
     def _media_factory(width: int, height: int) -> MediaInfo:
@@ -935,26 +921,6 @@ def _run(
             path.write_bytes(b"subtitle")
         return output, sidecars, _config.subtitle_template
 
-    def horizontal_renderer(
-        raw_vertical: Path,
-        final_vertical: Path,
-        vertical_media: MediaInfo,
-        _config: AppConfig,
-        *,
-        output: Path,
-        work: Path,
-    ):
-        assert raw_vertical.is_file() and final_vertical.is_file()
-        assert (
-            vertical_media.presentation_width * 16
-            == vertical_media.presentation_height * 9
-        )
-        output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(final_vertical, output)
-        return output, _media_factory(
-            _config.horizontal_width, _config.horizontal_height
-        )
-
     def range_extractor(source, media, interval, workspace):
         assert source.local_path == source_file
         if extraction_calls is not None:
@@ -979,7 +945,6 @@ def _run(
         backend=backend,
         raw_renderer=raw_renderer,
         final_renderer=final_renderer,
-        horizontal_renderer=horizontal_renderer,
     )
 
 
@@ -1016,16 +981,16 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert "minimum_score" not in manifest["analysis"]
 
 
-@pytest.mark.parametrize("primary_ratio", [None, "original", "9:16", "16:9", "1:1"])
+@pytest.mark.parametrize("primary_variant", [None, *VARIANTS])
 def test_pipeline_publishes_social_formats_per_cut_and_preserves_primary_version(
-    primary_ratio: str | None, tmp_path: Path
+    primary_variant: str | None, tmp_path: Path
 ) -> None:
     config = AppConfig(
         "source.mp4", tmp_path / "out", "codex", "test-model", subtitles_enabled=False
     )
-    if primary_ratio is not None:
+    if primary_variant is not None:
         config = replace(
-            config, short_aspect_ratio=primary_ratio, long_aspect_ratio=primary_ratio
+            config, short_primary=primary_variant, long_primary=primary_variant
         )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1034,20 +999,17 @@ def test_pipeline_publishes_social_formats_per_cut_and_preserves_primary_version
     assert asr.calls == 1 and ai.calls == 3
     assert len(result.clip_paths) == manifest["analysis"]["selected"] == 2
     expected_ratios = {"9:16", "16:9", "1:1"}
-    if primary_ratio == "original":
-        expected_ratios.add("original")
-    elif primary_ratio == "1:1":
-        expected_ratios = {"1:1"}
     for reference in manifest["clips"]:
         assert {
             item["aspect_ratio"] for item in reference["variants"]
         } == expected_ratios
-        assert len(reference["variants"]) == len(expected_ratios)
+        assert len(reference["variants"]) == 6
         primary = root / reference["video"]
         assert primary in result.clip_paths
         primary_metadata = json.loads((root / reference["metadata"]).read_text())
-        expected_primary = primary_ratio or (
-            "9:16" if reference["class"] == "short" else "16:9"
+        expected_primary = config.aspect_ratio_for(
+            reference["class"],
+            primary_variant or config.primary_for(reference["class"], _media()),
         )
         assert primary_metadata["render"]["aspect_ratio"] == expected_primary
         for variant in reference["variants"]:
@@ -1067,32 +1029,36 @@ def test_pipeline_publishes_social_formats_per_cut_and_preserves_primary_version
                 assert (render["width"], render["height"]) == (1920, 1080)
             elif variant["aspect_ratio"] == "1:1":
                 assert (render["width"], render["height"]) == (1080, 1080)
-                assert render["layout"] == "center_crop"
-                if primary_ratio != "1:1":
-                    assert video.stem.endswith("-square")
-            if reference["class"] == "short" and variant["aspect_ratio"] == "16:9":
-                assert render["layout"] == "vertical_center_blur"
+            name = variant["variant"]
+            assert render["variant"] == name
+            assert render["layout"] == (
+                "horizontal_center_blur"
+                if name == "vertical-blur"
+                else "vertical_center_blur"
+                if name.endswith("-blur")
+                else "center_crop"
+            )
             assert render["subtitle_source_video"] is None
             assert metadata["subtitle_files"] == []
-    assert len(list((root / "clips").glob("*.mp4"))) == 2 * len(expected_ratios)
+    assert len(list((root / "clips").glob("*.mp4"))) == 12
 
 
-@pytest.mark.parametrize("primary_ratio", [None, "original", "9:16", "16:9", "1:1"])
+@pytest.mark.parametrize("primary_variant", [None, *VARIANTS])
 @pytest.mark.parametrize("subtitles", [False, True])
 def test_disabled_variants_publish_only_primary_and_keep_caption_files(
-    primary_ratio: str | None, subtitles: bool, tmp_path: Path
+    primary_variant: str | None, subtitles: bool, tmp_path: Path
 ) -> None:
     config = AppConfig(
         "source.mp4",
         tmp_path / "out",
         "codex",
         "test-model",
-        render_variants=False,
+        render="primary",
         subtitles_enabled=subtitles,
     )
-    if primary_ratio is not None:
+    if primary_variant is not None:
         config = replace(
-            config, short_aspect_ratio=primary_ratio, long_aspect_ratio=primary_ratio
+            config, short_primary=primary_variant, long_primary=primary_variant
         )
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     root = result.manifest_path.parent
@@ -1111,8 +1077,8 @@ def test_disabled_variants_publish_only_primary_and_keep_caption_files(
             (root / path).is_file() and not path.startswith(".work/")
             for path in metadata["subtitle_files"]
         )
-        if reference["class"] == "short" and primary_ratio == "16:9":
-            assert metadata["render"]["layout"] == "vertical_center_blur"
+        if reference["class"] == "short" and primary_variant == "horizontal":
+            assert metadata["render"]["layout"] == "center_crop"
             assert metadata["render"]["subtitle_source_video"] is None
             if subtitles:
                 assert (root / reference["video"]).read_bytes() == b"subtitled"
@@ -1122,9 +1088,9 @@ def test_disabled_variants_publish_only_primary_and_keep_caption_files(
                 )
 
 
-@pytest.mark.parametrize("primary_ratio", ["original", "9:16", "16:9"])
-def test_square_source_suppresses_variants_only_for_original_output(
-    primary_ratio: str, tmp_path: Path
+@pytest.mark.parametrize("primary_variant", ["horizontal", "vertical", "square"])
+def test_square_source_supports_exactly_five_variants(
+    primary_variant: str, tmp_path: Path
 ) -> None:
     config = AppConfig(
         "source.mp4",
@@ -1132,8 +1098,8 @@ def test_square_source_suppresses_variants_only_for_original_output(
         "codex",
         "test-model",
         subtitles_enabled=False,
-        short_aspect_ratio=primary_ratio,
-        long_aspect_ratio=primary_ratio,
+        short_primary=primary_variant,
+        long_primary=primary_variant,
     )
     result = _run(
         tmp_path,
@@ -1144,22 +1110,17 @@ def test_square_source_suppresses_variants_only_for_original_output(
     )
     root = result.manifest_path.parent
     manifest = json.loads(result.manifest_path.read_text())
-    expected_ratios = (
-        {"original"} if primary_ratio == "original" else {"9:16", "16:9", "1:1"}
-    )
+    expected_ratios = {"9:16", "16:9", "1:1"}
     for reference in manifest["clips"]:
         assert {
             item["aspect_ratio"] for item in reference["variants"]
         } == expected_ratios
         metadata = json.loads((root / reference["metadata"]).read_text())
-        if primary_ratio == "original":
-            assert (metadata["render"]["width"], metadata["render"]["height"]) == (
-                720,
-                720,
-            )
+        assert len(reference["variants"]) == 5
+        assert metadata["render"]["variant"] == primary_variant
 
 
-def test_square_output_suppresses_variants_for_only_its_clip_class(
+def test_square_primary_retains_other_variants(
     tmp_path: Path,
 ) -> None:
     config = AppConfig(
@@ -1168,14 +1129,14 @@ def test_square_output_suppresses_variants_for_only_its_clip_class(
         "codex",
         "test-model",
         subtitles_enabled=False,
-        short_aspect_ratio="1:1",
+        short_primary="square",
         square_size=720,
     )
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     manifest = json.loads(result.manifest_path.read_text())
     assert {item["class"]: len(item["variants"]) for item in manifest["clips"]} == {
-        "short": 1,
-        "long": 3,
+        "short": 6,
+        "long": 6,
     }
     short = next(item for item in manifest["clips"] if item["class"] == "short")
     metadata = json.loads((result.manifest_path.parent / short["metadata"]).read_text())
@@ -1199,17 +1160,213 @@ def test_disabling_variants_reuses_caches_and_preserves_previous_outputs(
     )
     first = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     first_outputs = list((first.manifest_path.parent / "clips").glob("*.mp4"))
-    assert len(first_outputs) == 6
+    assert len(first_outputs) == 12
     transcriber, backend = FakeTranscriber(), FakeBackend()
     second = _run(
-        tmp_path, transcriber, backend, config=replace(config, render_variants=False)
+        tmp_path, transcriber, backend, config=replace(config, render="primary")
     )
     assert transcriber.calls == backend.calls == 0
     assert len(list((second.manifest_path.parent / "clips").glob("*.mp4"))) == 2
     assert all(path.is_file() for path in first_outputs)
 
 
-def test_horizontal_short_reuses_vertical_captions_and_long_has_separate_sidecars(
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+@pytest.mark.parametrize(
+    ("dimensions", "expected"),
+    [
+        ((1280, 720), set(VARIANTS)),
+        ((900, 1200), {"vertical", "square", "horizontal-blur", "square-blur"}),
+        (
+            (720, 720),
+            {"horizontal", "vertical", "square", "horizontal-blur", "vertical-blur"},
+        ),
+    ],
+)
+def test_each_duration_class_publishes_the_source_orientation_matrix(
+    clip_class: str, dimensions: tuple[int, int], expected: set[str], tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        short_render=clip_class == "short",
+        long_render=clip_class == "long",
+    )
+    asr = FakeTranscriber()
+    result = _run(
+        tmp_path, asr, FakeBackend(), config=config, source_media=_media(*dimensions)
+    )
+    assert asr.calls == 1
+    manifest = json.loads(result.manifest_path.read_text())
+    (cut,) = manifest["clips"]
+    assert cut["class"] == clip_class
+    assert {item["variant"] for item in cut["variants"]} == expected
+    assert len(cut["variants"]) == len(expected)
+    width, height = dimensions
+    primary = (
+        "horizontal" if width > height else "vertical" if width < height else "square"
+    )
+    assert cut["variants"][0]["variant"] == primary
+    metadata = json.loads((result.manifest_path.parent / cut["metadata"]).read_text())
+    assert metadata["render"]["variant"] == primary
+    assert metadata["render"]["is_variant"] is False
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+def test_named_render_reenables_judgment_and_publication_for_its_class(
+    kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--llm-backend",
+            "codex",
+            "--llm-model",
+            "test-model",
+            "--render",
+            "false",
+            "--render",
+            f"{kind}:square=true",
+            "--subtitle-enabled",
+            "false",
+        ]
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(tmp_path, asr, ai, config=config)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert asr.calls == 1 and ai.calls == 2
+    (cut,) = manifest["clips"]
+    assert cut["class"] == kind
+    assert [version["variant"] for version in cut["variants"]] == ["square"]
+
+
+@pytest.mark.parametrize("clip_class", ["short", "long"])
+def test_individual_blur_variant_and_subtitles_are_independent(
+    clip_class: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    validated = []
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda _self, **settings: validated.append(settings),
+    )
+    options = SubtitleOptions(font_size="7%", position="top-center")
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        render="primary",
+        short_subtitles_enabled=False,
+        long_subtitles_enabled=False,
+        output_options=(
+            OutputOptions(clip_class, "horizontal", enabled=False),
+            OutputOptions(clip_class, "vertical", enabled=False),
+            OutputOptions(
+                clip_class,
+                "square-blur",
+                enabled=True,
+                subtitles_enabled=True,
+                subtitle_template="amber-word",
+                subtitle_options=options,
+            ),
+        ),
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path,
+        asr,
+        ai,
+        config=config,
+        source_media=replace(
+            _media(), duration=180 if clip_class == "short" else 180.01
+        ),
+    )
+    assert asr.calls == 1 and ai.calls == 0
+    assert validated == [
+        {"template": "amber-word", "template_dir": None, "options": options}
+    ]
+    (video,) = result.clip_paths
+    data = json.loads(video.with_suffix(".json").read_text())
+    assert data["class"] == clip_class
+    assert data["render"]["variant"] == "square-blur"
+    assert data["render"]["subtitles_enabled"] is True
+    assert data["render"]["subtitle_template"] == "amber-word"
+    assert data["render"]["subtitle_overrides"] == options.metadata()
+    assert len(list(video.parent.glob("*.mp4"))) == 1
+
+
+@pytest.mark.parametrize("variant", ["horizontal", "vertical-blur"])
+def test_unavailable_requested_variant_fails_before_asr(
+    variant: str, tmp_path: Path
+) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        output_options=(OutputOptions("short", variant, enabled=True),),
+    )
+    asr = FakeTranscriber()
+    with pytest.raises(ConfigurationError, match="unavailable"):
+        _run(
+            tmp_path,
+            asr,
+            FakeBackend(),
+            config=config,
+            source_media=replace(_media(720, 1280), duration=180),
+        )
+    assert asr.calls == 0
+
+
+def test_disabling_all_variants_fails_before_asr(tmp_path: Path) -> None:
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        output_options=tuple(
+            OutputOptions("long", name, enabled=False) for name in VARIANTS
+        ),
+    )
+    asr = FakeTranscriber()
+    with pytest.raises(ConfigurationError, match="at least one long output"):
+        _run(tmp_path, asr, FakeBackend(), config=config)
+    assert asr.calls == 0
+
+
+def test_named_caption_switch_skips_asr_for_the_only_published_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render",
+            "primary",
+            "--render",
+            "short:horizontal=false",
+            "--render",
+            "short:square-blur=true",
+            "--subtitle-enabled",
+            "short:square-blur=false",
+        ]
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path, asr, ai, config=config, source_media=replace(_media(), duration=180)
+    )
+    assert asr.calls == ai.calls == 0
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["transcription"] is None
+    (clip,) = manifest["clips"]
+    assert [item["variant"] for item in clip["variants"]] == ["square-blur"]
+
+
+def test_each_variant_has_its_own_final_geometry_caption_sidecars(
     tmp_path: Path,
 ) -> None:
     config = AppConfig("source.mp4", tmp_path / "out", "codex", "test-model")
@@ -1217,34 +1374,17 @@ def test_horizontal_short_reuses_vertical_captions_and_long_has_separate_sidecar
     root = result.manifest_path.parent
     manifest = json.loads(result.manifest_path.read_text())
     for reference in manifest["clips"]:
-        versions = {
-            item["aspect_ratio"]: json.loads((root / item["metadata"]).read_text())
-            for item in reference["variants"]
-        }
-        assert set(versions) == {"9:16", "16:9", "1:1"}
-        vertical, horizontal, square = (
-            versions["9:16"],
-            versions["16:9"],
-            versions["1:1"],
-        )
-        for metadata in versions.values():
+        seen: set[str] = set()
+        assert {item["variant"] for item in reference["variants"]} == set(VARIANTS)
+        for item in reference["variants"]:
+            metadata = json.loads((root / item["metadata"]).read_text())
             assert metadata["render"]["subtitles_enabled"] is True
             assert metadata["render"]["subtitle_template"] == "yellow-pop"
+            assert metadata["render"]["subtitle_source_video"] is None
             assert len(metadata["subtitle_files"]) == 3
+            assert seen.isdisjoint(metadata["subtitle_files"])
+            seen.update(metadata["subtitle_files"])
             assert all((root / path).is_file() for path in metadata["subtitle_files"])
-        if reference["class"] == "short":
-            assert horizontal["subtitle_files"] == vertical["subtitle_files"]
-            assert horizontal["render"]["subtitle_source_video"] == vertical["video"]
-            assert (root / horizontal["video"]).read_bytes() == b"subtitled"
-        else:
-            assert set(horizontal["subtitle_files"]).isdisjoint(
-                vertical["subtitle_files"]
-            )
-            assert horizontal["render"]["subtitle_source_video"] is None
-        assert vertical["render"]["subtitle_source_video"] is None
-        assert square["render"]["subtitle_source_video"] is None
-        assert set(square["subtitle_files"]).isdisjoint(vertical["subtitle_files"])
-        assert set(square["subtitle_files"]).isdisjoint(horizontal["subtitle_files"])
 
 
 @pytest.mark.parametrize("variants", [False, True])
@@ -1276,7 +1416,7 @@ def test_class_subtitle_controls_apply_to_every_version(
         subtitles_enabled=general,
         short_subtitles_enabled=short,
         long_subtitles_enabled=long,
-        render_variants=variants,
+        render=True if variants else "primary",
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1285,7 +1425,7 @@ def test_class_subtitle_controls_apply_to_every_version(
     manifest = json.loads(result.manifest_path.read_text())
     for reference in manifest["clips"]:
         expected = expected_short if reference["class"] == "short" else expected_long
-        assert len(reference["variants"]) == (3 if variants else 1)
+        assert len(reference["variants"]) == (6 if variants else 1)
         for variant in reference["variants"]:
             metadata = json.loads((root / variant["metadata"]).read_text())
             assert metadata["render"]["subtitles_enabled"] is expected
@@ -1314,8 +1454,8 @@ def test_disabled_clip_class_is_not_reviewed_or_published(
         "codex",
         "test-model",
         subtitles_enabled=False,
-        short_clips_enabled=enabled == "short",
-        long_clips_enabled=enabled == "long",
+        short_render=enabled == "short",
+        long_render=enabled == "long",
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1324,7 +1464,7 @@ def test_disabled_clip_class_is_not_reviewed_or_published(
     assert manifest["analysis"]["proposed"] == manifest["analysis"]["selected"] == 1
     assert {clip["class"] for clip in manifest["clips"]} == {enabled}
     assert len(result.clip_paths) == 1
-    assert len(list((result.manifest_path.parent / "clips").glob("*.mp4"))) == 3
+    assert len(list((result.manifest_path.parent / "clips").glob("*.mp4"))) == 6
 
 
 @pytest.mark.parametrize("short_variants", [False, True])
@@ -1338,24 +1478,24 @@ def test_each_class_controls_its_variants(
         "codex",
         "test-model",
         subtitles_enabled=False,
-        render_variants=False,
-        short_variants_enabled=short_variants,
-        long_variants_enabled=long_variants,
+        render="primary",
+        short_render=True if short_variants else "primary",
+        long_render=True if long_variants else "primary",
     )
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     manifest = json.loads(result.manifest_path.read_text())
     counts = {clip["class"]: len(clip["variants"]) for clip in manifest["clips"]}
     assert counts == {
-        "short": 3 if short_variants else 1,
-        "long": 3 if long_variants else 1,
+        "short": 6 if short_variants else 1,
+        "long": 6 if long_variants else 1,
     }
 
 
-@pytest.mark.parametrize("primary_ratio", ["9:16", "16:9", "original"])
+@pytest.mark.parametrize("primary_variant", ["vertical", "horizontal", "square"])
 @pytest.mark.parametrize("primary_subtitles", [False, True])
 @pytest.mark.parametrize("variant_subtitles", [None, False, True])
 def test_primary_and_variant_subtitles_are_independent_and_persisted(
-    primary_ratio: str,
+    primary_variant: str,
     primary_subtitles: bool,
     variant_subtitles: bool | None,
     tmp_path: Path,
@@ -1365,12 +1505,16 @@ def test_primary_and_variant_subtitles_are_independent_and_persisted(
         tmp_path / "out",
         "codex",
         "test-model",
-        short_aspect_ratio=primary_ratio,
-        long_aspect_ratio=primary_ratio,
+        short_primary=primary_variant,
+        long_primary=primary_variant,
         short_subtitles_enabled=primary_subtitles,
         long_subtitles_enabled=primary_subtitles,
-        short_variant_subtitles_enabled=variant_subtitles,
-        long_variant_subtitles_enabled=variant_subtitles,
+        output_options=tuple(
+            OutputOptions(clip_class, name, subtitles_enabled=variant_subtitles)
+            for clip_class in ("short", "long")
+            for name in VARIANTS
+            if name != primary_variant
+        ),
     )
     asr, ai = FakeTranscriber(), FakeBackend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1381,7 +1525,7 @@ def test_primary_and_variant_subtitles_are_independent_and_persisted(
     for clip in manifest["clips"]:
         for version in clip["variants"]:
             metadata = json.loads((root / version["metadata"]).read_text())
-            is_variant = version["aspect_ratio"] != primary_ratio
+            is_variant = version["video"] != clip["video"]
             expected = (
                 variant_subtitles
                 if is_variant and variant_subtitles is not None
@@ -1403,14 +1547,14 @@ def test_primary_and_variant_subtitles_are_independent_and_persisted(
                 and version["aspect_ratio"] == "16:9"
                 and variant_subtitles is not None
                 and primary_subtitles != variant_subtitles
-                and primary_ratio in ("9:16", "16:9")
+                and primary_variant in ("vertical", "horizontal")
             ):
                 assert metadata["render"]["subtitle_source_video"] is None
 
 
 @pytest.mark.parametrize("primary_subtitles", [False, True])
 @pytest.mark.parametrize("unused_variant_subtitles", [False, True])
-def test_horizontal_only_short_foreground_uses_primary_subtitles(
+def test_horizontal_only_short_uses_primary_subtitles(
     primary_subtitles: bool, unused_variant_subtitles: bool, tmp_path: Path
 ) -> None:
     config = AppConfig(
@@ -1418,12 +1562,15 @@ def test_horizontal_only_short_foreground_uses_primary_subtitles(
         tmp_path / "out",
         "codex",
         "test-model",
-        short_clips_enabled=True,
-        long_clips_enabled=False,
-        short_aspect_ratio="16:9",
-        short_variants_enabled=False,
+        short_render="primary",
+        long_render=False,
+        short_primary="horizontal",
         short_subtitles_enabled=primary_subtitles,
-        short_variant_subtitles_enabled=unused_variant_subtitles,
+        output_options=(
+            OutputOptions(
+                "short", "vertical", subtitles_enabled=unused_variant_subtitles
+            ),
+        ),
     )
     result = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     (video,) = result.clip_paths
@@ -1444,7 +1591,7 @@ def test_reenabling_class_reuses_proposals_and_transcription(tmp_path: Path) -> 
         tmp_path / "out",
         "codex",
         "test-model",
-        long_clips_enabled=False,
+        long_render=False,
         subtitles_enabled=False,
     )
     _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
@@ -1455,9 +1602,10 @@ def test_reenabling_class_reuses_proposals_and_transcription(tmp_path: Path) -> 
         ai,
         config=replace(
             config,
-            long_clips_enabled=True,
-            short_variant_subtitles_enabled=True,
-            long_variants_enabled=False,
+            long_render="primary",
+            output_options=(
+                OutputOptions("short", "horizontal-blur", subtitles_enabled=True),
+            ),
         ),
     )
     assert asr.calls == 0 and ai.calls == 1
@@ -1467,7 +1615,7 @@ def test_reenabling_class_reuses_proposals_and_transcription(tmp_path: Path) -> 
         tmp_path,
         asr,
         ai,
-        config=replace(config, short_clips_enabled=False, long_clips_enabled=True),
+        config=replace(config, short_render=False, long_render=True),
     )
     assert asr.calls == ai.calls == 0
 
@@ -2494,3 +2642,182 @@ def test_pipeline_merges_proposals_revised_to_same_interval(tmp_path: Path) -> N
     assert manifest["analysis"]["editorially_eligible"] == 1
     assert manifest["analysis"]["selected"] == 1
     assert len(result.clip_paths) == 1
+
+
+def test_scoped_dimensions_and_styles_reach_final_render_without_extra_asr(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    from multicuts.adapters.multisubs import MultisubsAdapter
+
+    monkeypatch.setattr(
+        MultisubsAdapter, "validate_subtitle_options", lambda *a, **k: None
+    )
+    config = parse_run_config(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--width",
+            "short=720",
+            "--width",
+            "short:vertical=360",
+            "--subtitle-font-size",
+            "short:vertical=4%",
+        ]
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path, asr, ai, config=config, source_media=replace(_media(), duration=180)
+    )
+    assert asr.calls == 1 and ai.calls == 0
+    root = result.manifest_path.parent
+    manifest = json.loads(result.manifest_path.read_text())
+    variants = manifest["clips"][0]["variants"]
+    assert len(variants) == 6
+    for version in variants:
+        data = json.loads((root / version["metadata"]).read_text())
+        width = 360 if version["variant"] == "vertical" else 720
+        assert data["render"]["width"] == width
+        if version["variant"] == "vertical":
+            assert data["render"]["height"] == 640
+            assert data["render"]["subtitle_overrides"] == {"font_size": "4%"}
+
+
+def test_mismatched_scoped_dimensions_fail_before_asr(tmp_path):
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        full_video=True,
+        output_options=(OutputOptions("long", "horizontal", width=720, height=720),),
+    )
+    asr = FakeTranscriber()
+    with pytest.raises(ConfigurationError, match="dimensions must be"):
+        _run(tmp_path, asr, FakeBackend(), config=config)
+    assert asr.calls == 0
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+def test_custom_canvas_metadata_captions_and_cache_follow_dimensions(
+    kind, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda *a, **k: None,
+    )
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "model",
+        short_primary="horizontal-blur",
+        long_primary="horizontal-blur",
+        render="primary",
+        output_options=(
+            OutputOptions(
+                kind,
+                "horizontal-blur",
+                width=2520,
+                height=1080,
+                subtitle_options=SubtitleOptions(font_size="4%"),
+            ),
+        ),
+    )
+    first = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
+    primary = next(
+        path
+        for path in first.clip_paths
+        if json.loads(path.with_suffix(".json").read_text())["class"] == kind
+    )
+    metadata = json.loads(primary.with_suffix(".json").read_text())
+    assert (metadata["render"]["width"], metadata["render"]["height"]) == (2520, 1080)
+    assert metadata["render"]["aspect_ratio"] == "7:3"
+    assert metadata["render"]["variant"] == "horizontal-blur"
+    assert metadata["render"]["subtitle_overrides"] == {"font_size": "4%"}
+    assert len(metadata["subtitle_files"]) == 3
+    asr, ai = FakeTranscriber(), FakeBackend()
+    second = _run(
+        tmp_path,
+        asr,
+        ai,
+        config=replace(
+            config,
+            output_options=(
+                OutputOptions(kind, "horizontal-blur", width=1600, height=1000),
+            ),
+        ),
+    )
+    assert asr.calls == ai.calls == 0
+    primary = next(
+        path
+        for path in second.clip_paths
+        if json.loads(path.with_suffix(".json").read_text())["class"] == kind
+    )
+    metadata = json.loads(primary.with_suffix(".json").read_text())
+    assert (metadata["render"]["width"], metadata["render"]["height"]) == (1600, 1000)
+    assert metadata["render"]["aspect_ratio"] == "8:5"
+
+
+@pytest.mark.parametrize("kind", ["short", "long"])
+@pytest.mark.parametrize(
+    ("dimensions", "expected"),
+    [
+        ((1920, 1080), {"horizontal-blur": (656, 606), "square-blur": (236, 606)}),
+        ((900, 1200), {"horizontal-blur": (554, 810), "square-blur": (134, 810)}),
+        ((720, 720), {"horizontal-blur": (656, 606)}),
+    ],
+)
+def test_blur_subtitle_containers_follow_the_source_and_keep_vertical_blur_full_canvas(
+    kind, dimensions, expected, tmp_path, monkeypatch
+):
+    validated = []
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda _self, **settings: validated.append(settings),
+    )
+    config = AppConfig(
+        "source.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        subtitles_enabled=True,
+        short_render=kind == "short",
+        long_render=kind == "long",
+        subtitle_options=SubtitleOptions(position="top-left"),
+    )
+    transcriber = FakeTranscriber()
+    result = _run(
+        tmp_path,
+        transcriber,
+        FakeBackend(),
+        config=config,
+        source_media=_media(*dimensions),
+    )
+    assert transcriber.calls == 1
+    assert validated == [
+        {
+            "template": "yellow-pop",
+            "template_dir": None,
+            "options": config.subtitle_options,
+        }
+    ]
+    manifest = json.loads(result.manifest_path.read_text())
+    for cut in manifest["clips"]:
+        for version in cut["variants"]:
+            metadata = json.loads(
+                (result.manifest_path.parent / version["metadata"]).read_text()
+            )
+            name = version["variant"]
+            render = metadata["render"]
+            if name in expected:
+                left, width = expected[name]
+                assert render["subtitle_container"] == {
+                    "x": left,
+                    "y": 0,
+                    "width": width,
+                    "height": 1080,
+                }
+            else:
+                assert render["subtitle_container"] is None
+            assert render["subtitle_overrides"] == {"position": "top-left"}

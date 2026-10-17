@@ -9,6 +9,7 @@ import re
 import sys
 from collections.abc import Mapping
 from dataclasses import asdict
+from decimal import ROUND_HALF_UP, Decimal
 from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
@@ -22,7 +23,11 @@ from multicuts.models import (
     TranscriptSegment,
     Word,
 )
-from multicuts.subtitles import SubtitleOptions
+from multicuts.subtitles import (
+    SUBTITLE_BOOLEAN_FIELDS,
+    SubtitleContainer,
+    SubtitleOptions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +352,10 @@ def _subtitle_progress(message: str) -> None:
 
 
 def _build_subtitle_config(
-    template: str | None, template_dir: Path | None, options: SubtitleOptions
+    template: str | None,
+    template_dir: Path | None,
+    options: SubtitleOptions,
+    container: SubtitleContainer | None = None,
 ) -> object:
     try:
         provider = importlib.import_module("multisubs")
@@ -361,13 +369,70 @@ def _build_subtitle_config(
             "Subtitle presentation requires multisubs 5.1+; update its installation"
         )
     try:
-        return builder(
+        configured = builder(
             template=template,
             template_dir=template_dir,
             overrides=options.overrides(),
         )
+        if container is None:
+            return configured
+        layout = getattr(configured, "layout", None)
+        if layout is None:
+            raise ConfigurationError("Multisubs must expose its public subtitle layout")
+
+        def pixels(length: object) -> Decimal:
+            if type(length) is int:
+                return Decimal(length)
+            value, unit = getattr(length, "value", None), getattr(length, "unit", None)
+            if not isinstance(value, Decimal) or unit not in ("%", "px"):
+                raise ConfigurationError("Unsupported multisubs layout length")
+            return value * container.width / 100 if unit == "%" else value
+
+        overrides = options.overrides()
+        # Translate the horizontal reference; multisubs still owns wrapping,
+        # typography, vertical placement, and every animation.
+        if getattr(layout.placement_mode, "value", layout.placement_mode) == "explicit":
+            x = int(
+                pixels(layout.position_x).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            )
+            width = int(
+                pixels(layout.max_width).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            )
+            anchor = getattr(layout.anchor, "value", layout.anchor).split("-")[-1]
+            fraction = {
+                "left": Decimal(0),
+                "center": Decimal("0.5"),
+                "right": Decimal(1),
+            }[anchor]
+            left = Decimal(x) - fraction * width
+            if width <= 0 or left < 0 or left + width > container.width:
+                raise ConfigurationError(
+                    "Subtitle layout envelope must fit the central video container"
+                )
+            overrides.update(
+                position_x=f"{container.left + x}px", max_width=f"{width}px"
+            )
+        else:
+            right = container.frame_width - container.left - container.width
+            overrides.update(
+                margin_left=f"{container.left + pixels(layout.margin_left)}px",
+                margin_right=f"{right + pixels(layout.margin_right)}px",
+            )
+        return builder(
+            template=template, template_dir=template_dir, overrides=overrides
+        )
+    except ConfigurationError:
+        raise
     except provider.MultisubsError as exc:
-        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", r"--\1subtitle-\2", str(exc))
+
+        def subtitle_flag(match: re.Match[str]) -> str:
+            field = match[2]
+            flag = "--subtitle-" + field
+            if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
+                flag += " false" if match[1] else " true"
+            return flag
+
+        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(exc))
         raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
     except Exception as exc:
         raise ConfigurationError(
@@ -383,6 +448,7 @@ def _render_subtitles(
     template_dir: Path | None,
     workspace: Path,
     options: SubtitleOptions | None = None,
+    container: SubtitleContainer | None = None,
 ) -> SubtitleArtifacts:
     """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
@@ -411,8 +477,12 @@ def _render_subtitles(
     try:
         provider = importlib.import_module("multisubs")
         presentation = (
-            {"subtitle_config": _build_subtitle_config(template, template_dir, options)}
-            if options.overrides()
+            {
+                "subtitle_config": _build_subtitle_config(
+                    template, template_dir, options, container
+                )
+            }
+            if options.overrides() or container is not None
             else {"template": template, "template_dir": template_dir}
         )
         generated = provider.render_transcript(
@@ -422,6 +492,8 @@ def _render_subtitles(
             **presentation,
             progress=_subtitle_progress,
         )
+    except ConfigurationError:
+        raise
     except Exception as exc:
         if any(
             term in str(exc).lower()
@@ -484,6 +556,7 @@ class MultisubsAdapter:
         template_dir: Path | None,
         workspace: Path,
         options: SubtitleOptions | None = None,
+        container: SubtitleContainer | None = None,
     ) -> SubtitleArtifacts:
         """Render existing clip words without starting a new ASR pass."""
         return _render_subtitles(
@@ -493,6 +566,7 @@ class MultisubsAdapter:
             template_dir=template_dir,
             workspace=workspace,
             options=options,
+            container=container,
         )
 
     def validate_subtitle_options(

@@ -22,7 +22,8 @@ from multicuts.models import (
     SubtitleArtifacts,
     Transcript,
 )
-from multicuts.subtitles import SubtitleOptions
+from multicuts.subtitles import SubtitleContainer, SubtitleOptions
+from multicuts.variants import aspect_ratio
 
 
 class SubtitleProvider(Protocol):
@@ -37,6 +38,7 @@ class SubtitleProvider(Protocol):
         template_dir: Path | None,
         workspace: Path,
         options: SubtitleOptions | None = None,
+        container: SubtitleContainer | None = None,
     ) -> SubtitleArtifacts: ...
 
 
@@ -56,11 +58,9 @@ def _even(value: int) -> int:
     return value - value % 2
 
 
-def _crop_filter(media: MediaInfo, aspect_ratio: str, width: int, height: int) -> str:
+def _crop_filter(media: MediaInfo, width: int, height: int) -> str:
     source_width = _even(media.presentation_width)
     source_height = _even(media.presentation_height)
-    if aspect_ratio == "original":
-        return f"scale={source_width}:{source_height}:flags=lanczos,setsar=1"
     if source_width * height >= source_height * width:
         crop_width = _even(source_height * width // height)
         crop_height = source_height
@@ -77,16 +77,42 @@ def _crop_filter(media: MediaInfo, aspect_ratio: str, width: int, height: int) -
 def _geometry(
     config: AppConfig, clip_class: str, media: MediaInfo
 ) -> tuple[str, int, int]:
-    ratio = (
-        config.short_aspect_ratio if clip_class == "short" else config.long_aspect_ratio
+    variant = config.render_variant or config.primary_for(clip_class, media)
+    width, height = config.dimensions_for(clip_class, variant)
+    return aspect_ratio(width, height), width, height
+
+
+def foreground_dimensions(
+    media: MediaInfo, variant: str, width: int, height: int
+) -> tuple[int, int]:
+    """Share the fitted foreground geometry between composition and captions."""
+    source_width, source_height = media.presentation_width, media.presentation_height
+    if variant == "vertical-blur":
+        fg_ratio_width, fg_ratio_height = (
+            (source_width, source_height) if source_width > source_height else (16, 9)
+        )
+        fg_width = width
+        fg_height = max(2, _even(width * fg_ratio_height // fg_ratio_width))
+    else:
+        fg_ratio_width, fg_ratio_height = (
+            (source_width, source_height) if source_width < source_height else (9, 16)
+        )
+        fg_height = height
+        fg_width = max(2, _even(height * fg_ratio_width // fg_ratio_height))
+    return fg_width, fg_height
+
+
+def _blur_filter(media: MediaInfo, variant: str, width: int, height: int) -> str:
+    fg_width, fg_height = foreground_dimensions(media, variant, width, height)
+    left, top = _even((width - fg_width) // 2), _even((height - fg_height) // 2)
+    return (
+        f"[0:{media.video_stream_index}]"
+        f"{_crop_filter(media, fg_width, fg_height)},"
+        "split=2[base][fg];"
+        f"[base]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
+        f"[bg][fg]overlay={left}:{top}:shortest=1,setsar=1[video]"
     )
-    if ratio == "9:16":
-        return ratio, config.vertical_width, config.vertical_height
-    if ratio == "16:9":
-        return ratio, config.horizontal_width, config.horizontal_height
-    if ratio == "1:1":
-        return ratio, config.square_size, config.square_size
-    return ratio, _even(media.presentation_width), _even(media.presentation_height)
 
 
 def _inspect(path: Path) -> MediaInfo:
@@ -198,11 +224,25 @@ def render_raw(
         f"{local_start:.6f}",
         "-t",
         f"{proposal.end - proposal.start:.6f}",
-        "-map",
-        f"0:{media.video_stream_index}",
-        "-vf",
-        _crop_filter(media, ratio, width, height),
     ]
+    if config.render_variant is not None and config.render_variant.endswith("-blur"):
+        command.extend(
+            [
+                "-filter_complex",
+                _blur_filter(media, config.render_variant, width, height),
+                "-map",
+                "[video]",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "-map",
+                f"0:{media.video_stream_index}",
+                "-vf",
+                _crop_filter(media, width, height),
+            ]
+        )
     if media.audio_stream_index is not None:
         command.extend(["-map", f"0:{media.audio_stream_index}"])
     path, actual = _encode_and_publish(
@@ -216,55 +256,6 @@ def render_raw(
         work=work,
     )
     return path, actual, ratio
-
-
-def render_short_horizontal(
-    raw_vertical: Path,
-    final_vertical: Path,
-    vertical_media: MediaInfo,
-    config: AppConfig,
-    *,
-    output: Path,
-    work: Path,
-) -> tuple[Path, MediaInfo]:
-    """Keep the complete subtitled short centered over its blurred video."""
-    foreground = _inspect(final_vertical)
-    width, height = config.horizontal_width, config.horizontal_height
-    filters = (
-        f"[0:{vertical_media.video_stream_index}]"
-        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},gblur=sigma={height / 36:.4f}:steps=2[bg];"
-        f"[1:{foreground.video_stream_index}]scale=-2:{height}:flags=lanczos,"
-        "setsar=1[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[video]"
-    )
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nostdin",
-        "-i",
-        str(raw_vertical),
-        "-i",
-        str(final_vertical),
-        "-filter_complex",
-        filters,
-        "-map",
-        "[video]",
-    ]
-    if foreground.audio_stream_index is not None:
-        command.extend(["-map", f"1:{foreground.audio_stream_index}"])
-    return _encode_and_publish(
-        command,
-        config,
-        media=foreground,
-        duration=vertical_media.duration,
-        width=width,
-        height=height,
-        output=output,
-        work=work,
-    )
 
 
 def clip_transcript(
@@ -457,6 +448,11 @@ def render_final(
         return output, (), None
     if transcript is None:
         raise RenderingError("Subtitles require a source transcript")
+    if config.subtitle_container is not None and (
+        config.subtitle_container.frame_width != raw_media.presentation_width
+        or config.subtitle_container.height != raw_media.presentation_height
+    ):
+        raise RenderingError("Subtitle container does not match the final canvas")
     provider = subtitle_provider or MultisubsAdapter()
     try:
         local = clip_transcript(
@@ -469,6 +465,11 @@ def render_final(
         )
     except ValueError as exc:
         raise RenderingError("Could not derive clip-local transcript") from exc
+    container_args = (
+        {"container": config.subtitle_container}
+        if config.subtitle_container is not None
+        else {}
+    )
     artifacts = provider.subtitle_clip(
         raw_path,
         local,
@@ -476,6 +477,7 @@ def render_final(
         template_dir=config.subtitle_template_dir,
         workspace=work / f"subtitles-{clip.proposal.id}",
         options=config.subtitle_options,
+        **container_args,
     )
     final_media = _inspect(artifacts.video_path)
     if (
