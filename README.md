@@ -125,7 +125,7 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **5.1.0** release wheel, including the public subtitle configuration builder and compatibility fixes for current FFmpeg. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **5.2.0** release wheel, including subtitle rendering optimizations and the public subtitle configuration builder. The default ASR configuration is **WhisperX + `turbo`**.
 
 Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
 `render_transcript()` for subtitles. Multicuts uses these public APIs, with one
@@ -189,7 +189,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.1.0/multisubs-5.1.0-py3-none-any.whl#sha256=cb39fbebb561b6d6de234eb08538bfb946f49752e8cdfa677e48d9ed66379073'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.2.0/multisubs-5.2.0-py3-none-any.whl#sha256=ff6e1ee31ae56baadcebda5e162e7e4fad28a52590eeac3bac19b7784a932b39'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -210,7 +210,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.1.0/multisubs-5.1.0-py3-none-any.whl#sha256=cb39fbebb561b6d6de234eb08538bfb946f49752e8cdfa677e48d9ed66379073'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.2.0/multisubs-5.2.0-py3-none-any.whl#sha256=ff6e1ee31ae56baadcebda5e162e7e4fad28a52590eeac3bac19b7784a932b39'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -225,7 +225,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -650,7 +650,7 @@ does not run ASR again.
 Lengths accept `%` or `px`; percentages resolve against the subtitle container
 or the corresponding font/layout metric.
 See [presentation options](#subtitle-positioning)
-and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#subtitle-configuration-reference)
+and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#subtitle-configuration-reference)
 for units, valid values, and combinations.
 
 <details>
@@ -871,7 +871,7 @@ do not accept duration overrides. Set a phase to `none` to clear its inherited
 effect. Scope disables apply after validation; pass `false` to clear the
 corresponding disable setting. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
-See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v5.1.0/README.md#cue-and-word-effects)
+See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
 
 #### Execution

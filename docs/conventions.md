@@ -325,7 +325,7 @@ multisubs >=5,<6
 ```
 
 During early implementation the environment may pin the official
-`multisubs[whisperx]` 5.1.0 wheel. Keep the selected extra aligned with the ASR
+`multisubs[whisperx]` 5.2.0 wheel. Keep the selected extra aligned with the ASR
 backend used by the adapter.
 
 Rules:
