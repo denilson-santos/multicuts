@@ -352,7 +352,7 @@ class _OutputCommand(TyperCommand):
                     metavar="[SCOPE=]VALUE...",
                     help=help_text,
                     rich_help_panel=(
-                        "Clips"
+                        "Outputs"
                         if not subtitle
                         else "Subtitles"
                         if field in ("enabled", "template", "template_dir")
@@ -627,40 +627,40 @@ def run_command(
             rich_help_panel="Analysis",
         ),
     ] = None,
-    render_jobs: Annotated[
+    jobs: Annotated[
         int | None,
         typer.Option(
-            "--render-jobs",
-            help="Concurrent cuts (default: 1).",
+            "--jobs",
+            help="Maximum cuts rendered concurrently (default: 1).",
             rich_help_panel="Execution",
         ),
     ] = None,
-    render_encoder: Annotated[
+    video_encoder: Annotated[
         str | None,
         typer.Option(
-            "--render-encoder",
+            "--video-encoder",
             help="libx264 or h264_nvenc "
             "(default: FFmpeg selection, matching multisubs).",
-            rich_help_panel="Execution",
+            rich_help_panel="Video encoding",
         ),
     ] = None,
-    render_preset: Annotated[
+    video_preset: Annotated[
         str | None,
         typer.Option(
-            "--render-preset",
-            help="Requires --render-encoder. Default: medium (libx264), "
+            "--video-preset",
+            help="Requires --video-encoder. Default: medium (libx264), "
             "p4 (h264_nvenc); omitted encoder: FFmpeg default.",
-            rich_help_panel="Execution",
+            rich_help_panel="Video encoding",
         ),
     ] = None,
-    render_quality: Annotated[
+    video_quality: Annotated[
         int | None,
         typer.Option(
-            "--render-quality",
-            help="Quality from 0 through 51; requires --render-encoder. "
+            "--video-quality",
+            help="Quality from 0 through 51; requires --video-encoder. "
             "Default: CRF 23 (libx264), CQ 28 (h264_nvenc); "
             "omitted encoder: FFmpeg default.",
-            rich_help_panel="Execution",
+            rich_help_panel="Video encoding",
         ),
     ] = None,
     keep_intermediates: Annotated[
@@ -719,15 +719,15 @@ def run_command(
         block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
         block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
         render_encoding=RenderEncoding(
-            encoder=str(_value(render_encoder, "RENDER_ENCODER", "")) or None,
-            preset=str(_value(render_preset, "RENDER_PRESET", "")) or None,
+            encoder=str(_value(video_encoder, "VIDEO_ENCODER", "")) or None,
+            preset=str(_value(video_preset, "VIDEO_PRESET", "")) or None,
             quality=(
-                _integer(render_quality, "RENDER_QUALITY", 0)
-                if _value(render_quality, "RENDER_QUALITY", None) is not None
+                _integer(video_quality, "VIDEO_QUALITY", 0)
+                if _value(video_quality, "VIDEO_QUALITY", None) is not None
                 else None
             ),
         ),
-        render_jobs=_integer(render_jobs, "RENDER_JOBS", 1),
+        render_jobs=_integer(jobs, "JOBS", 1),
         keep_intermediates=bool(keep_intermediates),
         force_recompute=bool(force_recompute),
         verbose=bool(verbose),

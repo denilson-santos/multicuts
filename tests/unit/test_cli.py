@@ -834,23 +834,35 @@ sys.exit(code)
     assert "Hidden" not in result.stdout + result.stderr
 
 
-def test_render_encoding_cli_overrides_environment(monkeypatch):
+def test_video_encoding_resolves_cli_environment_and_dotenv_precedence(
+    tmp_path, monkeypatch
+):
     from multicuts.app_config import RenderEncoding
 
-    monkeypatch.setenv("RENDER_ENCODER", "h264_nvenc")
-    monkeypatch.setenv("RENDER_PRESET", "p4")
-    monkeypatch.setenv("RENDER_QUALITY", "28")
+    monkeypatch.chdir(tmp_path)
+    for name in ("VIDEO_ENCODER", "VIDEO_PRESET", "VIDEO_QUALITY"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / ".env").write_text(
+        "VIDEO_ENCODER=libx264\nVIDEO_PRESET=medium\nVIDEO_QUALITY=23\n",
+        encoding="utf-8",
+    )
+    assert parse_run_config(_args()).render_encoding == RenderEncoding(
+        "libx264", "medium", 23
+    )
+    monkeypatch.setenv("VIDEO_ENCODER", "h264_nvenc")
+    monkeypatch.setenv("VIDEO_PRESET", "p4")
+    monkeypatch.setenv("VIDEO_QUALITY", "28")
     assert parse_run_config(_args()).render_encoding == RenderEncoding(
         "h264_nvenc", "p4", 28
     )
     config = parse_run_config(
         _args()
         + [
-            "--render-encoder",
+            "--video-encoder",
             "libx264",
-            "--render-preset",
+            "--video-preset",
             "fast",
-            "--render-quality",
+            "--video-quality",
             "0",
         ]
     )
@@ -877,10 +889,44 @@ def test_invalid_render_encoding_fails_configuration(options):
         RenderEncoding(**options)
 
 
-def test_render_jobs_configuration_and_validation(monkeypatch):
-    monkeypatch.setenv("RENDER_JOBS", "3")
+def test_jobs_resolves_cli_environment_and_dotenv_precedence(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("JOBS", raising=False)
+    (tmp_path / ".env").write_text("JOBS=4\n", encoding="utf-8")
+    assert parse_run_config(_args()).render_jobs == 4
+    monkeypatch.setenv("JOBS", "3")
     assert parse_run_config(_args()).render_jobs == 3
-    assert parse_run_config(_args() + ["--render-jobs", "2"]).render_jobs == 2
+    assert parse_run_config(_args() + ["--jobs", "2"]).render_jobs == 2
+
+
+@pytest.mark.parametrize("configured_in", ["dotenv", "process"])
+def test_removed_render_execution_environment_names_are_ignored(
+    tmp_path, monkeypatch, configured_in
+):
+    from multicuts.app_config import RenderEncoding
+
+    monkeypatch.chdir(tmp_path)
+    for name in ("JOBS", "VIDEO_ENCODER", "VIDEO_PRESET", "VIDEO_QUALITY"):
+        monkeypatch.delenv(name, raising=False)
+    removed = {
+        "RENDER_JOBS": "0",
+        "RENDER_ENCODER": "unknown",
+        "RENDER_PRESET": "unknown",
+        "RENDER_QUALITY": "invalid",
+    }
+    if configured_in == "dotenv":
+        for name in removed:
+            monkeypatch.delenv(name, raising=False)
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{name}={value}" for name, value in removed.items()),
+            encoding="utf-8",
+        )
+    else:
+        for name, value in removed.items():
+            monkeypatch.setenv(name, value)
+    config = parse_run_config(_args())
+    assert config.render_jobs == 1
+    assert config.render_encoding == RenderEncoding()
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5])

@@ -750,13 +750,20 @@ Configure clip discovery, AI analysis, and transcription.
 
 #### Clips
 
-Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
+Choose direct cuts and the overlap policy.
 
 | Option | Purpose |
 | --- | --- |
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
+
+#### Outputs
+
+Choose enabled classes, primary formats, dimensions, and variants.
+
+| Option | Purpose |
+| --- | --- |
 | `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`. |
 | `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
 | `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
@@ -877,7 +884,7 @@ for the types accepted by each track and phase.
 
 #### Execution
 
-`--render-jobs 2` renders up to two cuts concurrently; `RENDER_JOBS` supplies
+`--jobs 2` renders up to two cuts concurrently; `JOBS` supplies
 the same global setting. The default is 1. Each cut renders its enabled variants
 in sequence and shares the source transcript. Files appear as they finish;
 the final report keeps editorial rank order. The command waits for completion.
@@ -887,10 +894,23 @@ your hardware: each FFmpeg can already use multiple CPU threads. The manifest
 records concurrency/render time; output metadata records preparation and
 finalization times.
 
-Video encoding can be configured globally with `--render-encoder libx264`
-or `--render-encoder h264_nvenc`, plus `--render-preset` and `--render-quality`.
-The corresponding environment variables are `RENDER_ENCODER`, `RENDER_PRESET`,
-and `RENDER_QUALITY`; CLI overrides process environment, then `.env`.
+Control intermediate files, cache reuse, and terminal output.
+
+| Option | Purpose |
+| --- | --- |
+| `--jobs COUNT` | Maximum cuts rendered concurrently; default: `1`. Environment: `JOBS`. |
+| `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
+| `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
+| `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
+
+By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
+
+#### Video encoding
+
+Video encoding can be configured globally with `--video-encoder libx264`
+or `--video-encoder h264_nvenc`, plus `--video-preset` and `--video-quality`.
+The corresponding environment variables are `VIDEO_ENCODER`, `VIDEO_PRESET`,
+and `VIDEO_QUALITY`; CLI overrides process environment, then `.env`.
 Preset and quality require an explicit encoder. libx264 accepts its normal
 presets (such as `veryfast` or `medium`); NVIDIA accepts `p1` through `p7`.
 Quality accepts integers from 0 through 51, including 0. Explicit defaults are
@@ -903,21 +923,21 @@ video preparation. An explicitly selected encoder is checked before
 transcription, and settings are applied to both video preparation and subtitles.
 NVENC requires a compatible NVIDIA device and driver.
 
-Control intermediate files, cache reuse, and terminal output.
-
-Use `--config PATH` for an optional JSON output/subtitle preset.
-
 | Option | Purpose |
 | --- | --- |
-| `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
-| `--render-jobs COUNT` | Maximum concurrent cuts; default: `1`. |
-| `--render-encoder NAME` | Explicit `libx264` or `h264_nvenc` encoder for video outputs. |
-| `--render-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
-| `--render-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
-| `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
-| `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
+| `--video-encoder NAME` | Explicit `libx264` or `h264_nvenc` encoder for video outputs. |
+| `--video-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
+| `--video-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
 
-By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
+For example, render only primary outputs, with two concurrent cuts and explicit
+CPU encoding:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts --render primary --jobs 2 \
+  --video-encoder libx264 --video-preset veryfast --video-quality 23
+```
+
+Use `--config PATH` for an optional JSON output/subtitle preset.
 
 Run `multicuts --help` for the same option groups and their defaults in the terminal. Defaults apply when CLI, environment, `.env`, and JSON presets leave a setting unset. Encoding help distinguishes FFmpeg selection from explicit encoder defaults; subtitle presentation defaults inherit the selected template. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 

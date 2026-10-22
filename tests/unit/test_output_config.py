@@ -386,6 +386,25 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
             assert f"`{flag} [SCOPE=]VALUE...`" in readme
     assert "--no-render" not in help_text
     assert "--no-subtitle" not in help_text
+    panels = {
+        "Outputs": ("--render", "--primary", "--width", "--height"),
+        "Execution": ("--jobs",),
+        "Video encoding": ("--video-encoder", "--video-preset", "--video-quality"),
+    }
+    for panel, flags in panels.items():
+        assert panel in help_text
+        for flag in flags:
+            param = next(
+                param for param in get_command(app).params if flag in param.opts
+            )
+            assert getattr(param, "rich_help_panel", None) == panel
+    for flag in (
+        "--render-jobs",
+        "--render-encoder",
+        "--render-preset",
+        "--render-quality",
+    ):
+        assert flag not in help_text
     for description in (
         "default: FFmpeg selection, matching multisubs",
         "Default: medium (libx264), p4 (h264_nvenc)",
@@ -418,12 +437,17 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         "--square-size",
         "--no-subtitles",
         "--no-subtitle-bold",
+        "--render-jobs",
+        "--render-encoder",
+        "--render-preset",
+        "--render-quality",
     ],
 )
-def test_removed_flags_are_rejected(flag):
+def test_removed_flags_are_rejected(flag, capsys):
     with pytest.raises(SystemExit) as error:
         parse(flag)
     assert error.value.code == 2
+    assert "No such option" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

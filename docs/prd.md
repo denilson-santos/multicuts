@@ -22,7 +22,7 @@ Each proposal includes a social-media title in the language of its transcript, p
 
 ## Configuration and integrations
 
-`--render-jobs` / `RENDER_JOBS` selects a positive maximum number of concurrent
+`--jobs` / `JOBS` selects a positive maximum number of concurrent
 cuts (default 1; CLI > process environment > `.env` > default). Each cut owns
 its sequential variants and workspace. All jobs read the shared transcript;
 transcription and editorial analysis finish before scheduling render jobs.
@@ -33,8 +33,8 @@ completed files and publish the final manifest only after every cut succeeds.
 Record render concurrency and elapsed time, plus per-output preparation and
 finalization timings. The command waits for all its work before returning.
 
-Global `--render-encoder`, `--render-preset`, and `--render-quality` controls
-(`RENDER_ENCODER`, `RENDER_PRESET`, `RENDER_QUALITY`) apply to both video
+Global `--video-encoder`, `--video-preset`, and `--video-quality` controls
+(`VIDEO_ENCODER`, `VIDEO_PRESET`, `VIDEO_QUALITY`) apply to both video
 preparation and subtitle encoding. They follow CLI > process environment >
 `.env` > defaults, independently of scoped presentation presets. Explicit
 encoders support libx264 and h264_nvenc; preset/quality require an encoder.
@@ -44,6 +44,10 @@ rendering preserve multisubs behavior by leaving encoder, preset, and quality
 selection to FFmpeg. Do not force a separate multicuts encoding default.
 Record requested encoding settings in clip metadata without invalidating ASR
 or AI caches.
+
+Keep output selection (`--render`), execution (`--jobs`), and video encoding in
+separate help panels. Removed `--render-*` execution/encoding flags and their
+environment names are not aliases.
 
 Subtitle presentation settings available in multisubs are exposed individually
 through `--subtitle-*` flags and matching `SUBTITLE_*` environment variables.

@@ -206,8 +206,9 @@ maps it to FFmpeg options and preflights explicit encoders before ASR; only
 subtitle rendering. Global encoder/preset/quality settings do not enter ASR/AI
 cache identities. Metadata records the requested encoding values.
 
-`render_jobs` bounds a local thread pool after selection. One task renders a
-complete cut, with variants remaining sequential and an exclusive workspace.
+`--jobs` / `JOBS` maps to `AppConfig.render_jobs` and bounds a local thread pool
+after selection. One task renders a complete cut, with variants remaining
+sequential and an exclusive workspace.
 At most the configured number of cuts are submitted at a time. The coordinator
 collects results by original rank and publishes the report/manifest after all
 tasks succeed. One invocation-owned cancellation event stops all sibling jobs
