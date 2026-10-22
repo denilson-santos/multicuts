@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from decimal import ROUND_HALF_UP, Decimal
 from math import isfinite
@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from multicuts.app_config import RenderEncoding
-from multicuts.errors import ConfigurationError, RenderingError, TranscriptionError
+from multicuts.errors import (
+    ConfigurationError,
+    RenderingCancelledError,
+    RenderingError,
+    TranscriptionError,
+)
 from multicuts.models import (
     ClipTranscript,
     ClipTranscriptWord,
@@ -453,6 +458,7 @@ def _render_subtitles(
     options: SubtitleOptions | None = None,
     container: SubtitleContainer | None = None,
     encoding: RenderEncoding | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> SubtitleArtifacts:
     """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
@@ -478,6 +484,7 @@ def _render_subtitles(
         raise RenderingError(
             "Could not prepare a fresh workspace for clip subtitles"
         ) from exc
+    provider = None
     try:
         provider = importlib.import_module("multisubs")
         presentation = (
@@ -495,6 +502,7 @@ def _render_subtitles(
             output_dir,
             **presentation,
             progress=_subtitle_progress,
+            **({"should_cancel": should_cancel} if should_cancel is not None else {}),
             **(
                 {
                     "video_encoding": provider.VideoEncodingConfig(
@@ -508,6 +516,8 @@ def _render_subtitles(
     except ConfigurationError:
         raise
     except Exception as exc:
+        if isinstance(exc, getattr(provider, "CancelledError", ())):
+            raise RenderingCancelledError("Subtitle rendering was cancelled") from exc
         if any(
             term in str(exc).lower()
             for term in ("max-width", "max-height", "layout envelope")
@@ -571,6 +581,7 @@ class MultisubsAdapter:
         options: SubtitleOptions | None = None,
         container: SubtitleContainer | None = None,
         encoding: RenderEncoding | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> SubtitleArtifacts:
         """Render existing clip words without starting a new ASR pass."""
         return _render_subtitles(
@@ -582,6 +593,7 @@ class MultisubsAdapter:
             options=options,
             container=container,
             encoding=encoding,
+            should_cancel=should_cancel,
         )
 
     def validate_subtitle_options(

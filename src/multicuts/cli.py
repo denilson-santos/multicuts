@@ -615,6 +615,14 @@ def run_command(
             rich_help_panel="Analysis",
         ),
     ] = None,
+    render_jobs: Annotated[
+        int | None,
+        typer.Option(
+            "--render-jobs",
+            help="Concurrent cuts (default: 1).",
+            rich_help_panel="Execution",
+        ),
+    ] = None,
     render_encoder: Annotated[
         str | None,
         typer.Option(
@@ -702,6 +710,7 @@ def run_command(
                 else None
             ),
         ),
+        render_jobs=_integer(render_jobs, "RENDER_JOBS", 1),
         keep_intermediates=bool(keep_intermediates),
         force_recompute=bool(force_recompute),
         verbose=bool(verbose),

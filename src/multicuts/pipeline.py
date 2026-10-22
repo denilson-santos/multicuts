@@ -9,12 +9,14 @@ import secrets
 import shutil
 import tempfile
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
 from math import isclose
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from typing import Protocol
 
@@ -284,6 +286,7 @@ def _clip_metadata(
     subtitle_source_video: Path | None = None,
     is_variant: bool = False,
     title_generation: dict[str, object] | None = None,
+    render_timings: dict[str, float] | None = None,
 ) -> dict[str, object]:
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
@@ -322,6 +325,7 @@ def _clip_metadata(
         else None,
         "render": {
             "encoding": asdict(config.render_encoding),
+            "timings": render_timings,
             "variant": config.render_variant,
             "is_variant": is_variant,
             "layout": layout,
@@ -876,7 +880,17 @@ def run_pipeline(
         clips: list[Path] = []
         references: list[dict[str, object]] = []
         report_clips: list[ReportClip] = []
-        for rank, clip in enumerate(selected, start=1):
+        initial_prepared = prepared_raw
+        cancel_render = Event()
+        cancellation = (
+            {"should_cancel": cancel_render.is_set} if config.render_jobs > 1 else {}
+        )
+        render_started = perf_counter()
+
+        def render_clip(
+            rank: int, clip: JudgedClip | DirectClip
+        ) -> tuple[Path, dict[str, object], ReportClip]:
+            prepared_raw = initial_prepared if rank == 1 else None
             clip_started = perf_counter()
             logger.info(
                 "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%s",
@@ -895,6 +909,7 @@ def run_pipeline(
             report_videos: list[tuple[str, Path]] = []
             primary_video = clip_dir / f"{outputs[0]}.mp4"
             for index, name in enumerate(outputs):
+                variant_started = perf_counter()
                 ratio = config.aspect_ratio_for(clip_class, name)
                 is_variant = index != 0
                 variant_work = work / stem / name
@@ -931,7 +946,9 @@ def run_pipeline(
                         variant_config,
                         output=variant_work / "raw.mp4",
                         work=variant_work,
+                        **cancellation,
                     )
+                raw_finished = perf_counter()
                 if rendered_ratio != ratio:
                     raise ArtifactError(
                         "Raw renderer returned an unexpected aspect ratio"
@@ -952,6 +969,7 @@ def run_pipeline(
                     variant_config,
                     output=final_path,
                     work=variant_work,
+                    **cancellation,
                 )
                 if final != final_path or not final.is_file():
                     raise ArtifactError(
@@ -972,6 +990,10 @@ def run_pipeline(
                     layout=layout,
                     is_variant=is_variant,
                     title_generation=title_generation,
+                    render_timings={
+                        "prepare_seconds": raw_finished - variant_started,
+                        "finalize_seconds": perf_counter() - raw_finished,
+                    },
                 )
                 metadata_path = final.with_suffix(".json")
                 _publish_json(metadata_path, metadata, work)
@@ -991,9 +1013,8 @@ def run_pipeline(
                 len(variants),
                 perf_counter() - clip_started,
             )
-            clips.append(primary_video)
-            report_clips.append(ReportClip(clip, tuple(report_videos)))
-            references.append(
+            return (
+                primary_video,
                 {
                     "id": clip.proposal.id,
                     "class": clip.proposal.clip_class,
@@ -1003,8 +1024,45 @@ def run_pipeline(
                     .relative_to(root)
                     .as_posix(),
                     "variants": variants,
-                }
+                },
+                ReportClip(clip, tuple(report_videos)),
             )
+
+        results: dict[int, tuple[Path, dict[str, object], ReportClip]] = {}
+        if config.render_jobs == 1:
+            for rank, clip in enumerate(selected, start=1):
+                results[rank] = render_clip(rank, clip)
+        else:
+            jobs = iter(enumerate(selected, start=1))
+            with ThreadPoolExecutor(max_workers=config.render_jobs) as executor:
+                pending: dict[
+                    Future[tuple[Path, dict[str, object], ReportClip]], int
+                ] = {}
+                try:
+                    for _ in range(min(config.render_jobs, len(selected))):
+                        rank, clip = next(jobs)
+                        pending[executor.submit(render_clip, rank, clip)] = rank
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            results[pending[future]] = future.result()
+                        for future in done:
+                            del pending[future]
+                        for _ in done:
+                            next_job = next(jobs, None)
+                            if next_job is not None:
+                                rank, clip = next_job
+                                pending[executor.submit(render_clip, rank, clip)] = rank
+                except BaseException:
+                    cancel_render.set()
+                    for future in pending:
+                        future.cancel()
+                    raise
+        for rank in sorted(results):
+            video, reference, report = results[rank]
+            clips.append(video)
+            references.append(reference)
+            report_clips.append(report)
         manifest = {
             "schema_version": 5,
             "report": "report.md",
@@ -1077,6 +1135,10 @@ def run_pipeline(
                 "editorially_eligible": eligible,
                 "selected": len(selected),
                 "ai_cache": cache_stats,
+            },
+            "execution": {
+                "render_jobs": config.render_jobs,
+                "render_seconds": perf_counter() - render_started,
             },
             "clips": references,
         }

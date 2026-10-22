@@ -123,8 +123,11 @@ class AppConfig:
     render_variant: str | None = None
     subtitle_container: SubtitleContainer | None = None
     render_encoding: RenderEncoding = RenderEncoding()
+    render_jobs: int = 1
 
     def __post_init__(self) -> None:
+        if type(self.render_jobs) is not int or self.render_jobs < 1:
+            raise ConfigurationError("Render jobs must be a positive integer")
         if not isinstance(self.render_encoding, RenderEncoding):
             raise ConfigurationError("Render encoding must use RenderEncoding")
         if self.subtitle_container is not None and not isinstance(

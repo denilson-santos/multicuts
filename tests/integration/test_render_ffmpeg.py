@@ -1350,3 +1350,122 @@ def test_input_seek_retains_observed_frames_and_audio(
             sum(abs(a - b) for a, b in zip(reference, result, strict=True)) / frame_size
             < 5
         )
+
+
+def test_parallel_cuts_render_real_video_and_native_subtitles(tmp_path):
+    import re
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x90:r=10:d=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    class Transcriber:
+        calls = 0
+
+        def version(self):
+            return "6.1.0"
+
+        def transcribe(self, video_path, **options):
+            self.calls += 1
+            return Transcript(
+                None,
+                "en",
+                4.0,
+                " ".join(f"Point {i}." for i in range(4)),
+                tuple(
+                    TranscriptSegment(f"Point {i}.", float(i), i + 1.0)
+                    for i in range(4)
+                ),
+                tuple(
+                    Word(f"Point {i}.", i + 0.1, i + 0.9, source_segment_index=i)
+                    for i in range(4)
+                ),
+                "multisubs",
+                "6.1.0",
+            )
+
+    class Backend:
+        def complete(self, prompt, schema):
+            if "Find every" in prompt:
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": f"u{i}",
+                            "end_id": f"u{i + 1}",
+                            "title": f"Idea {i}",
+                            "rationale": "A complete idea",
+                        }
+                        for i in (0, 2)
+                    ]
+                }
+            bounds = re.search(r"Original boundary IDs: (u\d+) through (u\d+)", prompt)
+            assert bounds is not None
+            return {
+                "start_id": bounds[1],
+                "end_id": bounds[2],
+                "approved": True,
+                "dimensions": {
+                    name: 80
+                    for name in (
+                        "hook",
+                        "standalone_context",
+                        "development",
+                        "payoff",
+                        "interest_novelty",
+                    )
+                },
+                "reason": "A complete idea",
+            }
+
+    transcriber = Transcriber()
+    result = run_pipeline(
+        AppConfig(
+            str(source),
+            tmp_path / "out",
+            "codex",
+            "test",
+            render="primary",
+            long_render=False,
+            render_jobs=2,
+            horizontal_width=160,
+            horizontal_height=90,
+            render_encoding=RenderEncoding("libx264", "fast", 18),
+        ),
+        transcriber=transcriber,
+        backend=Backend(),
+    )
+    assert transcriber.calls == 1
+    assert len(result.clip_paths) == 2
+    for rank, path in enumerate(result.clip_paths, 1):
+        media = inspect_media_path(path)
+        assert (media.presentation_width, media.presentation_height) == (160, 90)
+        assert media.has_audio and media.duration == pytest.approx(2, abs=0.25)
+        metadata = json.loads(path.with_suffix(".json").read_text())
+        assert metadata["rank"] == rank
+        assert metadata["render"]["encoding"]["encoder"] == "libx264"
+        assert len(metadata["subtitle_files"]) == 3
+        ass = next(path for path in metadata["subtitle_files"] if path.endswith(".ass"))
+        assert "PlayResX: 160" in (result.manifest_path.parent / ass).read_text()

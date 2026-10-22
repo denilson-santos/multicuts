@@ -876,6 +876,16 @@ for the types accepted by each track and phase.
 
 #### Execution
 
+`--render-jobs 2` renders up to two cuts concurrently; `RENDER_JOBS` supplies
+the same global setting. The default is 1. Each cut renders its enabled variants
+in sequence and shares the source transcript. Files appear as they finish;
+the final report keeps editorial rank order. The command waits for completion.
+An error or interruption cancels active work before cleanup, preserving complete
+outputs. Increase concurrency only after comparing time and memory usage on
+your hardware: each FFmpeg can already use multiple CPU threads. The manifest
+records concurrency/render time; output metadata records preparation and
+finalization times.
+
 Video encoding can be configured globally with `--render-encoder libx264`
 or `--render-encoder h264_nvenc`, plus `--render-preset` and `--render-quality`.
 The corresponding environment variables are `RENDER_ENCODER`, `RENDER_PRESET`,

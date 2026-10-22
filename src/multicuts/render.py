@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from math import isclose
 from pathlib import Path
 from typing import Protocol
@@ -11,7 +12,12 @@ from typing import Protocol
 from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.app_config import AppConfig, RenderEncoding
 from multicuts.clips import DirectClip, JudgedClip
-from multicuts.errors import ConfigurationError, MediaError, RenderingError
+from multicuts.errors import (
+    ConfigurationError,
+    MediaError,
+    RenderingCancelledError,
+    RenderingError,
+)
 from multicuts.media import ffmpeg_format_major, inspect_media_path
 from multicuts.models import (
     AcquiredSource,
@@ -40,6 +46,7 @@ class SubtitleProvider(Protocol):
         options: SubtitleOptions | None = None,
         container: SubtitleContainer | None = None,
         encoding: RenderEncoding | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> SubtitleArtifacts: ...
 
 
@@ -162,6 +169,44 @@ def validate_render_encoding(config: AppConfig) -> None:
         ) from exc
 
 
+def _check_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise RenderingCancelledError("Rendering was cancelled")
+
+
+def _run_ffmpeg(
+    command: list[str], should_cancel: Callable[[], bool] | None
+) -> subprocess.CompletedProcess[bytes]:
+    if should_cancel is None:
+        return subprocess.run(command, capture_output=True, check=False)
+    _check_cancelled(should_cancel)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        while True:
+            _check_cancelled(should_cancel)
+            try:
+                stdout, stderr = process.communicate(timeout=0.1)
+                return subprocess.CompletedProcess(
+                    command, process.returncode or 0, stdout, stderr
+                )
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process.poll() is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                process.communicate()
+
+
 def _encode_and_publish(
     command: list[str],
     config: AppConfig,
@@ -172,6 +217,7 @@ def _encode_and_publish(
     height: int,
     output: Path,
     work: Path,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> tuple[Path, MediaInfo]:
     temporary = work / f"encode-{output.stem}.mp4"
     try:
@@ -217,7 +263,7 @@ def _encode_and_publish(
     try:
         work.mkdir(parents=True, exist_ok=True)
         output.parent.mkdir(parents=True, exist_ok=True)
-        completed = subprocess.run(command, capture_output=True, check=False)
+        completed = _run_ffmpeg(command, should_cancel)
         if completed.returncode:
             raise RenderingError(f"FFmpeg failed with exit code {completed.returncode}")
         actual = _inspect(temporary)
@@ -229,6 +275,7 @@ def _encode_and_publish(
             raise RenderingError(
                 "Rendered clip geometry, audio, or duration differs from request"
             )
+        _check_cancelled(should_cancel)
         publish_without_overwrite(temporary, output)
         return output, actual
     except OSError as exc:
@@ -246,6 +293,7 @@ def render_raw(
     *,
     output: Path,
     work: Path,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> tuple[Path, MediaInfo, str]:
     """Encode into private space and publish only a validated MP4."""
     proposal = clip.proposal
@@ -298,6 +346,7 @@ def render_raw(
         height=height,
         output=output,
         work=work,
+        should_cancel=should_cancel,
     )
     return path, actual, ratio
 
@@ -481,8 +530,10 @@ def render_final(
     output: Path,
     work: Path,
     subtitle_provider: SubtitleProvider | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> tuple[Path, tuple[Path, ...], str | None]:
     """Publish a final clip and optional source-derived subtitle sidecars."""
+    _check_cancelled(should_cancel)
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -520,6 +571,7 @@ def render_final(
         encoding=config.render_encoding
         if config.render_encoding.encoder is not None
         else None,
+        **({"should_cancel": should_cancel} if should_cancel is not None else {}),
     )
     final_media = _inspect(artifacts.video_path)
     if (
@@ -535,6 +587,7 @@ def render_final(
         (artifacts.transcript_json_path, artifacts.srt_path, artifacts.ass_path), output
     )
     try:
+        _check_cancelled(should_cancel)
         publish_without_overwrite(artifacts.video_path, output)
     except BaseException as exc:
         for path in reversed(sidecars):

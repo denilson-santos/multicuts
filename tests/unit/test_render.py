@@ -373,6 +373,7 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             options=None,
             container=None,
             encoding=None,
+            should_cancel=None,
         ) -> SubtitleArtifacts:
             assert video_path == raw
             assert options == config.subtitle_options
@@ -486,3 +487,38 @@ def test_unavailable_encoder_is_rejected_during_preflight(tmp_path, monkeypatch)
     assert commands[0][commands[0].index("-cq") + 1] == "0"
     assert "-crf" not in commands[0]
     assert commands[0][commands[0].index("-b:v") + 1] == "0"
+
+
+def test_cancelling_ffmpeg_terminates_and_reaps_owned_process(monkeypatch):
+    import subprocess
+    from threading import Event
+
+    from multicuts.errors import RenderingCancelledError
+    from multicuts.render import _run_ffmpeg
+
+    cancel = Event()
+
+    class Process:
+        returncode = None
+        terminated = False
+        reaped = False
+
+        def communicate(self, timeout=0.1):
+            if not self.terminated:
+                cancel.set()
+                raise subprocess.TimeoutExpired("ffmpeg", timeout)
+            self.reaped = True
+            return b"", b""
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+    process = Process()
+    monkeypatch.setattr("multicuts.render.subprocess.Popen", lambda *a, **kw: process)
+    with pytest.raises(RenderingCancelledError):
+        _run_ffmpeg(["ffmpeg"], cancel.is_set)
+    assert process.terminated and process.reaped

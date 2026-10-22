@@ -29,5 +29,9 @@ class RenderingError(MulticutsError):
     """Raised when clip or subtitle rendering fails."""
 
 
+class RenderingCancelledError(RenderingError):
+    """Raised when an invocation stops its active rendering work."""
+
+
 class ArtifactError(MulticutsError):
     """Raised when artifact persistence fails."""

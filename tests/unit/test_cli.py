@@ -875,3 +875,15 @@ def test_invalid_render_encoding_fails_configuration(options):
 
     with pytest.raises(ConfigurationError):
         RenderEncoding(**options)
+
+
+def test_render_jobs_configuration_and_validation(monkeypatch):
+    monkeypatch.setenv("RENDER_JOBS", "3")
+    assert parse_run_config(_args()).render_jobs == 3
+    assert parse_run_config(_args() + ["--render-jobs", "2"]).render_jobs == 2
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_invalid_render_jobs(value):
+    with pytest.raises(ConfigurationError, match="Render jobs"):
+        AppConfig("source.mp4", Path("out"), full_video=True, render_jobs=value)
