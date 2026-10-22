@@ -242,26 +242,28 @@ def _require_provider_version() -> str:
         version = importlib.metadata.version("multisubs")
     except importlib.metadata.PackageNotFoundError as exc:
         raise RenderingError(
-            "multisubs is unavailable; install the configured multisubs 5 release"
+            "multisubs is unavailable; install the configured multisubs 6.1 release"
         ) from exc
     try:
         major, minor = (int(part) for part in version.split(".")[:2])
     except (ValueError, TypeError) as exc:
         raise RenderingError(f"Unsupported multisubs version: {version}") from exc
-    if major != 5 or minor < 0:
-        raise RenderingError(f"Unsupported multisubs {version}; install version 5.x")
+    if major != 6 or minor < 1:
+        raise RenderingError(
+            f"Unsupported multisubs {version}; install version 6.1+ (<7)"
+        )
     try:
         provider = importlib.import_module("multisubs")
         speech_api = getattr(provider, "render_transcript", None)
     except Exception as exc:
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 5 release"
+            "install the configured multisubs 6.1 release"
         ) from exc
     if not callable(speech_api):
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 5 release"
+            "install the configured multisubs 6.1 release"
         )
     return version
 
@@ -361,12 +363,12 @@ def _build_subtitle_config(
         provider = importlib.import_module("multisubs")
     except ImportError as exc:
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 5.1+; check its installation"
+            "Subtitle presentation requires multisubs 6.1+; check its installation"
         ) from exc
     builder = getattr(provider, "build_subtitle_config", None)
     if not callable(builder):
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 5.1+; update its installation"
+            "Subtitle presentation requires multisubs 6.1+; update its installation"
         )
     try:
         configured = builder(
@@ -436,7 +438,7 @@ def _build_subtitle_config(
         raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
     except Exception as exc:
         raise ConfigurationError(
-            "Could not prepare subtitle settings; check the multisubs 5.1+ installation"
+            "Could not prepare subtitle settings; check the multisubs 6.1+ installation"
         ) from exc
 
 
@@ -604,7 +606,7 @@ class MultisubsAdapter:
         except Exception as exc:
             raise TranscriptionError(
                 "multisubs public semantic transcription API is unavailable; "
-                "install the configured multisubs 5 release with "
+                "install the configured multisubs 6.1 release with "
                 "transcribe_speech support"
             ) from exc
         if not callable(transcribe):

@@ -27,7 +27,48 @@ def _assert_supported_provider_version() -> None:
     assert len(parts) >= 2 and all(part.isdigit() for part in parts[:2]), (
         "multisubs distribution lacks a numeric major/minor version"
     )
-    assert parts[0] == "5", "multisubs 5.x is required by the consumed public contract"
+    assert parts[0] == "6" and int(parts[1]) >= 1, (
+        "multisubs >=6.1,<7 is required by the consumed public contract"
+    )
+
+
+@pytest.mark.parametrize("size", [(1920, 1080), (1080, 1920), (1080, 1080)])
+def test_public_preparation_preserves_geometry_and_resource_lifetime(
+    size: tuple[int, int], tmp_path: Path
+) -> None:
+    provider = _installed_provider()
+    speech = {
+        "schema_version": 1,
+        "language": None,
+        "task": "transcribe",
+        "asr_backend": "faster-whisper",
+        "model_name": "turbo",
+        "full_text": " Hello.",
+        "segments": [{"text": " Hello.", "start": 0.0, "end": 1.0}],
+    }
+    with provider.prepare_subtitles(
+        speech,
+        output_dir=tmp_path,
+        frame_width=size[0],
+        frame_height=size[1],
+        template="yellow-pop",
+    ) as prepared:
+        assert isinstance(prepared, provider.PreparedSubtitleArtifacts)
+        ass = prepared.ass_path.read_text(encoding="utf-8")
+        assert f"PlayResX: {size[0]}" in ass
+        assert f"PlayResY: {size[1]}" in ass
+        assert prepared.fonts_dir is None or prepared.fonts_dir.is_dir()
+        assert prepared.template_resolved == "yellow-pop"
+    assert prepared.ass_path.is_file() and prepared.srt_path.is_file()
+    with pytest.raises(provider.CancelledError):
+        with provider.prepare_subtitles(
+            speech,
+            output_dir=tmp_path / "cancelled",
+            frame_width=size[0],
+            frame_height=size[1],
+            should_cancel=lambda: True,
+        ):
+            pytest.fail("Cancelled preparation must not yield resources")
 
 
 @pytest.mark.parametrize("language", [None, "pt"])

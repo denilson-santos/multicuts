@@ -321,11 +321,11 @@ Because remote-site behavior changes independently from this project, yt-dlp fai
 Supported range:
 
 ```text
-multisubs >=5,<6
+multisubs >=6.1,<7
 ```
 
 During early implementation the environment may pin the official
-`multisubs[whisperx]` 5.2.0 wheel. Keep the selected extra aligned with the ASR
+`multisubs[whisperx]` 6.1.0 wheel. Keep the selected extra aligned with the ASR
 backend used by the adapter.
 
 Rules:

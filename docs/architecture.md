@@ -194,6 +194,12 @@ The manifest's `analysis.editorial_context` and per-clip `viral_potential.editor
 
 ## Media and subtitles
 
+The provider pin is multisubs 6.1.0 (supported contract: >=6.1,<7), including
+public media-free subtitle preparation and cooperative cancellation. Provider
+upgrades use separate transcript cache identities; completed runs remain intact.
+Final rendering uses accurate input seeking to decode only the keyframe lead-in
+before each requested cut, preserving the original interval and local timings.
+
 `subtitles.py` defines immutable project-owned `SubtitleOptions` with sparse
 presentation fields. The CLI resolves `--subtitle-*` / `SUBTITLE_*` precedence
 without loading the provider. When overrides are supplied, the pipeline asks

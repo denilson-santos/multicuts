@@ -1240,3 +1240,107 @@ def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
             assert right > x + fg_width * 0.7 and bottom > height * 0.8
     elif placement == "bottom-right":
         assert top > 500
+
+
+@pytest.mark.parametrize("start", [0.375, 8.375])
+def test_input_seek_retains_observed_frames_and_audio(start: float, tmp_path: Path):
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source_path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x90:r=8:d=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=10",
+            "-c:v",
+            "libx264",
+            "-g",
+            "64",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(source_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    media = inspect_media_path(source_path)
+    clip = JudgedClip(
+        Proposal(
+            "seek",
+            "short",
+            "u0",
+            "u0",
+            start,
+            start + 0.75,
+            "Hello.",
+            "Title",
+            "Reason",
+        ),
+        {},
+        80,
+        True,
+        "Good",
+        "u0",
+        "u0",
+    )
+    config = AppConfig(
+        str(source_path),
+        tmp_path,
+        full_video=True,
+        subtitles_enabled=False,
+        horizontal_width=160,
+        horizontal_height=90,
+        render_variant="horizontal",
+    )
+    output, actual, _ = render_raw(
+        AcquiredSource(source_path, "seek-fixture"),
+        media,
+        clip,
+        config,
+        output=tmp_path / "actual.mp4",
+        work=tmp_path / "work",
+    )
+    assert actual.has_audio
+    assert actual.duration == pytest.approx(0.75, abs=0.25)
+
+    def frames(command: list[str]) -> bytes:
+        return subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                *command,
+                "-an",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
+
+    expected = frames(["-i", str(source_path), "-ss", str(start), "-t", "0.75"])
+    rendered = frames(["-i", str(output)])
+    frame_size = 160 * 90 * 3
+    assert abs(len(expected) - len(rendered)) <= frame_size
+    for reference, result in (
+        (expected[:frame_size], rendered[:frame_size]),
+        (expected[-frame_size:], rendered[-frame_size:]),
+    ):
+        assert len(reference) == len(result) == frame_size
+        assert (
+            sum(abs(a - b) for a, b in zip(reference, result, strict=True)) / frame_size
+            < 5
+        )

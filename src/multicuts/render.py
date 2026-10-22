@@ -212,16 +212,17 @@ def render_raw(
     ):
         raise RenderingError("Clip interval exceeds the acquired source interval")
     ratio, width, height = _geometry(config, proposal.clip_class, media)
+    # Input seeking decodes only the keyframe lead-in while retaining accurate cuts.
     command = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
         "-nostdin",
-        "-i",
-        str(source.local_path),
         "-ss",
         f"{local_start:.6f}",
+        "-i",
+        str(source.local_path),
         "-t",
         f"{proposal.end - proposal.start:.6f}",
     ]
