@@ -522,3 +522,103 @@ def test_cancelling_ffmpeg_terminates_and_reaps_owned_process(monkeypatch):
     with pytest.raises(RenderingCancelledError):
         _run_ffmpeg(["ffmpeg"], cancel.is_set)
     assert process.terminated and process.reaped
+
+
+def test_composed_publication_failure_preserves_completed_files(tmp_path, monkeypatch):
+    import subprocess
+    from contextlib import contextmanager
+
+    from multicuts.app_config import AppConfig
+    from multicuts.clips import JudgedClip, Proposal
+    from multicuts.errors import RenderingError
+    from multicuts.models import AcquiredSource, MediaInfo, PreparedSubtitles
+    from multicuts.render import render_composed
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    output = tmp_path / "final.mp4"
+    output.write_bytes(b"completed")
+    subtitle_dir = tmp_path / "subtitles"
+    subtitle_dir.mkdir()
+    unrelated = subtitle_dir / "other.ass"
+    unrelated.write_bytes(b"keep")
+    media = MediaInfo(2.0, 180, 320, 180, 320, 0, 1)
+    fonts = tmp_path / "fonts"
+
+    class Preparer:
+        @contextmanager
+        def prepare_clip_subtitles(self, clip, **settings):
+            workspace = settings["workspace"]
+            workspace.mkdir(parents=True)
+            paths = tuple(
+                workspace / name for name in ("speech.json", "clip.srt", "clip.ass")
+            )
+            for path in paths:
+                path.write_bytes(b"subtitle")
+            fonts.mkdir()
+            try:
+                yield PreparedSubtitles(
+                    paths[0],
+                    paths[1],
+                    paths[2],
+                    fonts,
+                    "6.1.0",
+                    "yellow-pop",
+                    "yellow-pop",
+                    "builtin",
+                    None,
+                )
+            finally:
+                fonts.rmdir()
+
+    def run(command, **settings):
+        from pathlib import Path
+
+        assert fonts.is_dir()
+        Path(command[-1]).write_bytes(b"encoded")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 58)
+    monkeypatch.setattr("multicuts.render.inspect_media_path", lambda _: media)
+    clip = JudgedClip(
+        Proposal("id", "short", "u0", "u0", 0, 2, "Hello.", "Title", "Reason"),
+        {},
+        80,
+        True,
+        "Good",
+        "u0",
+        "u0",
+    )
+    transcript = Transcript(
+        None,
+        "en",
+        2,
+        "Hello.",
+        (TranscriptSegment("Hello.", 0, 2),),
+        (),
+        "multisubs",
+        "6.1.0",
+    )
+    with pytest.raises(RenderingError, match="already exists"):
+        render_composed(
+            AcquiredSource(source, "publication"),
+            media,
+            transcript,
+            clip,
+            AppConfig(
+                str(source),
+                tmp_path,
+                full_video=True,
+                render_variant="vertical",
+                vertical_width=180,
+                vertical_height=320,
+            ),
+            output=output,
+            work=tmp_path / "work",
+            subtitle_provider=Preparer(),
+        )
+    assert output.read_bytes() == b"completed"
+    assert unrelated.read_bytes() == b"keep"
+    assert sorted(path.name for path in subtitle_dir.iterdir()) == ["other.ass"]
+    assert not fonts.exists()

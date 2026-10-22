@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from math import isclose
 from pathlib import Path
+from time import perf_counter
 from typing import Protocol
 
 from multicuts.adapters.multisubs import MultisubsAdapter
@@ -25,6 +27,8 @@ from multicuts.models import (
     ClipTranscriptSegment,
     ClipTranscriptWord,
     MediaInfo,
+    PreparedSubtitles,
+    RenderedVariant,
     SubtitleArtifacts,
     Transcript,
 )
@@ -143,7 +147,7 @@ def validate_render_encoding(config: AppConfig) -> None:
         "-f",
         "lavfi",
         "-i",
-        "color=s=64x64:r=1:d=1",
+        "color=s=320x180:r=1:d=1",
         "-frames:v",
         "1",
         "-c:v",
@@ -285,17 +289,13 @@ def _encode_and_publish(
             temporary.unlink(missing_ok=True)
 
 
-def render_raw(
+def _render_command(
     source: AcquiredSource,
     media: MediaInfo,
     clip: JudgedClip | DirectClip,
     config: AppConfig,
-    *,
-    output: Path,
-    work: Path,
-    should_cancel: Callable[[], bool] | None = None,
-) -> tuple[Path, MediaInfo, str]:
-    """Encode into private space and publish only a validated MP4."""
+    subtitles: str | None = None,
+) -> tuple[list[str], str, int, int]:
     proposal = clip.proposal
     local_start = proposal.start - source.timeline_offset
     if local_start < 0 or (
@@ -318,30 +318,44 @@ def render_raw(
         f"{proposal.end - proposal.start:.6f}",
     ]
     if config.render_variant is not None and config.render_variant.endswith("-blur"):
-        command.extend(
-            [
-                "-filter_complex",
-                _blur_filter(media, config.render_variant, width, height),
-                "-map",
-                "[video]",
-            ]
-        )
+        graph = _blur_filter(media, config.render_variant, width, height)
+        label = "[video]"
+        if subtitles is not None:
+            graph += f";[video]{subtitles}[captioned]"
+            label = "[captioned]"
+        command.extend(["-filter_complex", graph, "-map", label])
     else:
         command.extend(
             [
                 "-map",
                 f"0:{media.video_stream_index}",
                 "-vf",
-                _crop_filter(media, width, height),
+                _crop_filter(media, width, height)
+                + ("," + subtitles if subtitles is not None else ""),
             ]
         )
     if media.audio_stream_index is not None:
         command.extend(["-map", f"0:{media.audio_stream_index}"])
+    return command, ratio, width, height
+
+
+def render_raw(
+    source: AcquiredSource,
+    media: MediaInfo,
+    clip: JudgedClip | DirectClip,
+    config: AppConfig,
+    *,
+    output: Path,
+    work: Path,
+    should_cancel: Callable[[], bool] | None = None,
+) -> tuple[Path, MediaInfo, str]:
+    """Encode into private space and publish only a validated MP4."""
+    command, ratio, width, height = _render_command(source, media, clip, config)
     path, actual = _encode_and_publish(
         command,
         config,
         media=media,
-        duration=proposal.end - proposal.start,
+        duration=clip.proposal.end - clip.proposal.start,
         width=width,
         height=height,
         output=output,
@@ -599,3 +613,128 @@ def render_final(
             raise RenderingError("Could not publish subtitle sidecars") from exc
         raise
     return output, sidecars, artifacts.template_resolved
+
+
+class SubtitlePreparer(Protocol):
+    def prepare_clip_subtitles(
+        self,
+        clip: ClipTranscript,
+        *,
+        frame_width: int,
+        frame_height: int,
+        template: str | None,
+        template_dir: Path | None,
+        workspace: Path,
+        options: SubtitleOptions | None = None,
+        container: SubtitleContainer | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> AbstractContextManager[PreparedSubtitles]: ...
+
+
+def _filter_path(path: Path) -> str:
+    # Escape option delimiters first, then the enclosing filtergraph grammar.
+    value = "".join("\\" + c if c in "\\':" else c for c in str(path))
+    return "".join("\\" + c if c in "\\'[],;" else c for c in value)
+
+
+def render_composed(
+    source: AcquiredSource,
+    media: MediaInfo,
+    transcript: Transcript | None,
+    clip: JudgedClip | DirectClip,
+    config: AppConfig,
+    *,
+    output: Path,
+    work: Path,
+    subtitle_provider: SubtitlePreparer | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> RenderedVariant:
+    """Compose source geometry and native subtitles in one video encode."""
+    started = perf_counter()
+    _check_cancelled(should_cancel)
+    if not config.subtitles_for(clip.proposal.clip_class):
+        video, actual, ratio = render_raw(
+            source,
+            media,
+            clip,
+            config,
+            output=output,
+            work=work,
+            should_cancel=should_cancel,
+        )
+        return RenderedVariant(video, actual, ratio)
+    if transcript is None:
+        raise RenderingError("Subtitles require a source transcript")
+    ratio, width, height = _geometry(config, clip.proposal.clip_class, media)
+    if config.subtitle_container is not None and (
+        config.subtitle_container.frame_width != width
+        or config.subtitle_container.height != height
+    ):
+        raise RenderingError("Subtitle container does not match the final canvas")
+    try:
+        local = clip_transcript(
+            transcript,
+            clip.proposal.start,
+            clip.proposal.end,
+            source_duration=clip.source_duration
+            if isinstance(clip, DirectClip)
+            else None,
+        )
+    except ValueError as exc:
+        raise RenderingError("Could not derive clip-local transcript") from exc
+    provider = subtitle_provider or MultisubsAdapter()
+    with provider.prepare_clip_subtitles(
+        local,
+        frame_width=width,
+        frame_height=height,
+        template=config.subtitle_template,
+        template_dir=config.subtitle_template_dir,
+        workspace=work / "subtitles",
+        options=config.subtitle_options,
+        container=config.subtitle_container,
+        should_cancel=should_cancel,
+    ) as prepared:
+        subtitles = (
+            "setpts=PTS-STARTPTS,subtitles=filename="
+            + _filter_path(prepared.ass_path)
+            + f":original_size={width}x{height}"
+        )
+        if prepared.fonts_dir is not None:
+            subtitles += ":fontsdir=" + _filter_path(prepared.fonts_dir)
+        command, _, _, _ = _render_command(source, media, clip, config, subtitles)
+        preparation_seconds = perf_counter() - started
+        video, actual = _encode_and_publish(
+            command,
+            config,
+            media=media,
+            duration=clip.proposal.end - clip.proposal.start,
+            width=width,
+            height=height,
+            output=work / "composed.mp4",
+            work=work,
+            should_cancel=should_cancel,
+        )
+    _check_cancelled(should_cancel)
+    sidecars = publish_subtitle_sidecars(
+        (prepared.transcript_json_path, prepared.srt_path, prepared.ass_path), output
+    )
+    try:
+        _check_cancelled(should_cancel)
+        publish_without_overwrite(video, output)
+    except BaseException:
+        for path in sidecars:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    return RenderedVariant(
+        output,
+        actual,
+        ratio,
+        sidecars,
+        prepared.template_resolved,
+        preparation_seconds,
+        prepared.template_source,
+        prepared.template_base,
+    )

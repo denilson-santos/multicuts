@@ -1,6 +1,7 @@
 """Real FFmpeg contract for the active semantic render path."""
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import replace
@@ -1469,3 +1470,173 @@ def test_parallel_cuts_render_real_video_and_native_subtitles(tmp_path):
         assert len(metadata["subtitle_files"]) == 3
         ass = next(path for path in metadata["subtitle_files"] if path.endswith(".ass"))
         assert "PlayResX: 160" in (result.manifest_path.parent / ass).read_text()
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "horizontal",
+        "vertical",
+        "square",
+        "horizontal-blur",
+        "vertical-blur",
+        "square-blur",
+    ],
+)
+@pytest.mark.parametrize(
+    "encoding",
+    [
+        pytest.param(RenderEncoding(), id="cpu"),
+        pytest.param(
+            RenderEncoding("h264_nvenc", "p4", 28),
+            id="nvenc",
+            marks=pytest.mark.skipif(
+                os.environ.get("MULTICUTS_TEST_NVENC") != "1",
+                reason="set MULTICUTS_TEST_NVENC=1 for a compatible NVIDIA device",
+            ),
+        ),
+    ],
+)
+def test_composed_render_encodes_once_and_matches_native_sidecars(
+    variant, encoding, tmp_path, monkeypatch
+):
+    from multicuts.render import foreground_dimensions, render_composed
+    from multicuts.subtitles import SubtitleContainer
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg tools are unavailable")
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x90:r=10:d=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    acquired = AcquiredSource(source, "composed-fixture")
+    media = inspect_media_path(source)
+    clip = JudgedClip(
+        Proposal(
+            "composed",
+            "short",
+            "u0",
+            "u0",
+            1,
+            3,
+            " Hello world.",
+            "Title",
+            "A complete idea",
+        ),
+        {},
+        80,
+        True,
+        "Good",
+        "u0",
+        "u0",
+    )
+    transcript = Transcript(
+        None,
+        "en",
+        4,
+        " Hello world.",
+        (TranscriptSegment(" Hello world.", 1.1, 2.9),),
+        (
+            Word(" Hello", 1.1, 1.7, source_segment_index=0),
+            Word(" world.", 1.8, 2.9, source_segment_index=0),
+        ),
+        "multisubs",
+        "6.1.0",
+    )
+    config = AppConfig(
+        str(source),
+        tmp_path,
+        full_video=True,
+        render_variant=variant,
+        horizontal_width=160,
+        horizontal_height=90,
+        vertical_width=90,
+        vertical_height=160,
+        square_size=90,
+        render_encoding=encoding,
+    )
+    if encoding.encoder == "h264_nvenc":
+        config = replace(
+            config,
+            horizontal_width=640,
+            horizontal_height=360,
+            vertical_width=360,
+            vertical_height=640,
+            square_size=360,
+        )
+    width, height = config.dimensions_for("short", variant)
+    if variant in ("horizontal-blur", "square-blur"):
+        foreground, _ = foreground_dimensions(media, variant, width, height)
+        left = (width - foreground) // 2
+        config = replace(
+            config,
+            subtitle_container=SubtitleContainer(
+                width, height, left - left % 2, foreground
+            ),
+        )
+    original_run = subprocess.run
+    encodes = []
+
+    def run(command, **options):
+        if "-c:v" in command and str(command[-1]).endswith(".mp4"):
+            encodes.append(command)
+        return original_run(command, **options)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    output = tmp_path / "final.mp4"
+    rendered = render_composed(
+        acquired,
+        media,
+        transcript,
+        clip,
+        config,
+        output=output,
+        work=tmp_path / "work [brackets], quote' and colon: test",
+    )
+    assert len(encodes) == 1
+    assert (rendered.media.presentation_width, rendered.media.presentation_height) == (
+        width,
+        height,
+    )
+    assert rendered.media.has_audio and rendered.media.duration == pytest.approx(
+        2, abs=0.25
+    )
+    assert len(rendered.sidecars) == 3
+    raw, raw_media, _ = render_raw(
+        acquired,
+        media,
+        clip,
+        config,
+        output=tmp_path / "reference.mp4",
+        work=tmp_path / "reference-work",
+    )
+    _, sidecars, _ = render_final(
+        raw,
+        raw_media,
+        transcript,
+        clip,
+        config,
+        output=tmp_path / "native.mp4",
+        work=tmp_path / "native-work",
+    )
+    assert rendered.sidecars[1].read_text() == sidecars[1].read_text()
+    assert rendered.sidecars[2].read_text() == sidecars[2].read_text()

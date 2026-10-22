@@ -52,6 +52,7 @@ def test_public_preparation_preserves_geometry_and_resource_lifetime(
         frame_width=size[0],
         frame_height=size[1],
         template="yellow-pop",
+        progress=lambda message: None,
     ) as prepared:
         assert isinstance(prepared, provider.PreparedSubtitleArtifacts)
         ass = prepared.ass_path.read_text(encoding="utf-8")

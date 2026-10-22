@@ -128,7 +128,8 @@ python -m pip install --editable .
 This installs the pinned `multisubs[whisperx]` **6.1.0** release wheel, including public subtitle preparation, cooperative cancellation, and concurrent rendering support. The default ASR configuration is **WhisperX + `turbo`**.
 
 Multisubs 6.1 exposes `transcribe_speech()` for reusable ASR output and
-`render_transcript()` for subtitles. Multicuts uses these public APIs, with one
+`prepare_subtitles()` for single-encode composition and `render_transcript()`
+for staged subtitles. Multicuts uses these public APIs, with one
 source transcription and native subtitle layout for each final clip geometry.
 Upgrade an existing environment with `python -m pip install --upgrade --editable .`.
 
@@ -274,7 +275,7 @@ ratio. Plain outputs use a centered crop. Blurred outputs center a vertical or
 horizontal foreground over an enlarged, blurred copy, with neither layer mirrored. A source already in the foreground
 orientation keeps its native ratio; other sources use a 9:16 vertical or 16:9
 horizontal center crop.
-Subtitles are generated afterward and have their own settings and sidecars.
+Subtitles resolve against the final canvas and have their own settings and sidecars.
 In `horizontal-blur` and `square-blur`, their layout uses the sharp central video
 as its container, including margins, percentages, and custom coordinates.
 `vertical-blur` uses the entire final canvas, like plain variants. Default dimensions are 1080×1920, 1920×1080, and
@@ -894,7 +895,9 @@ Preset and quality require an explicit encoder. libx264 accepts its normal
 presets (such as `veryfast` or `medium`); NVIDIA accepts `p1` through `p7`.
 Quality accepts integers from 0 through 51, including 0. Explicit defaults are
 `medium`/23 for libx264 and `p4`/28 for h264_nvenc; omitted encoding settings
-retain each stage's existing defaults. The selected encoder is checked before
+retain the staged defaults. Single-encode composition uses libx264, `veryfast`,
+and CRF 18 by default; it can produce different file sizes from the former
+two-encode flow. The selected encoder is checked before
 transcription, and settings are applied to both video preparation and subtitles.
 NVENC requires a compatible NVIDIA device and driver.
 
@@ -905,6 +908,10 @@ Use `--config PATH` for an optional JSON output/subtitle preset.
 | Option | Purpose |
 | --- | --- |
 | `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
+| `--render-jobs COUNT` | Maximum concurrent cuts; default: `1`. |
+| `--render-encoder NAME` | Explicit `libx264` or `h264_nvenc` encoder for video outputs. |
+| `--render-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
+| `--render-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
 | `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
 | `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
 
@@ -1034,7 +1041,7 @@ Long sources are split into overlapping transcript blocks. `--block-chars` and `
 
 Cache reuse depends on the source, transcription settings, AI backend, model, effort, prompt version, and transcript content. Only normalized transcripts and validated AI responses are cached.
 
-Subtitles are generated after the final crop so they fit the clip frame. Original segment and word timings are preserved, including zero-duration words. Missing or partial alignment uses the native segment fallback and suppresses unavailable word effects with a warning. Point-only groups use observed segment bounds when they cannot form a positive cue. Clips are never retranscribed and timestamps are never invented. `multisubs` performs subtitle grouping and layout once against the final configuration and geometry.
+Subtitles are prepared for the final canvas and combined with crop/blur in one video encode. The first local custom-cut variant keeps its staged path when the prepared video is needed for exact ASR. Original segment and word timings are preserved, including zero-duration words. Missing or partial alignment uses the native segment fallback and suppresses unavailable word effects with a warning. Point-only groups use observed segment bounds when they cannot form a positive cue. Clips are never retranscribed and timestamps are never invented. `multisubs` performs subtitle grouping and layout once against the final configuration and geometry.
 
 </details>
 
@@ -1098,6 +1105,11 @@ python -m build
 ```
 
 The default test suite requires no network, model downloads, GPU, YouTube access, or AI credentials.
+
+On a compatible NVIDIA device, opt into real single-encode NVENC integration
+checks with `MULTICUTS_TEST_NVENC=1 python -m pytest -m integration
+tests/integration/test_render_ffmpeg.py -k nvenc`. These checks cover all six
+variants and remain disabled by default.
 
 <details>
 <summary><strong>📦 Package versioning and release verification</strong></summary>

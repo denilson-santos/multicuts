@@ -1396,3 +1396,89 @@ def test_explicit_render_encoding_stays_inside_provider_boundary(tmp_path, monke
         encoding=RenderEncoding("libx264", "fast", 0),
     )
     assert received == [("libx264", "fast", 0)]
+
+
+def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    provider = sys.modules["multisubs"]
+
+    class CancelledError(ValueError):
+        pass
+
+    monkeypatch.setattr(provider, "CancelledError", CancelledError, raising=False)
+    fonts = tmp_path / "leased-fonts"
+    received = []
+
+    @contextmanager
+    def prepare(speech, **options):
+        received.append((speech, options))
+        output = options["output_dir"]
+        srt, ass = output / "subtitles.srt", output / "subtitles.ass"
+        srt.write_text("Hello", encoding="utf-8")
+        ass.write_text("ASS", encoding="utf-8")
+        fonts.mkdir()
+        try:
+            yield SimpleNamespace(
+                srt_path=srt,
+                ass_path=ass,
+                fonts_dir=fonts,
+                template_resolved="amber-word",
+                template_source="builtin",
+                template_base=None,
+            )
+        finally:
+            fonts.rmdir()
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    with MultisubsAdapter().prepare_clip_subtitles(
+        _clip(),
+        frame_width=360,
+        frame_height=640,
+        template="amber-word",
+        template_dir=None,
+        workspace=tmp_path / "work",
+    ) as artifacts:
+        assert artifacts.fonts_dir == fonts and fonts.is_dir()
+        assert artifacts.provider_version == "6.1.0"
+        assert artifacts.template_resolved == "amber-word"
+        assert json.loads(artifacts.transcript_json_path.read_text()) == received[0][0]
+    assert not fonts.exists()
+    assert artifacts.ass_path.is_file() and artifacts.srt_path.is_file()
+    assert received[0][1]["frame_width"] == 360
+
+
+def test_preparation_cancellation_is_normalized(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from multicuts.errors import RenderingCancelledError
+
+    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    provider = sys.modules["multisubs"]
+
+    class CancelledError(ValueError):
+        pass
+
+    monkeypatch.setattr(provider, "CancelledError", CancelledError, raising=False)
+
+    @contextmanager
+    def prepare(*args, **options):
+        assert options["should_cancel"]()
+        raise CancelledError("cancelled")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    with pytest.raises(RenderingCancelledError):
+        with MultisubsAdapter().prepare_clip_subtitles(
+            _clip(),
+            frame_width=360,
+            frame_height=640,
+            template="yellow-pop",
+            template_dir=None,
+            workspace=tmp_path / "work",
+            should_cancel=lambda: True,
+        ):
+            pytest.fail("Cancelled preparation must not yield")

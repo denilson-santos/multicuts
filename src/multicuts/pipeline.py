@@ -64,10 +64,17 @@ from multicuts.errors import (
     TranscriptionError,
 )
 from multicuts.media import prepare_source_range, probe_media
-from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
+from multicuts.models import (
+    AcquiredSource,
+    MediaInfo,
+    RenderedVariant,
+    TimeRange,
+    Transcript,
+)
 from multicuts.render import (
     clip_transcript,
     foreground_dimensions,
+    render_composed,
     render_final,
     render_raw,
     validate_render_encoding,
@@ -287,6 +294,9 @@ def _clip_metadata(
     is_variant: bool = False,
     title_generation: dict[str, object] | None = None,
     render_timings: dict[str, float] | None = None,
+    render_strategy: str = "staged",
+    template_source: str | None = None,
+    template_base: str | None = None,
 ) -> dict[str, object]:
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
@@ -326,6 +336,7 @@ def _clip_metadata(
         "render": {
             "encoding": asdict(config.render_encoding),
             "timings": render_timings,
+            "strategy": render_strategy,
             "variant": config.render_variant,
             "is_variant": is_variant,
             "layout": layout,
@@ -334,6 +345,8 @@ def _clip_metadata(
             "height": height,
             "subtitles_enabled": subtitles_enabled,
             "subtitle_template": template,
+            "subtitle_template_source": template_source,
+            "subtitle_template_base": template_base,
             "subtitle_overrides": config.subtitle_options.metadata()
             if subtitles_enabled
             else {},
@@ -430,8 +443,16 @@ def run_pipeline(
     final_renderer: Callable[
         ..., tuple[Path, tuple[Path, ...], str | None]
     ] = render_final,
+    composed_renderer: Callable[..., RenderedVariant] | None = None,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
+    # Retain explicitly supplied staged renderer boundaries for integrations.
+    if (
+        composed_renderer is None
+        and raw_renderer is render_raw
+        and final_renderer is render_final
+    ):
+        composed_renderer = render_composed
     if config.subtitle_options.overrides():
         MultisubsAdapter().validate_subtitle_options(
             template=config.subtitle_template,
@@ -935,42 +956,77 @@ def run_pipeline(
                     if name.endswith("-blur")
                     else "center_crop"
                 )
-                if prepared_raw is not None and index == 0:
-                    raw, rendered_media, rendered_ratio = prepared_raw
-                    prepared_raw = None
-                else:
-                    raw, rendered_media, rendered_ratio = raw_renderer(
+                strategy = "staged"
+                template_source = template_base = None
+                if composed_renderer is not None and not (
+                    prepared_raw is not None and index == 0
+                ):
+                    rendered = composed_renderer(
                         source,
                         media,
+                        transcript,
                         clip,
                         variant_config,
-                        output=variant_work / "raw.mp4",
+                        output=final_path,
                         work=variant_work,
                         **cancellation,
                     )
-                raw_finished = perf_counter()
-                if rendered_ratio != ratio:
-                    raise ArtifactError(
-                        "Raw renderer returned an unexpected aspect ratio"
+                    final, sidecars, template = (
+                        rendered.video_path,
+                        rendered.sidecars,
+                        rendered.template_resolved,
                     )
-                if variant_config.subtitles_for(clip_class):
-                    logger.info(
-                        "Adding subtitles to clip %d/%d (version=%s, template=%s)",
-                        rank,
-                        len(selected),
-                        name,
-                        variant_config.subtitle_template,
+                    rendered_media, rendered_ratio = (
+                        rendered.media,
+                        rendered.aspect_ratio,
                     )
-                final, sidecars, template = final_renderer(
-                    raw,
-                    rendered_media,
-                    transcript,
-                    clip,
-                    variant_config,
-                    output=final_path,
-                    work=variant_work,
-                    **cancellation,
-                )
+                    raw_finished = variant_started + rendered.preparation_seconds
+                    strategy = "composed"
+                    template_source, template_base = (
+                        rendered.template_source,
+                        rendered.template_base,
+                    )
+                    if rendered_ratio != ratio:
+                        raise ArtifactError(
+                            "Renderer returned an unexpected aspect ratio"
+                        )
+                else:
+                    if prepared_raw is not None and index == 0:
+                        raw, rendered_media, rendered_ratio = prepared_raw
+                        prepared_raw = None
+                    else:
+                        raw, rendered_media, rendered_ratio = raw_renderer(
+                            source,
+                            media,
+                            clip,
+                            variant_config,
+                            output=variant_work / "raw.mp4",
+                            work=variant_work,
+                            **cancellation,
+                        )
+                    raw_finished = perf_counter()
+                    if rendered_ratio != ratio:
+                        raise ArtifactError(
+                            "Raw renderer returned an unexpected aspect ratio"
+                        )
+                    if variant_config.subtitles_for(clip_class):
+                        logger.info(
+                            "Adding subtitles to clip %d/%d (version=%s, template=%s)",
+                            rank,
+                            len(selected),
+                            name,
+                            variant_config.subtitle_template,
+                        )
+                    final, sidecars, template = final_renderer(
+                        raw,
+                        rendered_media,
+                        transcript,
+                        clip,
+                        variant_config,
+                        output=final_path,
+                        work=variant_work,
+                        **cancellation,
+                    )
                 if final != final_path or not final.is_file():
                     raise ArtifactError(
                         "Final renderer did not publish the expected clip"
@@ -990,6 +1046,9 @@ def run_pipeline(
                     layout=layout,
                     is_variant=is_variant,
                     title_generation=title_generation,
+                    render_strategy=strategy,
+                    template_source=template_source,
+                    template_base=template_base,
                     render_timings={
                         "prepare_seconds": raw_finished - variant_started,
                         "finalize_seconds": perf_counter() - raw_finished,
