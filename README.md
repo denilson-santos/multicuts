@@ -919,7 +919,7 @@ Use `--config PATH` for an optional JSON output/subtitle preset.
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for the same option groups in the terminal. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
+Run `multicuts --help` for the same option groups and their defaults in the terminal. Defaults apply when CLI, environment, `.env`, and JSON presets leave a setting unset. Encoding help distinguishes FFmpeg selection from explicit encoder defaults; subtitle presentation defaults inherit the selected template. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ## Output and reruns
 

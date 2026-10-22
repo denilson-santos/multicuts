@@ -386,6 +386,24 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
             assert f"`{flag} [SCOPE=]VALUE...`" in readme
     assert "--no-render" not in help_text
     assert "--no-subtitle" not in help_text
+    for description in (
+        "default: FFmpeg selection, matching multisubs",
+        "Default: medium (libx264), p4 (h264_nvenc)",
+        "Default: CRF 23 (libx264), CQ 28 (h264_nvenc)",
+        "Transcription language code or auto (default: auto)",
+        "Same-class overlap suppression ratio (default: 0.60)",
+        "default: horizontal 1920, vertical/square 1080",
+        "default: vertical 1920, horizontal/square 1080",
+        "Defaults shown apply when CLI, environment, .env, and JSON presets",
+    ):
+        assert description in help_text
+    for param in get_command(app).params:
+        if param.opts[0].startswith("--subtitle-") and param.opts[0] not in (
+            "--subtitle-enabled",
+            "--subtitle-template",
+            "--subtitle-template-dir",
+        ):
+            assert "Default: inherit selected template." in getattr(param, "help", "")
 
 
 @pytest.mark.parametrize(
