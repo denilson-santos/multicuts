@@ -22,6 +22,16 @@ Each proposal includes a social-media title in the language of its transcript, p
 
 ## Configuration and integrations
 
+Global `--render-encoder`, `--render-preset`, and `--render-quality` controls
+(`RENDER_ENCODER`, `RENDER_PRESET`, `RENDER_QUALITY`) apply to both video
+preparation and subtitle encoding. They follow CLI > process environment >
+`.env` > defaults, independently of scoped presentation presets. Explicit
+encoders support libx264 and h264_nvenc; preset/quality require an encoder.
+Reject invalid settings before media work and check the chosen encoder on a
+synthetic frame before ASR. Omitted settings preserve existing stage defaults.
+Record requested encoding settings in clip metadata without invalidating ASR
+or AI caches.
+
 Subtitle presentation settings available in multisubs are exposed individually
 through `--subtitle-*` flags and matching `SUBTITLE_*` environment variables.
 Each scoped option uses one environment variable, with shell-like grouped

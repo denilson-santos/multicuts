@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Protocol
 
 from multicuts.adapters.multisubs import MultisubsAdapter
-from multicuts.app_config import AppConfig
+from multicuts.app_config import AppConfig, RenderEncoding
 from multicuts.clips import DirectClip, JudgedClip
-from multicuts.errors import MediaError, RenderingError
+from multicuts.errors import ConfigurationError, MediaError, RenderingError
 from multicuts.media import ffmpeg_format_major, inspect_media_path
 from multicuts.models import (
     AcquiredSource,
@@ -39,6 +39,7 @@ class SubtitleProvider(Protocol):
         workspace: Path,
         options: SubtitleOptions | None = None,
         container: SubtitleContainer | None = None,
+        encoding: RenderEncoding | None = None,
     ) -> SubtitleArtifacts: ...
 
 
@@ -122,6 +123,45 @@ def _inspect(path: Path) -> MediaInfo:
         raise RenderingError("Could not validate rendered clip") from exc
 
 
+def validate_render_encoding(config: AppConfig) -> None:
+    """Check an explicit encoder on a synthetic frame before transcription."""
+    if config.render_encoding.encoder is None:
+        return
+    encoder, preset, quality = config.render_encoding.resolved()
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-nostdin",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=s=64x64:r=1:d=1",
+        "-frames:v",
+        "1",
+        "-c:v",
+        encoder,
+        "-preset",
+        preset,
+        "-crf" if encoder == "libx264" else "-cq",
+        str(quality),
+    ]
+    if encoder == "h264_nvenc":
+        command.extend(["-rc", "vbr", "-b:v", "0"])
+    command.extend(["-f", "null", "-"])
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=30, check=False)
+        if result.returncode:
+            raise ConfigurationError(
+                "The selected render encoder is unavailable; check FFmpeg, "
+                "its encoder support, and the device/driver installation"
+            )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ConfigurationError(
+            "Could not validate the selected render encoder"
+        ) from exc
+
+
 def _encode_and_publish(
     command: list[str],
     config: AppConfig,
@@ -140,20 +180,23 @@ def _encode_and_publish(
     except MediaError as exc:
         raise RenderingError("Could not determine FFmpeg frame rate mode") from exc
     # Cuts between source frames must retain their full duration for subtitle cues.
+    encoder, preset, quality = config.render_encoding.resolved()
     command.extend(
         [
             sync_option,
             "cfr",
             "-c:v",
-            "libx264",
+            encoder,
             "-preset",
-            "veryfast",
-            "-crf",
-            "18",
+            preset,
+            "-crf" if encoder == "libx264" else "-cq",
+            str(quality),
             "-pix_fmt",
             "yuv420p",
         ]
     )
+    if encoder == "h264_nvenc":
+        command.extend(["-rc", "vbr", "-b:v", "0"])
     if media.audio_stream_index is None:
         command.append("-an")
     else:
@@ -466,11 +509,6 @@ def render_final(
         )
     except ValueError as exc:
         raise RenderingError("Could not derive clip-local transcript") from exc
-    container_args = (
-        {"container": config.subtitle_container}
-        if config.subtitle_container is not None
-        else {}
-    )
     artifacts = provider.subtitle_clip(
         raw_path,
         local,
@@ -478,7 +516,10 @@ def render_final(
         template_dir=config.subtitle_template_dir,
         workspace=work / f"subtitles-{clip.proposal.id}",
         options=config.subtitle_options,
-        **container_args,
+        container=config.subtitle_container,
+        encoding=config.render_encoding
+        if config.render_encoding.encoder is not None
+        else None,
     )
     final_media = _inspect(artifacts.video_path)
     if (

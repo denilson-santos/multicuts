@@ -832,3 +832,46 @@ sys.exit(code)
         in result.stdout
     )
     assert "Hidden" not in result.stdout + result.stderr
+
+
+def test_render_encoding_cli_overrides_environment(monkeypatch):
+    from multicuts.app_config import RenderEncoding
+
+    monkeypatch.setenv("RENDER_ENCODER", "h264_nvenc")
+    monkeypatch.setenv("RENDER_PRESET", "p4")
+    monkeypatch.setenv("RENDER_QUALITY", "28")
+    assert parse_run_config(_args()).render_encoding == RenderEncoding(
+        "h264_nvenc", "p4", 28
+    )
+    config = parse_run_config(
+        _args()
+        + [
+            "--render-encoder",
+            "libx264",
+            "--render-preset",
+            "fast",
+            "--render-quality",
+            "0",
+        ]
+    )
+    assert config.render_encoding == RenderEncoding("libx264", "fast", 0)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"preset": "fast"},
+        {"quality": 18},
+        {"encoder": "unknown"},
+        {"encoder": "libx264", "preset": "p4"},
+        {"encoder": "h264_nvenc", "preset": "fast"},
+        {"encoder": "libx264", "quality": -1},
+        {"encoder": "libx264", "quality": True},
+        {"encoder": "libx264", "quality": 52},
+    ],
+)
+def test_invalid_render_encoding_fails_configuration(options):
+    from multicuts.app_config import RenderEncoding
+
+    with pytest.raises(ConfigurationError):
+        RenderEncoding(**options)

@@ -1365,3 +1365,34 @@ def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monke
             workspace=tmp_path / "work",
             container=SubtitleContainer(640, 360, 218, 202),
         )
+
+
+def test_explicit_render_encoding_stays_inside_provider_boundary(tmp_path, monkeypatch):
+    from multicuts.app_config import RenderEncoding
+
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"video")
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    monkeypatch.setattr(provider, "VideoEncodingConfig", SimpleNamespace, raising=False)
+    received = []
+
+    def render(speech, video, output_dir, **options):
+        received.append(options["video_encoding"])
+        return _rendered_artifacts(output_dir)
+
+    monkeypatch.setattr(
+        provider,
+        "VideoEncodingConfig",
+        lambda encoder, preset, quality: (encoder, preset, quality),
+    )
+    monkeypatch.setattr(provider, "render_transcript", render)
+    MultisubsAdapter().subtitle_clip(
+        raw,
+        _clip(),
+        template="yellow-pop",
+        template_dir=None,
+        workspace=tmp_path / "work",
+        encoding=RenderEncoding("libx264", "fast", 0),
+    )
+    assert received == [("libx264", "fast", 0)]

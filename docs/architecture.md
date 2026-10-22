@@ -200,6 +200,12 @@ upgrades use separate transcript cache identities; completed runs remain intact.
 Final rendering uses accurate input seeking to decode only the keyframe lead-in
 before each requested cut, preserving the original interval and local timings.
 
+`RenderEncoding` is an immutable project-owned configuration. The render boundary
+maps it to FFmpeg options and preflights explicit encoders before ASR; only
+`MultisubsAdapter` constructs the provider's public `VideoEncodingConfig` for
+subtitle rendering. Global encoder/preset/quality settings do not enter ASR/AI
+cache identities. Metadata records the requested encoding values.
+
 `subtitles.py` defines immutable project-owned `SubtitleOptions` with sparse
 presentation fields. The CLI resolves `--subtitle-*` / `SUBTITLE_*` precedence
 without loading the provider. When overrides are supplied, the pipeline asks

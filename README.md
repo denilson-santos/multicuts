@@ -876,6 +876,18 @@ for the types accepted by each track and phase.
 
 #### Execution
 
+Video encoding can be configured globally with `--render-encoder libx264`
+or `--render-encoder h264_nvenc`, plus `--render-preset` and `--render-quality`.
+The corresponding environment variables are `RENDER_ENCODER`, `RENDER_PRESET`,
+and `RENDER_QUALITY`; CLI overrides process environment, then `.env`.
+Preset and quality require an explicit encoder. libx264 accepts its normal
+presets (such as `veryfast` or `medium`); NVIDIA accepts `p1` through `p7`.
+Quality accepts integers from 0 through 51, including 0. Explicit defaults are
+`medium`/23 for libx264 and `p4`/28 for h264_nvenc; omitted encoding settings
+retain each stage's existing defaults. The selected encoder is checked before
+transcription, and settings are applied to both video preparation and subtitles.
+NVENC requires a compatible NVIDIA device and driver.
+
 Control intermediate files, cache reuse, and terminal output.
 
 Use `--config PATH` for an optional JSON output/subtitle preset.

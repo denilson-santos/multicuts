@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from multicuts.adapters.multisubs import MultisubsAdapter
-from multicuts.app_config import AppConfig
+from multicuts.app_config import AppConfig, RenderEncoding
 from multicuts.cli import parse_run_config
 from multicuts.clips import DIRECT_TITLE_SCHEMA, JudgedClip, Proposal
 from multicuts.media import inspect_media_path
@@ -1243,7 +1243,10 @@ def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
 
 
 @pytest.mark.parametrize("start", [0.375, 8.375])
-def test_input_seek_retains_observed_frames_and_audio(start: float, tmp_path: Path):
+@pytest.mark.parametrize("explicit_encoding", [False, True])
+def test_input_seek_retains_observed_frames_and_audio(
+    start: float, explicit_encoding: bool, tmp_path: Path
+):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
     source_path = tmp_path / "source.mp4"
@@ -1301,6 +1304,9 @@ def test_input_seek_retains_observed_frames_and_audio(start: float, tmp_path: Pa
         horizontal_width=160,
         horizontal_height=90,
         render_variant="horizontal",
+        render_encoding=RenderEncoding("libx264", "fast", 18)
+        if explicit_encoding
+        else RenderEncoding(),
     )
     output, actual, _ = render_raw(
         AcquiredSource(source_path, "seek-fixture"),

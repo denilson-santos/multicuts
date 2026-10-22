@@ -16,7 +16,7 @@ import typer
 from typer.core import TyperCommand, TyperOption
 
 from multicuts.adapters._llm_common import setting
-from multicuts.app_config import AppConfig
+from multicuts.app_config import AppConfig, RenderEncoding
 from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
@@ -615,6 +615,30 @@ def run_command(
             rich_help_panel="Analysis",
         ),
     ] = None,
+    render_encoder: Annotated[
+        str | None,
+        typer.Option(
+            "--render-encoder",
+            help="libx264 or h264_nvenc.",
+            rich_help_panel="Execution",
+        ),
+    ] = None,
+    render_preset: Annotated[
+        str | None,
+        typer.Option(
+            "--render-preset",
+            help="Preset for the selected render encoder.",
+            rich_help_panel="Execution",
+        ),
+    ] = None,
+    render_quality: Annotated[
+        int | None,
+        typer.Option(
+            "--render-quality",
+            help="Encoder quality from 0 through 51.",
+            rich_help_panel="Execution",
+        ),
+    ] = None,
     keep_intermediates: Annotated[
         bool | None,
         typer.Option(
@@ -669,6 +693,15 @@ def run_command(
         asr_backend=str(_value(asr_backend, "ASR_BACKEND", "whisperx")),
         block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
         block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
+        render_encoding=RenderEncoding(
+            encoder=str(_value(render_encoder, "RENDER_ENCODER", "")) or None,
+            preset=str(_value(render_preset, "RENDER_PRESET", "")) or None,
+            quality=(
+                _integer(render_quality, "RENDER_QUALITY", 0)
+                if _value(render_quality, "RENDER_QUALITY", None) is not None
+                else None
+            ),
+        ),
         keep_intermediates=bool(keep_intermediates),
         force_recompute=bool(force_recompute),
         verbose=bool(verbose),

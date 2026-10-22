@@ -9,7 +9,7 @@ import secrets
 import shutil
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
@@ -68,6 +68,7 @@ from multicuts.render import (
     foreground_dimensions,
     render_final,
     render_raw,
+    validate_render_encoding,
 )
 from multicuts.source import SourceAcquirer, acquire_source
 from multicuts.subtitles import SubtitleContainer
@@ -320,6 +321,7 @@ def _clip_metadata(
         if isinstance(clip, JudgedClip)
         else None,
         "render": {
+            "encoding": asdict(config.render_encoding),
             "variant": config.render_variant,
             "is_variant": is_variant,
             "layout": layout,
@@ -487,6 +489,7 @@ def run_pipeline(
                 "Source acquisition did not preserve the requested interval"
             )
         media = probe(source)
+        validate_render_encoding(config)
         original_source = (
             source
             if source.source_kind == "local" and requested_range is not None

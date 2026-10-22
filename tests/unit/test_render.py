@@ -372,6 +372,7 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             workspace: Path,
             options=None,
             container=None,
+            encoding=None,
         ) -> SubtitleArtifacts:
             assert video_path == raw
             assert options == config.subtitle_options
@@ -458,3 +459,30 @@ def test_point_source_segment_inside_cut_fails_instead_of_losing_its_text(
     with pytest.raises(ValueError, match="positive observed interval"):
         clip_transcript(transcript, 0.0, 3.0)
     assert clip_transcript(transcript, 1.0, 3.0).text == "Agora."
+
+
+def test_unavailable_encoder_is_rejected_during_preflight(tmp_path, monkeypatch):
+    import subprocess
+
+    from multicuts.app_config import AppConfig, RenderEncoding
+    from multicuts.errors import ConfigurationError
+    from multicuts.render import validate_render_encoding
+
+    commands = []
+
+    def run(command, **options):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    config = AppConfig(
+        "source.mp4",
+        tmp_path,
+        full_video=True,
+        render_encoding=RenderEncoding("h264_nvenc", "p4", 0),
+    )
+    with pytest.raises(ConfigurationError, match="encoder is unavailable"):
+        validate_render_encoding(config)
+    assert commands[0][commands[0].index("-cq") + 1] == "0"
+    assert "-crf" not in commands[0]
+    assert commands[0][commands[0].index("-b:v") + 1] == "0"

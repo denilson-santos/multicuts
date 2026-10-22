@@ -14,6 +14,7 @@ from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
 
+from multicuts.app_config import RenderEncoding
 from multicuts.errors import ConfigurationError, RenderingError, TranscriptionError
 from multicuts.models import (
     ClipTranscript,
@@ -451,6 +452,7 @@ def _render_subtitles(
     workspace: Path,
     options: SubtitleOptions | None = None,
     container: SubtitleContainer | None = None,
+    encoding: RenderEncoding | None = None,
 ) -> SubtitleArtifacts:
     """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
@@ -493,6 +495,15 @@ def _render_subtitles(
             output_dir,
             **presentation,
             progress=_subtitle_progress,
+            **(
+                {
+                    "video_encoding": provider.VideoEncodingConfig(
+                        encoding.encoder, encoding.preset, encoding.quality
+                    )
+                }
+                if encoding is not None
+                else {}
+            ),
         )
     except ConfigurationError:
         raise
@@ -559,6 +570,7 @@ class MultisubsAdapter:
         workspace: Path,
         options: SubtitleOptions | None = None,
         container: SubtitleContainer | None = None,
+        encoding: RenderEncoding | None = None,
     ) -> SubtitleArtifacts:
         """Render existing clip words without starting a new ASR pass."""
         return _render_subtitles(
@@ -569,6 +581,7 @@ class MultisubsAdapter:
             workspace=workspace,
             options=options,
             container=container,
+            encoding=encoding,
         )
 
     def validate_subtitle_options(
