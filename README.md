@@ -895,9 +895,11 @@ Preset and quality require an explicit encoder. libx264 accepts its normal
 presets (such as `veryfast` or `medium`); NVIDIA accepts `p1` through `p7`.
 Quality accepts integers from 0 through 51, including 0. Explicit defaults are
 `medium`/23 for libx264 and `p4`/28 for h264_nvenc; omitted encoding settings
-retain the staged defaults. Single-encode composition uses libx264, `veryfast`,
-and CRF 18 by default; it can produce different file sizes from the former
-two-encode flow. The selected encoder is checked before
+preserve multisubs behavior: FFmpeg selects the encoder and its default preset
+and quality, with no encoding overrides. Standard MP4 builds typically use
+libx264, `medium`, and CRF 23. This applies to raw, composed, and staged rendering;
+file sizes can differ from earlier releases that forced `veryfast`/CRF 18 during
+video preparation. An explicitly selected encoder is checked before
 transcription, and settings are applied to both video preparation and subtitles.
 NVENC requires a compatible NVIDIA device and driver.
 

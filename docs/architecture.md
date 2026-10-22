@@ -221,8 +221,10 @@ Provider objects stay inside the adapter. Preparation validates sidecar paths an
 leases fonts; the render boundary escapes FFmpeg filter paths and validates the
 encoded video before publishing sidecars and MP4. `render.strategy` distinguishes
 `composed` from `staged`; timings separate subtitle preparation from encoding and
-publication for composed outputs. Omitted composed encoding uses libx264, veryfast,
-and CRF 18, matching the raw renderer. Explicit settings apply to either strategy.
+publication for composed outputs. Without an explicit encoder, raw and composed
+commands omit encoder, preset, and quality options, matching multisubs staged
+rendering. FFmpeg selects its defaults for the MP4 output. Explicit settings apply
+to either strategy.
 Composed metadata preserves native template source/base provenance; explicit
 provider configs report source `config` without inventing their template history.
 

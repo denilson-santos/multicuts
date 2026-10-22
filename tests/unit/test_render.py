@@ -462,6 +462,81 @@ def test_point_source_segment_inside_cut_fails_instead_of_losing_its_text(
     assert clip_transcript(transcript, 1.0, 3.0).text == "Agora."
 
 
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, {}),
+        (
+            {"encoder": "libx264"},
+            {"-c:v": "libx264", "-preset": "medium", "-crf": "23"},
+        ),
+        (
+            {"encoder": "libx264", "preset": "fast", "quality": 0},
+            {"-c:v": "libx264", "-preset": "fast", "-crf": "0"},
+        ),
+        (
+            {"encoder": "h264_nvenc"},
+            {
+                "-c:v": "h264_nvenc",
+                "-preset": "p4",
+                "-cq": "28",
+                "-rc": "vbr",
+                "-b:v": "0",
+            },
+        ),
+    ],
+)
+def test_raw_render_preserves_default_and_explicit_encoding(
+    options, expected, tmp_path, monkeypatch
+):
+    import subprocess
+    from pathlib import Path
+
+    from multicuts.app_config import AppConfig, RenderEncoding
+    from multicuts.clips import DirectClip, Proposal
+    from multicuts.models import AcquiredSource, MediaInfo
+    from multicuts.render import render_raw
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    media = MediaInfo(2.0, 640, 360, 640, 360, 0, 1)
+    config = AppConfig(
+        str(source),
+        tmp_path,
+        full_video=True,
+        horizontal_width=640,
+        horizontal_height=360,
+        render_encoding=RenderEncoding(**options),
+    )
+    proposal = Proposal("cut", "short", "u0", "u0", 0, 2, "", "Title", "Reason")
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"encoded")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 60)
+    monkeypatch.setattr("multicuts.render.inspect_media_path", lambda path: media)
+    output = tmp_path / "final.mp4"
+    rendered, _, _ = render_raw(
+        AcquiredSource(source, "encoding-fixture"),
+        media,
+        DirectClip(proposal, 2.0),
+        config,
+        output=output,
+        work=tmp_path / "work",
+    )
+    assert rendered == output and output.read_bytes() == b"encoded"
+    assert len(commands) == 1
+    for flag in ("-c:v", "-preset", "-crf", "-cq", "-rc", "-b:v"):
+        if flag in expected:
+            assert commands[0][commands[0].index(flag) + 1] == expected[flag]
+        else:
+            assert flag not in commands[0]
+
+
 def test_unavailable_encoder_is_rejected_during_preflight(tmp_path, monkeypatch):
     import subprocess
 

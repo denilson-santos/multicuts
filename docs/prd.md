@@ -39,7 +39,9 @@ preparation and subtitle encoding. They follow CLI > process environment >
 `.env` > defaults, independently of scoped presentation presets. Explicit
 encoders support libx264 and h264_nvenc; preset/quality require an encoder.
 Reject invalid settings before media work and check the chosen encoder on a
-synthetic frame before ASR. Omitted settings preserve existing stage defaults.
+synthetic frame before ASR. Without an encoder override, raw, composed, and staged
+rendering preserve multisubs behavior by leaving encoder, preset, and quality
+selection to FFmpeg. Do not force a separate multicuts encoding default.
 Record requested encoding settings in clip metadata without invalidating ASR
 or AI caches.
 

@@ -136,9 +136,10 @@ def _inspect(path: Path) -> MediaInfo:
 
 def validate_render_encoding(config: AppConfig) -> None:
     """Check an explicit encoder on a synthetic frame before transcription."""
-    if config.render_encoding.encoder is None:
+    encoding = config.render_encoding.resolved()
+    if encoding is None:
         return
-    encoder, preset, quality = config.render_encoding.resolved()
+    encoder, preset, quality = encoding
     command = [
         "ffmpeg",
         "-v",
@@ -230,23 +231,23 @@ def _encode_and_publish(
     except MediaError as exc:
         raise RenderingError("Could not determine FFmpeg frame rate mode") from exc
     # Cuts between source frames must retain their full duration for subtitle cues.
-    encoder, preset, quality = config.render_encoding.resolved()
-    command.extend(
-        [
-            sync_option,
-            "cfr",
-            "-c:v",
-            encoder,
-            "-preset",
-            preset,
-            "-crf" if encoder == "libx264" else "-cq",
-            str(quality),
-            "-pix_fmt",
-            "yuv420p",
-        ]
-    )
-    if encoder == "h264_nvenc":
-        command.extend(["-rc", "vbr", "-b:v", "0"])
+    command.extend([sync_option, "cfr"])
+    encoding = config.render_encoding.resolved()
+    if encoding is not None:
+        encoder, preset, quality = encoding
+        command.extend(
+            [
+                "-c:v",
+                encoder,
+                "-preset",
+                preset,
+                "-crf" if encoder == "libx264" else "-cq",
+                str(quality),
+            ]
+        )
+        if encoder == "h264_nvenc":
+            command.extend(["-rc", "vbr", "-b:v", "0"])
+    command.extend(["-pix_fmt", "yuv420p"])
     if media.audio_stream_index is None:
         command.append("-an")
     else:

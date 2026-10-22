@@ -1367,7 +1367,10 @@ def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monke
         )
 
 
-def test_explicit_render_encoding_stays_inside_provider_boundary(tmp_path, monkeypatch):
+@pytest.mark.parametrize("explicit", [False, True])
+def test_render_encoding_stays_inside_provider_boundary(
+    tmp_path, monkeypatch, explicit
+):
     from multicuts.app_config import RenderEncoding
 
     raw = tmp_path / "raw.mp4"
@@ -1378,7 +1381,9 @@ def test_explicit_render_encoding_stays_inside_provider_boundary(tmp_path, monke
     received = []
 
     def render(speech, video, output_dir, **options):
-        received.append(options["video_encoding"])
+        received.append(options.get("video_encoding"))
+        if not explicit:
+            assert "video_encoding" not in options
         return _rendered_artifacts(output_dir)
 
     monkeypatch.setattr(
@@ -1393,9 +1398,9 @@ def test_explicit_render_encoding_stays_inside_provider_boundary(tmp_path, monke
         template="yellow-pop",
         template_dir=None,
         workspace=tmp_path / "work",
-        encoding=RenderEncoding("libx264", "fast", 0),
+        encoding=RenderEncoding("libx264", "fast", 0) if explicit else None,
     )
-    assert received == [("libx264", "fast", 0)]
+    assert received == ([("libx264", "fast", 0)] if explicit else [None])
 
 
 def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(

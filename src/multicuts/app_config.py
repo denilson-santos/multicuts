@@ -70,10 +70,10 @@ class RenderEncoding:
         ):
             raise ConfigurationError("Render quality must be an integer from 0 to 51")
 
-    def resolved(self) -> tuple[str, str, int]:
-        """Resolve explicit encoder defaults; retain the raw-render legacy defaults."""
+    def resolved(self) -> tuple[str, str, int] | None:
+        """Resolve explicit settings; omit overrides like multisubs by default."""
         if self.encoder is None:
-            return "libx264", "veryfast", 18
+            return None
         return (
             self.encoder,
             self.preset or ("medium" if self.encoder == "libx264" else "p4"),

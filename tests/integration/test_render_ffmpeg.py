@@ -1597,7 +1597,7 @@ def test_composed_render_encodes_once_and_matches_native_sidecars(
     encodes = []
 
     def run(command, **options):
-        if "-c:v" in command and str(command[-1]).endswith(".mp4"):
+        if command[0] == "ffmpeg" and str(command[-1]).endswith(".mp4"):
             encodes.append(command)
         return original_run(command, **options)
 
@@ -1613,6 +1613,9 @@ def test_composed_render_encodes_once_and_matches_native_sidecars(
         work=tmp_path / "work [brackets], quote' and colon: test",
     )
     assert len(encodes) == 1
+    if encoding.encoder is None:
+        for flag in ("-c:v", "-preset", "-crf", "-cq", "-rc", "-b:v"):
+            assert flag not in encodes[0]
     assert (rendered.media.presentation_width, rendered.media.presentation_height) == (
         width,
         height,
