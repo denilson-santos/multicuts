@@ -748,7 +748,7 @@ Configure clip discovery, AI analysis, and transcription.
 | `--block-chars COUNT` | Set transcript characters per AI block; default: `24000`. |
 | `--block-overlap-chars COUNT` | Set shared characters between AI blocks; default: `4000`. |
 
-#### Clips
+#### Clip selection
 
 Choose direct cuts and the overlap policy.
 

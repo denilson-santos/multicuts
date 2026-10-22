@@ -387,6 +387,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
     assert "--no-render" not in help_text
     assert "--no-subtitle" not in help_text
     panels = {
+        "Clip selection": ("--clip-range", "--clip-full", "--overlap-threshold"),
         "Outputs": ("--render", "--primary", "--width", "--height"),
         "Execution": ("--jobs",),
         "Video encoding": ("--video-encoder", "--video-preset", "--video-quality"),

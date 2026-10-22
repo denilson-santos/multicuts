@@ -532,7 +532,7 @@ def run_command(
                 "exact; YouTube cuts include the acquired keyframe padding. "
                 "Default: unset."
             ),
-            rich_help_panel="Clips",
+            rich_help_panel="Clip selection",
         ),
     ] = None,
     clip_full: Annotated[
@@ -541,7 +541,7 @@ def run_command(
             "--clip-full",
             help="Render the entire source as one cut without AI review "
             "(default: false).",
-            rich_help_panel="Clips",
+            rich_help_panel="Clip selection",
         ),
     ] = False,
     llm_backend: Annotated[
@@ -608,7 +608,7 @@ def run_command(
         typer.Option(
             "--overlap-threshold",
             help="Same-class overlap suppression ratio (default: 0.60).",
-            rich_help_panel="Clips",
+            rich_help_panel="Clip selection",
         ),
     ] = None,
     block_chars: Annotated[
