@@ -3141,3 +3141,130 @@ def test_blur_subtitle_containers_follow_the_source_and_keep_vertical_blur_full_
             else:
                 assert render["subtitle_container"] is None
             assert render["subtitle_overrides"] == {"position": "top-left"}
+
+
+def test_parallel_cuts_overlap_and_preserve_rank_and_single_transcription(tmp_path):
+    from threading import Barrier, Event
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    both_started = Barrier(2, timeout=5)
+    long_finished = Event()
+    completion = []
+    asr = FakeTranscriber()
+
+    def raw(acquired, media, clip, config, *, output, work, should_cancel):
+        both_started.wait()
+        if clip.proposal.clip_class == "short":
+            assert long_finished.wait(5)
+        assert not should_cancel()
+        output.parent.mkdir(parents=True)
+        output.write_bytes(b"raw")
+        return (
+            output,
+            media,
+            config.aspect_ratio_for(clip.proposal.clip_class, "horizontal"),
+        )
+
+    def final(
+        raw_path, media, transcript, clip, config, *, output, work, should_cancel
+    ):
+        assert not should_cancel()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"final")
+        completion.append(clip.proposal.clip_class)
+        if clip.proposal.clip_class == "long":
+            long_finished.set()
+        return output, (), None
+
+    result = run_pipeline(
+        AppConfig(
+            str(source),
+            tmp_path / "out",
+            "codex",
+            "test",
+            render="primary",
+            subtitles_enabled=False,
+            render_jobs=2,
+        ),
+        acquire=lambda *args, **kwargs: AcquiredSource(source, "parallel"),
+        probe=lambda _: _media(),
+        transcriber=asr,
+        backend=FakeBackend(),
+        raw_renderer=raw,
+        final_renderer=final,
+    )
+    manifest = json.loads(result.manifest_path.read_text())
+    assert asr.calls == 1
+    assert completion == ["long", "short"]
+    assert [clip["class"] for clip in manifest["clips"]] == ["short", "long"]
+    assert [
+        json.loads(path.with_suffix(".json").read_text())["rank"]
+        for path in result.clip_paths
+    ] == [1, 2]
+    assert manifest["execution"]["render_jobs"] == 2
+    assert not (result.manifest_path.parent / ".work").exists()
+
+
+def test_parallel_failure_cancels_active_peer_and_does_not_schedule_more(tmp_path):
+    from threading import Barrier, Event
+
+    from multicuts.errors import RenderingCancelledError, RenderingError
+
+    class Backend(FakeBackend):
+        def complete(self, prompt, schema):
+            if "Find every" in prompt:
+                return {
+                    "clips": [
+                        {
+                            "class": "short",
+                            "start_id": f"u{i}",
+                            "end_id": f"u{i}",
+                            "title": f"Cut {i}",
+                            "rationale": "Complete idea",
+                        }
+                        for i in (0, 2, 4)
+                    ]
+                }
+            return super().complete(prompt, schema)
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    started = []
+    both_started = Barrier(2, timeout=5)
+    peer_stopped = Event()
+
+    def raw(acquired, media, clip, config, *, output, work, should_cancel):
+        started.append(clip.proposal.start_id)
+        both_started.wait()
+        if clip.proposal.start_id == "u0":
+            raise RenderingError("original render failure")
+        try:
+            for _ in range(500):
+                if should_cancel():
+                    raise RenderingCancelledError("peer cancelled")
+                peer_stopped.wait(0.01)
+            pytest.fail("Active peer did not receive cancellation")
+        finally:
+            peer_stopped.set()
+
+    with pytest.raises(RenderingError, match="original render failure"):
+        run_pipeline(
+            AppConfig(
+                str(source),
+                tmp_path / "out",
+                "codex",
+                "test",
+                render="primary",
+                render_jobs=2,
+            ),
+            acquire=lambda *args, **kwargs: AcquiredSource(source, "parallel-failure"),
+            probe=lambda _: _media(),
+            transcriber=FakeTranscriber(),
+            backend=Backend(),
+            raw_renderer=raw,
+        )
+    assert set(started) == {"u0", "u2"}
+    assert peer_stopped.is_set()
+    assert not list((tmp_path / "out" / "runs").glob("*/manifest.json"))
+    assert not list((tmp_path / "out" / "runs").glob("*/.work"))

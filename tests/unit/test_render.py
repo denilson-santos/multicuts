@@ -372,6 +372,8 @@ def test_subtitles_use_clip_local_timing_and_publish_complete_set(
             workspace: Path,
             options=None,
             container=None,
+            encoding=None,
+            should_cancel=None,
         ) -> SubtitleArtifacts:
             assert video_path == raw
             assert options == config.subtitle_options
@@ -458,3 +460,240 @@ def test_point_source_segment_inside_cut_fails_instead_of_losing_its_text(
     with pytest.raises(ValueError, match="positive observed interval"):
         clip_transcript(transcript, 0.0, 3.0)
     assert clip_transcript(transcript, 1.0, 3.0).text == "Agora."
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, {}),
+        (
+            {"encoder": "libx264"},
+            {"-c:v": "libx264", "-preset": "medium", "-crf": "23"},
+        ),
+        (
+            {"encoder": "libx264", "preset": "fast", "quality": 0},
+            {"-c:v": "libx264", "-preset": "fast", "-crf": "0"},
+        ),
+        (
+            {"encoder": "h264_nvenc"},
+            {
+                "-c:v": "h264_nvenc",
+                "-preset": "p4",
+                "-cq": "28",
+                "-rc": "vbr",
+                "-b:v": "0",
+            },
+        ),
+    ],
+)
+def test_raw_render_preserves_default_and_explicit_encoding(
+    options, expected, tmp_path, monkeypatch
+):
+    import subprocess
+    from pathlib import Path
+
+    from multicuts.app_config import AppConfig, RenderEncoding
+    from multicuts.clips import DirectClip, Proposal
+    from multicuts.models import AcquiredSource, MediaInfo
+    from multicuts.render import render_raw
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    media = MediaInfo(2.0, 640, 360, 640, 360, 0, 1)
+    config = AppConfig(
+        str(source),
+        tmp_path,
+        full_video=True,
+        horizontal_width=640,
+        horizontal_height=360,
+        render_encoding=RenderEncoding(**options),
+    )
+    proposal = Proposal("cut", "short", "u0", "u0", 0, 2, "", "Title", "Reason")
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"encoded")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 60)
+    monkeypatch.setattr("multicuts.render.inspect_media_path", lambda path: media)
+    output = tmp_path / "final.mp4"
+    rendered, _, _ = render_raw(
+        AcquiredSource(source, "encoding-fixture"),
+        media,
+        DirectClip(proposal, 2.0),
+        config,
+        output=output,
+        work=tmp_path / "work",
+    )
+    assert rendered == output and output.read_bytes() == b"encoded"
+    assert len(commands) == 1
+    for flag in ("-c:v", "-preset", "-crf", "-cq", "-rc", "-b:v"):
+        if flag in expected:
+            assert commands[0][commands[0].index(flag) + 1] == expected[flag]
+        else:
+            assert flag not in commands[0]
+
+
+def test_unavailable_encoder_is_rejected_during_preflight(tmp_path, monkeypatch):
+    import subprocess
+
+    from multicuts.app_config import AppConfig, RenderEncoding
+    from multicuts.errors import ConfigurationError
+    from multicuts.render import validate_render_encoding
+
+    commands = []
+
+    def run(command, **options):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    config = AppConfig(
+        "source.mp4",
+        tmp_path,
+        full_video=True,
+        render_encoding=RenderEncoding("h264_nvenc", "p4", 0),
+    )
+    with pytest.raises(ConfigurationError, match="encoder is unavailable"):
+        validate_render_encoding(config)
+    assert commands[0][commands[0].index("-cq") + 1] == "0"
+    assert "-crf" not in commands[0]
+    assert commands[0][commands[0].index("-b:v") + 1] == "0"
+
+
+def test_cancelling_ffmpeg_terminates_and_reaps_owned_process(monkeypatch):
+    import subprocess
+    from threading import Event
+
+    from multicuts.errors import RenderingCancelledError
+    from multicuts.render import _run_ffmpeg
+
+    cancel = Event()
+
+    class Process:
+        returncode = None
+        terminated = False
+        reaped = False
+
+        def communicate(self, timeout=0.1):
+            if not self.terminated:
+                cancel.set()
+                raise subprocess.TimeoutExpired("ffmpeg", timeout)
+            self.reaped = True
+            return b"", b""
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+    process = Process()
+    monkeypatch.setattr("multicuts.render.subprocess.Popen", lambda *a, **kw: process)
+    with pytest.raises(RenderingCancelledError):
+        _run_ffmpeg(["ffmpeg"], cancel.is_set)
+    assert process.terminated and process.reaped
+
+
+def test_composed_publication_failure_preserves_completed_files(tmp_path, monkeypatch):
+    import subprocess
+    from contextlib import contextmanager
+
+    from multicuts.app_config import AppConfig
+    from multicuts.clips import JudgedClip, Proposal
+    from multicuts.errors import RenderingError
+    from multicuts.models import AcquiredSource, MediaInfo, PreparedSubtitles
+    from multicuts.render import render_composed
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    output = tmp_path / "final.mp4"
+    output.write_bytes(b"completed")
+    subtitle_dir = tmp_path / "subtitles"
+    subtitle_dir.mkdir()
+    unrelated = subtitle_dir / "other.ass"
+    unrelated.write_bytes(b"keep")
+    media = MediaInfo(2.0, 180, 320, 180, 320, 0, 1)
+    fonts = tmp_path / "fonts"
+
+    class Preparer:
+        @contextmanager
+        def prepare_clip_subtitles(self, clip, **settings):
+            workspace = settings["workspace"]
+            workspace.mkdir(parents=True)
+            paths = tuple(
+                workspace / name for name in ("speech.json", "clip.srt", "clip.ass")
+            )
+            for path in paths:
+                path.write_bytes(b"subtitle")
+            fonts.mkdir()
+            try:
+                yield PreparedSubtitles(
+                    paths[0],
+                    paths[1],
+                    paths[2],
+                    fonts,
+                    "6.1.0",
+                    "yellow-pop",
+                    "yellow-pop",
+                    "builtin",
+                    None,
+                )
+            finally:
+                fonts.rmdir()
+
+    def run(command, **settings):
+        from pathlib import Path
+
+        assert fonts.is_dir()
+        Path(command[-1]).write_bytes(b"encoded")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("multicuts.render.subprocess.run", run)
+    monkeypatch.setattr("multicuts.render.ffmpeg_format_major", lambda: 58)
+    monkeypatch.setattr("multicuts.render.inspect_media_path", lambda _: media)
+    clip = JudgedClip(
+        Proposal("id", "short", "u0", "u0", 0, 2, "Hello.", "Title", "Reason"),
+        {},
+        80,
+        True,
+        "Good",
+        "u0",
+        "u0",
+    )
+    transcript = Transcript(
+        None,
+        "en",
+        2,
+        "Hello.",
+        (TranscriptSegment("Hello.", 0, 2),),
+        (),
+        "multisubs",
+        "6.1.0",
+    )
+    with pytest.raises(RenderingError, match="already exists"):
+        render_composed(
+            AcquiredSource(source, "publication"),
+            media,
+            transcript,
+            clip,
+            AppConfig(
+                str(source),
+                tmp_path,
+                full_video=True,
+                render_variant="vertical",
+                vertical_width=180,
+                vertical_height=320,
+            ),
+            output=output,
+            work=tmp_path / "work",
+            subtitle_provider=Preparer(),
+        )
+    assert output.read_bytes() == b"completed"
+    assert unrelated.read_bytes() == b"keep"
+    assert sorted(path.name for path in subtitle_dir.iterdir()) == ["other.ass"]
+    assert not fonts.exists()

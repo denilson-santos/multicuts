@@ -31,6 +31,59 @@ LLM_EFFORT_LEVELS = {
 
 
 @dataclass(frozen=True, slots=True)
+class RenderEncoding:
+    encoder: str | None = None
+    preset: str | None = None
+    quality: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.encoder is None:
+            if self.preset is not None or self.quality is not None:
+                raise ConfigurationError(
+                    "Render preset/quality require a render encoder"
+                )
+            return
+        if self.encoder not in ("libx264", "h264_nvenc"):
+            raise ConfigurationError("Render encoder must be libx264 or h264_nvenc")
+        presets = (
+            (
+                "ultrafast",
+                "superfast",
+                "veryfast",
+                "faster",
+                "fast",
+                "medium",
+                "slow",
+                "slower",
+                "veryslow",
+                "placebo",
+            )
+            if self.encoder == "libx264"
+            else tuple(f"p{i}" for i in range(1, 8))
+        )
+        if self.preset is not None and self.preset not in presets:
+            raise ConfigurationError(
+                "Render preset is invalid for the selected encoder"
+            )
+        if self.quality is not None and (
+            type(self.quality) is not int or not 0 <= self.quality <= 51
+        ):
+            raise ConfigurationError("Render quality must be an integer from 0 to 51")
+
+    def resolved(self) -> tuple[str, str, int] | None:
+        """Resolve explicit settings; omit overrides like multisubs by default."""
+        if self.encoder is None:
+            return None
+        return (
+            self.encoder,
+            self.preset or ("medium" if self.encoder == "libx264" else "p4"),
+            self.quality
+            if self.quality is not None
+            else (23 if self.encoder == "libx264" else 28),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     source: str
     output_dir: Path
@@ -69,8 +122,14 @@ class AppConfig:
     output_options: tuple[OutputOptions, ...] = ()
     render_variant: str | None = None
     subtitle_container: SubtitleContainer | None = None
+    render_encoding: RenderEncoding = RenderEncoding()
+    render_jobs: int = 1
 
     def __post_init__(self) -> None:
+        if type(self.render_jobs) is not int or self.render_jobs < 1:
+            raise ConfigurationError("Render jobs must be a positive integer")
+        if not isinstance(self.render_encoding, RenderEncoding):
+            raise ConfigurationError("Render encoding must use RenderEncoding")
         if self.subtitle_container is not None and not isinstance(
             self.subtitle_container, SubtitleContainer
         ):

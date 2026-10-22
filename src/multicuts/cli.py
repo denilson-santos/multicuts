@@ -16,7 +16,7 @@ import typer
 from typer.core import TyperCommand, TyperOption
 
 from multicuts.adapters._llm_common import setting
-from multicuts.app_config import AppConfig
+from multicuts.app_config import AppConfig, RenderEncoding
 from multicuts.errors import (
     AcquisitionError,
     ArtifactError,
@@ -274,17 +274,19 @@ class _OutputCommand(TyperCommand):
             "Named variants accept true/false. Per source: variant > class > all.",
             "primary": "auto (default): follow source orientation, "
             "or a preferred variant name. All, short, or long scopes only.",
-            "width": "Positive even pixels. If height is omitted, derive it from "
+            "width": "Positive even pixels (default: horizontal 1920, "
+            "vertical/square 1080). If height is omitted, derive it from "
             "the default variant ratio and round to even pixels. "
             "With both dimensions, their ratio is used; preserve variant orientation.",
-            "height": "Positive even pixels. If width is omitted, derive it from "
+            "height": "Positive even pixels (default: vertical 1920, "
+            "horizontal/square 1080). If width is omitted, derive it from "
             "the default variant ratio and round to even pixels. "
             "With both dimensions, their ratio is used; preserve variant orientation.",
         }
         subtitle_help = {
             "enabled": "Caption switch (default: true).",
             "template": "Template name (default: yellow-pop).",
-            "template_dir": "Custom template directory path.",
+            "template_dir": "Template directory (default: built-in templates).",
             "position": "Position: top/middle/bottom with left/center/right.",
             "anchor": "Subtitle-box anchor for custom x/y coordinates.",
             "font": "Font family name.",
@@ -337,6 +339,8 @@ class _OutputCommand(TyperCommand):
                 "shadow_size",
             ):
                 help_text += " Value: % or px."
+            if subtitle and field not in ("enabled", "template", "template_dir"):
+                help_text += " Default: inherit selected template."
             self.params.append(
                 TyperOption(
                     param_decls=["--" + key.replace("_", "-")],
@@ -348,7 +352,7 @@ class _OutputCommand(TyperCommand):
                     metavar="[SCOPE=]VALUE...",
                     help=help_text,
                     rich_help_panel=(
-                        "Clips"
+                        "Outputs"
                         if not subtitle
                         else "Subtitles"
                         if field in ("enabled", "template", "template_dir")
@@ -469,7 +473,9 @@ app = typer.Typer(
         "space-separated values or repeated flags: [SCOPE=]VALUE... "
         "Omitted scope means all; use short, long, or TYPE:VARIANT "
         "for specific outputs. Boolean values are true/false. "
-        "Matching environment variables accept the same values."
+        "Matching environment variables accept the same values. "
+        "Defaults shown apply when CLI, environment, .env, and JSON presets "
+        "leave the setting unset."
     ),
     epilog=(
         "Examples: --render long=false short=primary "
@@ -500,7 +506,7 @@ def run_command(
         typer.Option(
             "--config",
             help="Optional JSON output/subtitle preset; "
-            "CLI and environment override it.",
+            "CLI and environment override it (default: none).",
         ),
     ] = None,
     search_range: Annotated[
@@ -510,7 +516,8 @@ def run_command(
             metavar="START END",
             help=(
                 "Search only within these source times (seconds or HH:MM:SS). "
-                "YouTube acquisition may include extra keyframe data."
+                "YouTube acquisition may include extra keyframe data. "
+                "Default: no search restriction."
             ),
             rich_help_panel="Analysis",
         ),
@@ -522,24 +529,27 @@ def run_command(
             metavar="START END",
             help=(
                 "Render one source interval without AI review. Local bounds are "
-                "exact; YouTube cuts include the acquired keyframe padding."
+                "exact; YouTube cuts include the acquired keyframe padding. "
+                "Default: unset."
             ),
-            rich_help_panel="Clips",
+            rich_help_panel="Clip selection",
         ),
     ] = None,
     clip_full: Annotated[
         bool,
         typer.Option(
             "--clip-full",
-            help="Render the entire source as one cut without AI review.",
-            rich_help_panel="Clips",
+            help="Render the entire source as one cut without AI review "
+            "(default: false).",
+            rich_help_panel="Clip selection",
         ),
     ] = False,
     llm_backend: Annotated[
         str | None,
         typer.Option(
             "--llm-backend",
-            help="openai, anthropic, gemini, codex, claude, or agy.",
+            help="openai, anthropic, gemini, codex, claude, or agy. "
+            "Default: unset; required for automatic clip selection.",
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -547,7 +557,8 @@ def run_command(
         str | None,
         typer.Option(
             "--llm-model",
-            help="Model identifier for the selected backend.",
+            help="Model identifier for the selected backend. "
+            "Default: unset; required for automatic clip selection.",
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -555,7 +566,7 @@ def run_command(
         str | None,
         typer.Option(
             "--llm-effort",
-            help="Reasoning level; auto uses provider default.",
+            help="Reasoning level (default: auto, using the provider default).",
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -563,7 +574,8 @@ def run_command(
         str | None,
         typer.Option(
             "--context",
-            help="Describe the video's subject and scope to guide clips.",
+            help="Describe the video's subject and scope to guide clips "
+            "(default: none).",
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -571,7 +583,7 @@ def run_command(
         str | None,
         typer.Option(
             "--lang",
-            help="Transcription language code or auto.",
+            help="Transcription language code or auto (default: auto).",
             rich_help_panel="Analysis",
         ),
     ] = None,
@@ -595,8 +607,8 @@ def run_command(
         float | None,
         typer.Option(
             "--overlap-threshold",
-            help="Same-class overlap suppression ratio.",
-            rich_help_panel="Clips",
+            help="Same-class overlap suppression ratio (default: 0.60).",
+            rich_help_panel="Clip selection",
         ),
     ] = None,
     block_chars: Annotated[
@@ -613,6 +625,42 @@ def run_command(
             "--block-overlap-chars",
             help="Shared characters between AI blocks (default: 4000).",
             rich_help_panel="Analysis",
+        ),
+    ] = None,
+    jobs: Annotated[
+        int | None,
+        typer.Option(
+            "--jobs",
+            help="Maximum cuts rendered concurrently (default: 1).",
+            rich_help_panel="Execution",
+        ),
+    ] = None,
+    video_encoder: Annotated[
+        str | None,
+        typer.Option(
+            "--video-encoder",
+            help="libx264 or h264_nvenc "
+            "(default: FFmpeg selection, matching multisubs).",
+            rich_help_panel="Video encoding",
+        ),
+    ] = None,
+    video_preset: Annotated[
+        str | None,
+        typer.Option(
+            "--video-preset",
+            help="Requires --video-encoder. Default: medium (libx264), "
+            "p4 (h264_nvenc); omitted encoder: FFmpeg default.",
+            rich_help_panel="Video encoding",
+        ),
+    ] = None,
+    video_quality: Annotated[
+        int | None,
+        typer.Option(
+            "--video-quality",
+            help="Quality from 0 through 51; requires --video-encoder. "
+            "Default: CRF 23 (libx264), CQ 28 (h264_nvenc); "
+            "omitted encoder: FFmpeg default.",
+            rich_help_panel="Video encoding",
         ),
     ] = None,
     keep_intermediates: Annotated[
@@ -635,7 +683,8 @@ def run_command(
         bool | None,
         typer.Option(
             "--verbose/--quiet",
-            help="Show debug details and dependency output.",
+            help="Show debug details and dependency output "
+            "(default: quiet, showing normal progress).",
             rich_help_panel="Execution",
         ),
     ] = None,
@@ -669,6 +718,16 @@ def run_command(
         asr_backend=str(_value(asr_backend, "ASR_BACKEND", "whisperx")),
         block_chars=_integer(block_chars, "BLOCK_CHARS", 24000),
         block_overlap_chars=_integer(block_overlap_chars, "BLOCK_OVERLAP_CHARS", 4000),
+        render_encoding=RenderEncoding(
+            encoder=str(_value(video_encoder, "VIDEO_ENCODER", "")) or None,
+            preset=str(_value(video_preset, "VIDEO_PRESET", "")) or None,
+            quality=(
+                _integer(video_quality, "VIDEO_QUALITY", 0)
+                if _value(video_quality, "VIDEO_QUALITY", None) is not None
+                else None
+            ),
+        ),
+        render_jobs=_integer(jobs, "JOBS", 1),
         keep_intermediates=bool(keep_intermediates),
         force_recompute=bool(force_recompute),
         verbose=bool(verbose),

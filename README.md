@@ -125,10 +125,11 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **5.2.0** release wheel, including subtitle rendering optimizations and the public subtitle configuration builder. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **6.1.0** release wheel, including public subtitle preparation, cooperative cancellation, and concurrent rendering support. The default ASR configuration is **WhisperX + `turbo`**.
 
-Multisubs 5 exposes `transcribe_speech()` for reusable ASR output and
-`render_transcript()` for subtitles. Multicuts uses these public APIs, with one
+Multisubs 6.1 exposes `transcribe_speech()` for reusable ASR output and
+`prepare_subtitles()` for single-encode composition and `render_transcript()`
+for staged subtitles. Multicuts uses these public APIs, with one
 source transcription and native subtitle layout for each final clip geometry.
 Upgrade an existing environment with `python -m pip install --upgrade --editable .`.
 
@@ -189,7 +190,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.2.0/multisubs-5.2.0-py3-none-any.whl#sha256=ff6e1ee31ae56baadcebda5e162e7e4fad28a52590eeac3bac19b7784a932b39'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v6.1.0/multisubs-6.1.0-py3-none-any.whl#sha256=9d94980215b4d762158e2239113acdcb33478b8160a3158b6eb57e82601c4c3c'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -210,7 +211,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v5.2.0/multisubs-5.2.0-py3-none-any.whl#sha256=ff6e1ee31ae56baadcebda5e162e7e4fad28a52590eeac3bac19b7784a932b39'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v6.1.0/multisubs-6.1.0-py3-none-any.whl#sha256=9d94980215b4d762158e2239113acdcb33478b8160a3158b6eb57e82601c4c3c'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -225,7 +226,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -274,7 +275,7 @@ ratio. Plain outputs use a centered crop. Blurred outputs center a vertical or
 horizontal foreground over an enlarged, blurred copy, with neither layer mirrored. A source already in the foreground
 orientation keeps its native ratio; other sources use a 9:16 vertical or 16:9
 horizontal center crop.
-Subtitles are generated afterward and have their own settings and sidecars.
+Subtitles resolve against the final canvas and have their own settings and sidecars.
 In `horizontal-blur` and `square-blur`, their layout uses the sharp central video
 as its container, including margins, percentages, and custom coordinates.
 `vertical-blur` uses the entire final canvas, like plain variants. Default dimensions are 1080×1920, 1920×1080, and
@@ -650,7 +651,7 @@ does not run ASR again.
 Lengths accept `%` or `px`; percentages resolve against the subtitle container
 or the corresponding font/layout metric.
 See [presentation options](#subtitle-positioning)
-and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#subtitle-configuration-reference)
+and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#subtitle-configuration-reference)
 for units, valid values, and combinations.
 
 <details>
@@ -747,15 +748,22 @@ Configure clip discovery, AI analysis, and transcription.
 | `--block-chars COUNT` | Set transcript characters per AI block; default: `24000`. |
 | `--block-overlap-chars COUNT` | Set shared characters between AI blocks; default: `4000`. |
 
-#### Clips
+#### Clip selection
 
-Choose direct cuts, enabled classes, primary formats, dimensions, and variants.
+Choose direct cuts and the overlap policy.
 
 | Option | Purpose |
 | --- | --- |
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
+
+#### Outputs
+
+Choose enabled classes, primary formats, dimensions, and variants.
+
+| Option | Purpose |
+| --- | --- |
 | `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`. |
 | `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
 | `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
@@ -871,24 +879,67 @@ do not accept duration overrides. Set a phase to `none` to clear its inherited
 effect. Scope disables apply after validation; pass `false` to clear the
 corresponding disable setting. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
-See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v5.2.0/README.md#cue-and-word-effects)
+See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
 
 #### Execution
 
-Control intermediate files, cache reuse, and terminal output.
+`--jobs 2` renders up to two cuts concurrently; `JOBS` supplies
+the same global setting. The default is 1. Each cut renders its enabled variants
+in sequence and shares the source transcript. Files appear as they finish;
+the final report keeps editorial rank order. The command waits for completion.
+An error or interruption cancels active work before cleanup, preserving complete
+outputs. Increase concurrency only after comparing time and memory usage on
+your hardware: each FFmpeg can already use multiple CPU threads. The manifest
+records concurrency/render time; output metadata records preparation and
+finalization times.
 
-Use `--config PATH` for an optional JSON output/subtitle preset.
+Control intermediate files, cache reuse, and terminal output.
 
 | Option | Purpose |
 | --- | --- |
+| `--jobs COUNT` | Maximum cuts rendered concurrently; default: `1`. Environment: `JOBS`. |
 | `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
 | `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
 | `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
 
 By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
-Run `multicuts --help` for the same option groups in the terminal. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
+#### Video encoding
+
+Video encoding can be configured globally with `--video-encoder libx264`
+or `--video-encoder h264_nvenc`, plus `--video-preset` and `--video-quality`.
+The corresponding environment variables are `VIDEO_ENCODER`, `VIDEO_PRESET`,
+and `VIDEO_QUALITY`; CLI overrides process environment, then `.env`.
+Preset and quality require an explicit encoder. libx264 accepts its normal
+presets (such as `veryfast` or `medium`); NVIDIA accepts `p1` through `p7`.
+Quality accepts integers from 0 through 51, including 0. Explicit defaults are
+`medium`/23 for libx264 and `p4`/28 for h264_nvenc; omitted encoding settings
+preserve multisubs behavior: FFmpeg selects the encoder and its default preset
+and quality, with no encoding overrides. Standard MP4 builds typically use
+libx264, `medium`, and CRF 23. This applies to raw, composed, and staged rendering;
+file sizes can differ from earlier releases that forced `veryfast`/CRF 18 during
+video preparation. An explicitly selected encoder is checked before
+transcription, and settings are applied to both video preparation and subtitles.
+NVENC requires a compatible NVIDIA device and driver.
+
+| Option | Purpose |
+| --- | --- |
+| `--video-encoder NAME` | Explicit `libx264` or `h264_nvenc` encoder for video outputs. |
+| `--video-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
+| `--video-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
+
+For example, render only primary outputs, with two concurrent cuts and explicit
+CPU encoding:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts --render primary --jobs 2 \
+  --video-encoder libx264 --video-preset veryfast --video-quality 23
+```
+
+Use `--config PATH` for an optional JSON output/subtitle preset.
+
+Run `multicuts --help` for the same option groups and their defaults in the terminal. Defaults apply when CLI, environment, `.env`, and JSON presets leave a setting unset. Encoding help distinguishes FFmpeg selection from explicit encoder defaults; subtitle presentation defaults inherit the selected template. Environment variable names are listed in `.env.example` instead of the help. Source, output directory, search/custom intervals, full-video mode, language, editorial context, cache bypass, intermediate-file retention, and verbosity remain per-run CLI choices.
 
 ## Output and reruns
 
@@ -1012,7 +1063,7 @@ Long sources are split into overlapping transcript blocks. `--block-chars` and `
 
 Cache reuse depends on the source, transcription settings, AI backend, model, effort, prompt version, and transcript content. Only normalized transcripts and validated AI responses are cached.
 
-Subtitles are generated after the final crop so they fit the clip frame. Original segment and word timings are preserved, including zero-duration words. Missing or partial alignment uses the native segment fallback and suppresses unavailable word effects with a warning. Point-only groups use observed segment bounds when they cannot form a positive cue. Clips are never retranscribed and timestamps are never invented. `multisubs` performs subtitle grouping and layout once against the final configuration and geometry.
+Subtitles are prepared for the final canvas and combined with crop/blur in one video encode. The first local custom-cut variant keeps its staged path when the prepared video is needed for exact ASR. Original segment and word timings are preserved, including zero-duration words. Missing or partial alignment uses the native segment fallback and suppresses unavailable word effects with a warning. Point-only groups use observed segment bounds when they cannot form a positive cue. Clips are never retranscribed and timestamps are never invented. `multisubs` performs subtitle grouping and layout once against the final configuration and geometry.
 
 </details>
 
@@ -1076,6 +1127,11 @@ python -m build
 ```
 
 The default test suite requires no network, model downloads, GPU, YouTube access, or AI credentials.
+
+On a compatible NVIDIA device, opt into real single-encode NVENC integration
+checks with `MULTICUTS_TEST_NVENC=1 python -m pytest -m integration
+tests/integration/test_render_ffmpeg.py -k nvenc`. These checks cover all six
+variants and remain disabled by default.
 
 <details>
 <summary><strong>📦 Package versioning and release verification</strong></summary>

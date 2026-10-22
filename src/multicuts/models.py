@@ -423,3 +423,30 @@ class SubtitleArtifacts:
     provider_version: str
     template_requested: str | None
     template_resolved: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSubtitles:
+    """Owned paths whose font directory is leased by the adapter context."""
+
+    transcript_json_path: Path
+    srt_path: Path
+    ass_path: Path
+    fonts_dir: Path | None
+    provider_version: str
+    template_requested: str | None
+    template_resolved: str
+    template_source: str
+    template_base: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedVariant:
+    video_path: Path
+    media: MediaInfo
+    aspect_ratio: str
+    sidecars: tuple[Path, ...] = ()
+    template_resolved: str | None = None
+    preparation_seconds: float = 0.0
+    template_source: str | None = None
+    template_base: str | None = None

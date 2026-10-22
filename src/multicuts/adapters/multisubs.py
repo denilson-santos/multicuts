@@ -7,17 +7,25 @@ import json
 import logging
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import asdict
 from decimal import ROUND_HALF_UP, Decimal
 from math import isfinite
 from pathlib import Path
 from typing import NoReturn, cast
 
-from multicuts.errors import ConfigurationError, RenderingError, TranscriptionError
+from multicuts.app_config import RenderEncoding
+from multicuts.errors import (
+    ConfigurationError,
+    RenderingCancelledError,
+    RenderingError,
+    TranscriptionError,
+)
 from multicuts.models import (
     ClipTranscript,
     ClipTranscriptWord,
+    PreparedSubtitles,
     SubtitleArtifacts,
     Transcript,
     TranscriptSegment,
@@ -242,26 +250,28 @@ def _require_provider_version() -> str:
         version = importlib.metadata.version("multisubs")
     except importlib.metadata.PackageNotFoundError as exc:
         raise RenderingError(
-            "multisubs is unavailable; install the configured multisubs 5 release"
+            "multisubs is unavailable; install the configured multisubs 6.1 release"
         ) from exc
     try:
         major, minor = (int(part) for part in version.split(".")[:2])
     except (ValueError, TypeError) as exc:
         raise RenderingError(f"Unsupported multisubs version: {version}") from exc
-    if major != 5 or minor < 0:
-        raise RenderingError(f"Unsupported multisubs {version}; install version 5.x")
+    if major != 6 or minor < 1:
+        raise RenderingError(
+            f"Unsupported multisubs {version}; install version 6.1+ (<7)"
+        )
     try:
         provider = importlib.import_module("multisubs")
         speech_api = getattr(provider, "render_transcript", None)
     except Exception as exc:
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 5 release"
+            "install the configured multisubs 6.1 release"
         ) from exc
     if not callable(speech_api):
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 5 release"
+            "install the configured multisubs 6.1 release"
         )
     return version
 
@@ -361,12 +371,12 @@ def _build_subtitle_config(
         provider = importlib.import_module("multisubs")
     except ImportError as exc:
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 5.1+; check its installation"
+            "Subtitle presentation requires multisubs 6.1+; check its installation"
         ) from exc
     builder = getattr(provider, "build_subtitle_config", None)
     if not callable(builder):
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 5.1+; update its installation"
+            "Subtitle presentation requires multisubs 6.1+; update its installation"
         )
     try:
         configured = builder(
@@ -436,7 +446,7 @@ def _build_subtitle_config(
         raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
     except Exception as exc:
         raise ConfigurationError(
-            "Could not prepare subtitle settings; check the multisubs 5.1+ installation"
+            "Could not prepare subtitle settings; check the multisubs 6.1+ installation"
         ) from exc
 
 
@@ -449,6 +459,8 @@ def _render_subtitles(
     workspace: Path,
     options: SubtitleOptions | None = None,
     container: SubtitleContainer | None = None,
+    encoding: RenderEncoding | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> SubtitleArtifacts:
     """Render through the public v5 API, without loading an ASR adapter."""
     version = _require_provider_version()
@@ -474,6 +486,7 @@ def _render_subtitles(
         raise RenderingError(
             "Could not prepare a fresh workspace for clip subtitles"
         ) from exc
+    provider = None
     try:
         provider = importlib.import_module("multisubs")
         presentation = (
@@ -491,10 +504,22 @@ def _render_subtitles(
             output_dir,
             **presentation,
             progress=_subtitle_progress,
+            **({"should_cancel": should_cancel} if should_cancel is not None else {}),
+            **(
+                {
+                    "video_encoding": provider.VideoEncodingConfig(
+                        encoding.encoder, encoding.preset, encoding.quality
+                    )
+                }
+                if encoding is not None
+                else {}
+            ),
         )
     except ConfigurationError:
         raise
     except Exception as exc:
+        if isinstance(exc, getattr(provider, "CancelledError", ())):
+            raise RenderingCancelledError("Subtitle rendering was cancelled") from exc
         if any(
             term in str(exc).lower()
             for term in ("max-width", "max-height", "layout envelope")
@@ -545,7 +570,124 @@ def _render_subtitles(
 
 
 class MultisubsAdapter:
-    """Normalize source transcription and render source-derived clip subtitles."""
+    """Normalize source speech and prepare or render native clip subtitles."""
+
+    @contextmanager
+    def prepare_clip_subtitles(
+        self,
+        clip: ClipTranscript,
+        *,
+        frame_width: int,
+        frame_height: int,
+        template: str | None,
+        template_dir: Path | None,
+        workspace: Path,
+        options: SubtitleOptions | None = None,
+        container: SubtitleContainer | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[PreparedSubtitles]:
+        """Lease native subtitle artifacts without exposing provider objects."""
+        version = _require_provider_version()
+        provider = importlib.import_module("multisubs")
+        prepare = getattr(provider, "prepare_subtitles", None)
+        cancelled = getattr(provider, "CancelledError", None)
+        if (
+            not callable(prepare)
+            or not isinstance(cancelled, type)
+            or not issubclass(cancelled, Exception)
+        ):
+            raise RenderingError(
+                "Subtitle preparation requires the public multisubs 6.1 API"
+            )
+        options = options or SubtitleOptions()
+        root = workspace.expanduser().resolve(strict=False)
+        output = root / "prepared"
+        transcript_path = root / "transcript.json"
+        speech = _speech_transcript(clip)
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            output.mkdir(exist_ok=False)
+            with transcript_path.open("x", encoding="utf-8") as stream:
+                json.dump(speech, stream, ensure_ascii=False, allow_nan=False)
+            presentation = (
+                {
+                    "subtitle_config": _build_subtitle_config(
+                        template, template_dir, options, container
+                    )
+                }
+                if options.overrides() or container is not None
+                else {"template": template, "template_dir": template_dir}
+            )
+            with cast(
+                AbstractContextManager[object],
+                prepare(
+                    speech,
+                    output_dir=output,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    **presentation,
+                    progress=_subtitle_progress,
+                    should_cancel=should_cancel,
+                ),
+            ) as prepared:
+                paths = []
+                for field, suffix in (("srt_path", ".srt"), ("ass_path", ".ass")):
+                    path = Path(getattr(prepared, field)).resolve(strict=True)
+                    if (
+                        not path.is_relative_to(output)
+                        or not path.is_file()
+                        or path.suffix != suffix
+                        or path.stat().st_size == 0
+                    ):
+                        raise RenderingError(
+                            "Multisubs returned invalid prepared subtitles"
+                        )
+                    paths.append(path)
+                fonts = getattr(prepared, "fonts_dir", None)
+                fonts = Path(fonts).resolve(strict=True) if fonts is not None else None
+                if fonts is not None and not fonts.is_dir():
+                    raise RenderingError("Multisubs returned an invalid font directory")
+                resolved = (
+                    getattr(prepared, "template_resolved", None)
+                    or template
+                    or "default"
+                )
+                if not isinstance(resolved, str) or not resolved.strip():
+                    raise RenderingError(
+                        "Multisubs returned invalid template provenance"
+                    )
+                template_source = getattr(prepared, "template_source", None)
+                template_base = getattr(prepared, "template_base", None)
+                if (
+                    not isinstance(template_source, str)
+                    or not template_source
+                    or (
+                        template_base is not None and not isinstance(template_base, str)
+                    )
+                ):
+                    raise RenderingError(
+                        "Multisubs returned invalid template provenance"
+                    )
+                yield PreparedSubtitles(
+                    transcript_path,
+                    paths[0],
+                    paths[1],
+                    fonts,
+                    version,
+                    template,
+                    resolved,
+                    template_source,
+                    template_base,
+                )
+        except (ConfigurationError, RenderingError):
+            raise
+        except provider.CancelledError as exc:
+            raise RenderingCancelledError("Subtitle preparation was cancelled") from exc
+        except Exception as exc:
+            raise RenderingError(
+                "Could not prepare native subtitles; check timing, geometry, "
+                "template, fonts, and the multisubs 6.1 installation"
+            ) from exc
 
     def subtitle_clip(
         self,
@@ -557,6 +699,8 @@ class MultisubsAdapter:
         workspace: Path,
         options: SubtitleOptions | None = None,
         container: SubtitleContainer | None = None,
+        encoding: RenderEncoding | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> SubtitleArtifacts:
         """Render existing clip words without starting a new ASR pass."""
         return _render_subtitles(
@@ -567,6 +711,8 @@ class MultisubsAdapter:
             workspace=workspace,
             options=options,
             container=container,
+            encoding=encoding,
+            should_cancel=should_cancel,
         )
 
     def validate_subtitle_options(
@@ -604,7 +750,7 @@ class MultisubsAdapter:
         except Exception as exc:
             raise TranscriptionError(
                 "multisubs public semantic transcription API is unavailable; "
-                "install the configured multisubs 5 release with "
+                "install the configured multisubs 6.1 release with "
                 "transcribe_speech support"
             ) from exc
         if not callable(transcribe):

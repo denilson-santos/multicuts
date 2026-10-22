@@ -9,12 +9,14 @@ import secrets
 import shutil
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
 from math import isclose
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from typing import Protocol
 
@@ -62,12 +64,20 @@ from multicuts.errors import (
     TranscriptionError,
 )
 from multicuts.media import prepare_source_range, probe_media
-from multicuts.models import AcquiredSource, MediaInfo, TimeRange, Transcript
+from multicuts.models import (
+    AcquiredSource,
+    MediaInfo,
+    RenderedVariant,
+    TimeRange,
+    Transcript,
+)
 from multicuts.render import (
     clip_transcript,
     foreground_dimensions,
+    render_composed,
     render_final,
     render_raw,
+    validate_render_encoding,
 )
 from multicuts.source import SourceAcquirer, acquire_source
 from multicuts.subtitles import SubtitleContainer
@@ -283,6 +293,10 @@ def _clip_metadata(
     subtitle_source_video: Path | None = None,
     is_variant: bool = False,
     title_generation: dict[str, object] | None = None,
+    render_timings: dict[str, float] | None = None,
+    render_strategy: str = "staged",
+    template_source: str | None = None,
+    template_base: str | None = None,
 ) -> dict[str, object]:
     proposal = clip.proposal
     subtitles_enabled = config.subtitles_for(proposal.clip_class)
@@ -320,6 +334,9 @@ def _clip_metadata(
         if isinstance(clip, JudgedClip)
         else None,
         "render": {
+            "encoding": asdict(config.render_encoding),
+            "timings": render_timings,
+            "strategy": render_strategy,
             "variant": config.render_variant,
             "is_variant": is_variant,
             "layout": layout,
@@ -328,6 +345,8 @@ def _clip_metadata(
             "height": height,
             "subtitles_enabled": subtitles_enabled,
             "subtitle_template": template,
+            "subtitle_template_source": template_source,
+            "subtitle_template_base": template_base,
             "subtitle_overrides": config.subtitle_options.metadata()
             if subtitles_enabled
             else {},
@@ -424,8 +443,16 @@ def run_pipeline(
     final_renderer: Callable[
         ..., tuple[Path, tuple[Path, ...], str | None]
     ] = render_final,
+    composed_renderer: Callable[..., RenderedVariant] | None = None,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
+    # Retain explicitly supplied staged renderer boundaries for integrations.
+    if (
+        composed_renderer is None
+        and raw_renderer is render_raw
+        and final_renderer is render_final
+    ):
+        composed_renderer = render_composed
     if config.subtitle_options.overrides():
         MultisubsAdapter().validate_subtitle_options(
             template=config.subtitle_template,
@@ -487,6 +514,7 @@ def run_pipeline(
                 "Source acquisition did not preserve the requested interval"
             )
         media = probe(source)
+        validate_render_encoding(config)
         original_source = (
             source
             if source.source_kind == "local" and requested_range is not None
@@ -873,7 +901,17 @@ def run_pipeline(
         clips: list[Path] = []
         references: list[dict[str, object]] = []
         report_clips: list[ReportClip] = []
-        for rank, clip in enumerate(selected, start=1):
+        initial_prepared = prepared_raw
+        cancel_render = Event()
+        cancellation = (
+            {"should_cancel": cancel_render.is_set} if config.render_jobs > 1 else {}
+        )
+        render_started = perf_counter()
+
+        def render_clip(
+            rank: int, clip: JudgedClip | DirectClip
+        ) -> tuple[Path, dict[str, object], ReportClip]:
+            prepared_raw = initial_prepared if rank == 1 else None
             clip_started = perf_counter()
             logger.info(
                 "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%s",
@@ -892,6 +930,7 @@ def run_pipeline(
             report_videos: list[tuple[str, Path]] = []
             primary_video = clip_dir / f"{outputs[0]}.mp4"
             for index, name in enumerate(outputs):
+                variant_started = perf_counter()
                 ratio = config.aspect_ratio_for(clip_class, name)
                 is_variant = index != 0
                 variant_work = work / stem / name
@@ -917,39 +956,77 @@ def run_pipeline(
                     if name.endswith("-blur")
                     else "center_crop"
                 )
-                if prepared_raw is not None and index == 0:
-                    raw, rendered_media, rendered_ratio = prepared_raw
-                    prepared_raw = None
-                else:
-                    raw, rendered_media, rendered_ratio = raw_renderer(
+                strategy = "staged"
+                template_source = template_base = None
+                if composed_renderer is not None and not (
+                    prepared_raw is not None and index == 0
+                ):
+                    rendered = composed_renderer(
                         source,
                         media,
+                        transcript,
                         clip,
                         variant_config,
-                        output=variant_work / "raw.mp4",
+                        output=final_path,
                         work=variant_work,
+                        **cancellation,
                     )
-                if rendered_ratio != ratio:
-                    raise ArtifactError(
-                        "Raw renderer returned an unexpected aspect ratio"
+                    final, sidecars, template = (
+                        rendered.video_path,
+                        rendered.sidecars,
+                        rendered.template_resolved,
                     )
-                if variant_config.subtitles_for(clip_class):
-                    logger.info(
-                        "Adding subtitles to clip %d/%d (version=%s, template=%s)",
-                        rank,
-                        len(selected),
-                        name,
-                        variant_config.subtitle_template,
+                    rendered_media, rendered_ratio = (
+                        rendered.media,
+                        rendered.aspect_ratio,
                     )
-                final, sidecars, template = final_renderer(
-                    raw,
-                    rendered_media,
-                    transcript,
-                    clip,
-                    variant_config,
-                    output=final_path,
-                    work=variant_work,
-                )
+                    raw_finished = variant_started + rendered.preparation_seconds
+                    strategy = "composed"
+                    template_source, template_base = (
+                        rendered.template_source,
+                        rendered.template_base,
+                    )
+                    if rendered_ratio != ratio:
+                        raise ArtifactError(
+                            "Renderer returned an unexpected aspect ratio"
+                        )
+                else:
+                    if prepared_raw is not None and index == 0:
+                        raw, rendered_media, rendered_ratio = prepared_raw
+                        prepared_raw = None
+                    else:
+                        raw, rendered_media, rendered_ratio = raw_renderer(
+                            source,
+                            media,
+                            clip,
+                            variant_config,
+                            output=variant_work / "raw.mp4",
+                            work=variant_work,
+                            **cancellation,
+                        )
+                    raw_finished = perf_counter()
+                    if rendered_ratio != ratio:
+                        raise ArtifactError(
+                            "Raw renderer returned an unexpected aspect ratio"
+                        )
+                    if variant_config.subtitles_for(clip_class):
+                        logger.info(
+                            "Adding subtitles to clip %d/%d (version=%s, template=%s)",
+                            rank,
+                            len(selected),
+                            name,
+                            variant_config.subtitle_template,
+                        )
+                    final, sidecars, template = final_renderer(
+                        raw,
+                        rendered_media,
+                        transcript,
+                        clip,
+                        variant_config,
+                        output=final_path,
+                        work=variant_work,
+                        **cancellation,
+                    )
                 if final != final_path or not final.is_file():
                     raise ArtifactError(
                         "Final renderer did not publish the expected clip"
@@ -969,6 +1046,13 @@ def run_pipeline(
                     layout=layout,
                     is_variant=is_variant,
                     title_generation=title_generation,
+                    render_strategy=strategy,
+                    template_source=template_source,
+                    template_base=template_base,
+                    render_timings={
+                        "prepare_seconds": raw_finished - variant_started,
+                        "finalize_seconds": perf_counter() - raw_finished,
+                    },
                 )
                 metadata_path = final.with_suffix(".json")
                 _publish_json(metadata_path, metadata, work)
@@ -988,9 +1072,8 @@ def run_pipeline(
                 len(variants),
                 perf_counter() - clip_started,
             )
-            clips.append(primary_video)
-            report_clips.append(ReportClip(clip, tuple(report_videos)))
-            references.append(
+            return (
+                primary_video,
                 {
                     "id": clip.proposal.id,
                     "class": clip.proposal.clip_class,
@@ -1000,8 +1083,45 @@ def run_pipeline(
                     .relative_to(root)
                     .as_posix(),
                     "variants": variants,
-                }
+                },
+                ReportClip(clip, tuple(report_videos)),
             )
+
+        results: dict[int, tuple[Path, dict[str, object], ReportClip]] = {}
+        if config.render_jobs == 1:
+            for rank, clip in enumerate(selected, start=1):
+                results[rank] = render_clip(rank, clip)
+        else:
+            jobs = iter(enumerate(selected, start=1))
+            with ThreadPoolExecutor(max_workers=config.render_jobs) as executor:
+                pending: dict[
+                    Future[tuple[Path, dict[str, object], ReportClip]], int
+                ] = {}
+                try:
+                    for _ in range(min(config.render_jobs, len(selected))):
+                        rank, clip = next(jobs)
+                        pending[executor.submit(render_clip, rank, clip)] = rank
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            results[pending[future]] = future.result()
+                        for future in done:
+                            del pending[future]
+                        for _ in done:
+                            next_job = next(jobs, None)
+                            if next_job is not None:
+                                rank, clip = next_job
+                                pending[executor.submit(render_clip, rank, clip)] = rank
+                except BaseException:
+                    cancel_render.set()
+                    for future in pending:
+                        future.cancel()
+                    raise
+        for rank in sorted(results):
+            video, reference, report = results[rank]
+            clips.append(video)
+            references.append(reference)
+            report_clips.append(report)
         manifest = {
             "schema_version": 5,
             "report": "report.md",
@@ -1074,6 +1194,10 @@ def run_pipeline(
                 "editorially_eligible": eligible,
                 "selected": len(selected),
                 "ai_cache": cache_stats,
+            },
+            "execution": {
+                "render_jobs": config.render_jobs,
+                "render_seconds": perf_counter() - render_started,
             },
             "clips": references,
         }
