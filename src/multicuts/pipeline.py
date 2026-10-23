@@ -1042,6 +1042,14 @@ def run_pipeline(
             )
             metadata_path = final.with_suffix(".json")
             _publish_json(metadata_path, metadata, work)
+            logger.info(
+                "Clip %d/%d version %s saved: %s (%.1fs)",
+                rank,
+                len(selected),
+                name,
+                final.relative_to(root).as_posix(),
+                perf_counter() - variant_started,
+            )
             reference: dict[str, object] = {
                 "variant": name,
                 "aspect_ratio": ratio,

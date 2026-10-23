@@ -907,7 +907,7 @@ Control intermediate files, cache reuse, and terminal output.
 | `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
 | `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
 
-By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
+By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Each rendered variant reports its clip counter, variant name, output path, and elapsed preparation/rendering/publication time as soon as its video and metadata are saved. A separate cut summary appears after all its variants succeed. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 #### Video encoding
 

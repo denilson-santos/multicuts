@@ -1957,8 +1957,9 @@ def test_changing_class_subtitles_reuses_transcription_and_ai(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("subtitles", [False, True])
+@pytest.mark.parametrize("jobs", [1, 3])
 def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
-    subtitles: bool, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    subtitles: bool, jobs: int, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="multicuts.pipeline")
     config = AppConfig(
@@ -1967,6 +1968,7 @@ def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
         llm_backend="codex",
         llm_model="test-model",
         subtitles_enabled=subtitles,
+        render_jobs=jobs,
     )
     first = _run(tmp_path, FakeTranscriber(), FakeBackend(), config=config)
     messages = caplog.messages
@@ -2008,6 +2010,27 @@ def test_pipeline_reports_stages_selection_rendering_and_cache_reuse(
     assert any("cache: 0 hits, 3 misses" in message for message in messages)
     assert any("Rendering clip 2/2: long" in message for message in messages)
     assert any("Clip 2/2 saved:" in message for message in messages)
+    manifest = json.loads(first.manifest_path.read_text())
+    for rank, clip in enumerate(manifest["clips"], start=1):
+        cut_saved = next(
+            index
+            for index, message in enumerate(messages)
+            if message.startswith(f"Clip {rank}/2 saved:")
+        )
+        for variant in clip["variants"]:
+            prefix = (
+                f"Clip {rank}/2 version {variant['variant']} saved: {variant['video']} "
+            )
+            matching = [
+                index
+                for index, message in enumerate(messages)
+                if message.startswith(prefix)
+            ]
+            assert len(matching) == 1
+            assert matching[0] < cut_saved
+            assert re.fullmatch(
+                re.escape(prefix) + r"\(\d+\.\ds\)", messages[matching[0]]
+            )
     assert any(str(first.manifest_path) in message for message in messages)
     assert (
         any("Adding subtitles to clip" in message for message in messages) is subtitles
@@ -3244,10 +3267,11 @@ def _fake_composed_output(
 
 @pytest.mark.parametrize("single_cut", [False, True])
 def test_parallel_variants_share_one_global_limit_and_keep_output_order(
-    tmp_path, single_cut
+    tmp_path, single_cut, caplog
 ):
     from threading import Barrier, Event, Lock
 
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     first_wave = Barrier(3, timeout=5)
@@ -3287,6 +3311,14 @@ def test_parallel_variants_share_one_global_limit_and_keep_output_order(
                 if name != "horizontal":
                     finished += 1
                     if finished == 5 * cut_count:
+                        assert any(
+                            re.match(r"Clip \d+/\d+ version \S+ saved:", message)
+                            for message in caplog.messages
+                        )
+                        assert not any(
+                            re.match(r"Clip \d+/\d+ saved:", message)
+                            for message in caplog.messages
+                        )
                         additional_finished.set()
             return rendered
         finally:
@@ -3314,6 +3346,13 @@ def test_parallel_variants_share_one_global_limit_and_keep_output_order(
     assert len(started) == len(set(workspaces)) == cut_count * 6
     assert len(transcripts) == 1
     assert completion[-cut_count:] == ["horizontal"] * cut_count
+    version_logs = [
+        message
+        for message in caplog.messages
+        if re.match(r"Clip \d+/\d+ version \S+ saved:", message)
+    ]
+    assert len(version_logs) == cut_count * 6
+    assert all(re.search(r"\(\d+\.\ds\)$", message) for message in version_logs)
     manifest = json.loads(result.manifest_path.read_text())
     assert len(manifest["clips"]) == cut_count
     for rank, reference in enumerate(manifest["clips"], start=1):
@@ -3435,6 +3474,9 @@ def test_variant_failure_cancels_peer_preserves_completed_output_and_stops_queue
     assert not (run_root / "report.md").exists()
     assert not (run_root / ".work").exists()
     assert "Clip 1/1 saved" not in caplog.text
+    assert "Clip 1/1 version horizontal saved:" in caplog.text
+    assert "Clip 1/1 version vertical saved:" not in caplog.text
+    assert "Clip 1/1 version square saved:" not in caplog.text
 
 
 def test_parallel_failure_cancels_active_peer_and_does_not_schedule_more(tmp_path):
