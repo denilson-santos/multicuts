@@ -14,6 +14,8 @@ from multicuts.cli import parse_run_config
 from multicuts.clips import (
     DIRECT_TITLE_PROMPT_VERSION,
     DIRECT_TITLE_SCHEMA,
+    DirectClip,
+    JudgedClip,
     TimedUnit,
     judgment_prompt,
     judgment_schema,
@@ -30,6 +32,7 @@ from multicuts.errors import (
 from multicuts.models import (
     AcquiredSource,
     MediaInfo,
+    RenderedVariant,
     TimeRange,
     Transcript,
     TranscriptSegment,
@@ -301,8 +304,9 @@ def test_custom_cut_preserves_exact_bounds_without_ai_or_asr(
 
 @pytest.mark.parametrize("full", [False, True])
 @pytest.mark.parametrize("subtitles", [False, True])
+@pytest.mark.parametrize("jobs", [1, 3])
 def test_direct_cuts_generate_one_title_for_all_variants(
-    full: bool, subtitles: bool, tmp_path: Path
+    full: bool, subtitles: bool, jobs: int, tmp_path: Path
 ) -> None:
     title = "Estudar mais não é aprender mais"
     prompts: list[str] = []
@@ -323,6 +327,7 @@ def test_direct_cuts_generate_one_title_for_all_variants(
         clip_range=None if full else TimeRange(60, 120),
         subtitles_enabled=subtitles,
         editorial_context="Conversa sobre hábitos.",
+        render_jobs=jobs,
     )
     asr, ai = FakeTranscriber(), Backend()
     result = _run(tmp_path, asr, ai, config=config)
@@ -1039,6 +1044,7 @@ def _run(
         *,
         output: Path,
         work: Path,
+        should_cancel=None,
     ):
         if _source.acquired_range is None:
             assert _source.local_path == source_file
@@ -1075,6 +1081,7 @@ def _run(
         *,
         output: Path,
         work: Path,
+        should_cancel=None,
     ):
         output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(raw, output)
@@ -3204,6 +3211,230 @@ def test_parallel_cuts_overlap_and_preserve_rank_and_single_transcription(tmp_pa
     ] == [1, 2]
     assert manifest["execution"]["render_jobs"] == 2
     assert not (result.manifest_path.parent / ".work").exists()
+
+
+def _fake_composed_output(
+    media: MediaInfo,
+    clip: JudgedClip | DirectClip,
+    config: AppConfig,
+    *,
+    output: Path,
+    work: Path,
+) -> RenderedVariant:
+    assert config.render_variant is not None
+    width, height = config.dimensions_for(
+        clip.proposal.clip_class, config.render_variant
+    )
+    work.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"complete variant")
+    return RenderedVariant(
+        output,
+        replace(
+            media,
+            duration=clip.proposal.end - clip.proposal.start,
+            coded_width=width,
+            coded_height=height,
+            presentation_width=width,
+            presentation_height=height,
+        ),
+        config.aspect_ratio_for(clip.proposal.clip_class, config.render_variant),
+    )
+
+
+@pytest.mark.parametrize("single_cut", [False, True])
+def test_parallel_variants_share_one_global_limit_and_keep_output_order(
+    tmp_path, single_cut
+):
+    from threading import Barrier, Event, Lock
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    first_wave = Barrier(3, timeout=5)
+    additional_finished = Event()
+    lock = Lock()
+    active = peak = finished = 0
+    started = []
+    completion = []
+    workspaces = []
+    transcripts = set()
+    cut_count = 1 if single_cut else 2
+    asr = FakeTranscriber()
+
+    def composed(
+        acquired, media, transcript, clip, config, *, output, work, should_cancel
+    ):
+        nonlocal active, peak, finished
+        name = config.render_variant
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            started.append((clip.proposal.clip_class, name))
+            ordinal = len(started)
+            workspaces.append(work)
+            transcripts.add(id(transcript))
+        try:
+            if ordinal <= 3:
+                first_wave.wait()
+            if name == "horizontal":
+                assert additional_finished.wait(5)
+            assert not should_cancel()
+            rendered = _fake_composed_output(
+                media, clip, config, output=output, work=work
+            )
+            with lock:
+                completion.append(name)
+                if name != "horizontal":
+                    finished += 1
+                    if finished == 5 * cut_count:
+                        additional_finished.set()
+            return rendered
+        finally:
+            with lock:
+                active -= 1
+
+    config = AppConfig(
+        str(source),
+        tmp_path / "out",
+        "" if single_cut else "codex",
+        "" if single_cut else "test",
+        full_video=single_cut,
+        render_jobs=3,
+    )
+    result = run_pipeline(
+        config,
+        acquire=lambda *args, **kwargs: AcquiredSource(source, "parallel-variants"),
+        probe=lambda _: _media(),
+        transcriber=asr,
+        backend=FakeBackend(),
+        composed_renderer=composed,
+    )
+    assert asr.calls == 1
+    assert peak == 3 and active == 0
+    assert len(started) == len(set(workspaces)) == cut_count * 6
+    assert len(transcripts) == 1
+    assert completion[-cut_count:] == ["horizontal"] * cut_count
+    manifest = json.loads(result.manifest_path.read_text())
+    assert len(manifest["clips"]) == cut_count
+    for rank, reference in enumerate(manifest["clips"], start=1):
+        assert [version["variant"] for version in reference["variants"]] == list(
+            VARIANTS
+        )
+        assert reference["video"] == reference["variants"][0]["video"]
+        for index, version in enumerate(reference["variants"]):
+            metadata = json.loads(
+                (result.manifest_path.parent / version["metadata"]).read_text()
+            )
+            assert metadata["rank"] == rank
+            assert metadata["render"]["is_variant"] is (index != 0)
+    if not single_cut:
+        assert [cut["class"] for cut in manifest["clips"]] == ["short", "long"]
+    assert not (result.manifest_path.parent / ".work").exists()
+
+
+@pytest.mark.parametrize("short_primary_only", [False, True])
+def test_primary_variants_lead_then_additional_variants_rotate_between_cuts(
+    tmp_path, short_primary_only
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    started = []
+
+    def composed(acquired, media, transcript, clip, config, *, output, work):
+        started.append((clip.proposal.clip_class, config.render_variant))
+        return _fake_composed_output(media, clip, config, output=output, work=work)
+
+    config = AppConfig(
+        str(source),
+        tmp_path / "out",
+        "codex",
+        "test",
+        short_render="primary" if short_primary_only else True,
+        short_primary="vertical",
+        long_primary="square",
+        subtitles_enabled=False,
+    )
+    result = run_pipeline(
+        config,
+        acquire=lambda *args, **kwargs: AcquiredSource(source, "variant-priority"),
+        probe=lambda _: _media(),
+        transcriber=FakeTranscriber(),
+        backend=FakeBackend(),
+        composed_renderer=composed,
+    )
+    assert started[:2] == [("short", "vertical"), ("long", "square")]
+    assert [kind for kind, _ in started[2:]] == (
+        ["long"] * 5 if short_primary_only else ["short", "long"] * 5
+    )
+    manifest = json.loads(result.manifest_path.read_text())
+    for clip in manifest["clips"]:
+        names = config.outputs_for(clip["class"], _media())
+        assert [name for kind, name in started if kind == clip["class"]] == list(names)
+        assert [version["variant"] for version in clip["variants"]] == list(names)
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_variant_failure_cancels_peer_preserves_completed_output_and_stops_queue(
+    tmp_path, caplog, interrupted
+):
+    from threading import Event, Lock
+
+    from multicuts.errors import RenderingCancelledError, RenderingError
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    peer_started, peer_stopped = Event(), Event()
+    lock = Lock()
+    started = []
+    failure = KeyboardInterrupt if interrupted else RenderingError
+    caplog.set_level(logging.INFO, logger="multicuts.pipeline")
+
+    def composed(
+        acquired, media, transcript, clip, config, *, output, work, should_cancel
+    ):
+        name = config.render_variant
+        with lock:
+            started.append(name)
+        if name == "horizontal":
+            return _fake_composed_output(media, clip, config, output=output, work=work)
+        if name == "vertical":
+            assert peer_started.wait(5)
+            raise failure("original variant failure")
+        assert name == "square", "A later variant started after the failure"
+        work.mkdir(parents=True, exist_ok=True)
+        peer_started.set()
+        try:
+            for _ in range(500):
+                if should_cancel():
+                    raise RenderingCancelledError("peer cancelled")
+                peer_stopped.wait(0.01)
+            pytest.fail("Active variant did not receive cancellation")
+        finally:
+            assert work.exists(), "Workspace cleaned before the active render stopped"
+            peer_stopped.set()
+
+    with pytest.raises(failure, match="original variant failure"):
+        run_pipeline(
+            AppConfig(
+                str(source),
+                tmp_path / "out",
+                full_video=True,
+                subtitles_enabled=False,
+                render_jobs=2,
+            ),
+            acquire=lambda *args, **kwargs: AcquiredSource(source, "variant-failure"),
+            probe=lambda _: _media(),
+            composed_renderer=composed,
+        )
+    assert set(started) == {"horizontal", "vertical", "square"}
+    assert peer_stopped.is_set()
+    (run_root,) = (tmp_path / "out" / "runs").iterdir()
+    (complete,) = run_root.glob("longs/*/horizontal.mp4")
+    assert complete.with_suffix(".json").is_file()
+    assert not (run_root / "manifest.json").exists()
+    assert not (run_root / "report.md").exists()
+    assert not (run_root / ".work").exists()
+    assert "Clip 1/1 saved" not in caplog.text
 
 
 def test_parallel_failure_cancels_active_peer_and_does_not_schedule_more(tmp_path):

@@ -631,7 +631,7 @@ def run_command(
         int | None,
         typer.Option(
             "--jobs",
-            help="Maximum cuts rendered concurrently (default: 1).",
+            help="Maximum simultaneous renders across cuts and variants (default: 1).",
             rich_help_panel="Execution",
         ),
     ] = None,

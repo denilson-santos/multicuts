@@ -412,6 +412,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         "Default: CRF 23 (libx264), CQ 28 (h264_nvenc)",
         "Transcription language code or auto (default: auto)",
         "Same-class overlap suppression ratio (default: 0.60)",
+        "Maximum simultaneous renders across cuts and variants (default: 1)",
         "default: horizontal 1920, vertical/square 1080",
         "default: vertical 1920, horizontal/square 1080",
         "Defaults shown apply when CLI, environment, .env, and JSON presets",

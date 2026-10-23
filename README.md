@@ -884,10 +884,14 @@ for the types accepted by each track and phase.
 
 #### Execution
 
-`--jobs 2` renders up to two cuts concurrently; `JOBS` supplies
-the same global setting. The default is 1. Each cut renders its enabled variants
-in sequence and shares the source transcript. Files appear as they finish;
-the final report keeps editorial rank order. The command waits for completion.
+`--jobs 2` runs up to two renders concurrently across cuts and variants; `JOBS`
+supplies the same global setting. The default is 1. Each task renders one
+`(cut, variant)` pair in its own workspace using the shared source transcript.
+Primary versions are scheduled first in editorial rank order, followed by rounds
+of additional variants across cuts. Even a single cut with multiple variants can
+use all available slots. A cut is complete only when all its enabled variants
+finish. Files appear as they finish; the final report keeps editorial rank and
+variant order. The command waits for completion.
 An error or interruption cancels active work before cleanup, preserving complete
 outputs. Increase concurrency only after comparing time and memory usage on
 your hardware: each FFmpeg can already use multiple CPU threads. The manifest
@@ -898,7 +902,7 @@ Control intermediate files, cache reuse, and terminal output.
 
 | Option | Purpose |
 | --- | --- |
-| `--jobs COUNT` | Maximum cuts rendered concurrently; default: `1`. Environment: `JOBS`. |
+| `--jobs COUNT` | Global maximum simultaneous renders across cuts and variants; default: `1`. Environment: `JOBS`. |
 | `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
 | `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
 | `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
@@ -929,7 +933,7 @@ NVENC requires a compatible NVIDIA device and driver.
 | `--video-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
 | `--video-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
 
-For example, render only primary outputs, with two concurrent cuts and explicit
+For example, render only primary outputs, with two concurrent renders and explicit
 CPU encoding:
 
 ```bash

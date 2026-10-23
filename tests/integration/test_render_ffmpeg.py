@@ -1353,8 +1353,12 @@ def test_input_seek_retains_observed_frames_and_audio(
         )
 
 
-def test_parallel_cuts_render_real_video_and_native_subtitles(tmp_path):
+@pytest.mark.parametrize("direct", [False, True])
+def test_parallel_variants_render_real_video_and_native_subtitles(tmp_path, direct):
     import re
+    from threading import Barrier, Lock
+
+    from multicuts.render import render_composed
 
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("FFmpeg tools are unavailable")
@@ -1442,34 +1446,74 @@ def test_parallel_cuts_render_real_video_and_native_subtitles(tmp_path):
             }
 
     transcriber = Transcriber()
+    wave = Barrier(3, timeout=10)
+    lock = Lock()
+    active = peak = 0
+
+    def composed(*args, **options):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            wave.wait()
+            return render_composed(*args, **options)
+        finally:
+            with lock:
+                active -= 1
+
+    config = AppConfig(
+        str(source),
+        tmp_path / "out",
+        "" if direct else "codex",
+        "" if direct else "test",
+        full_video=direct,
+        long_render=False,
+        render_jobs=3,
+        horizontal_width=160,
+        horizontal_height=90,
+        vertical_width=90,
+        vertical_height=160,
+        square_size=90,
+        render_encoding=RenderEncoding("libx264", "fast", 18),
+    )
     result = run_pipeline(
-        AppConfig(
-            str(source),
-            tmp_path / "out",
-            "codex",
-            "test",
-            render="primary",
-            long_render=False,
-            render_jobs=2,
-            horizontal_width=160,
-            horizontal_height=90,
-            render_encoding=RenderEncoding("libx264", "fast", 18),
-        ),
+        config,
         transcriber=transcriber,
         backend=Backend(),
+        composed_renderer=composed,
     )
     assert transcriber.calls == 1
-    assert len(result.clip_paths) == 2
-    for rank, path in enumerate(result.clip_paths, 1):
-        media = inspect_media_path(path)
-        assert (media.presentation_width, media.presentation_height) == (160, 90)
-        assert media.has_audio and media.duration == pytest.approx(2, abs=0.25)
-        metadata = json.loads(path.with_suffix(".json").read_text())
-        assert metadata["rank"] == rank
-        assert metadata["render"]["encoding"]["encoder"] == "libx264"
-        assert len(metadata["subtitle_files"]) == 3
-        ass = next(path for path in metadata["subtitle_files"] if path.endswith(".ass"))
-        assert "PlayResX: 160" in (result.manifest_path.parent / ass).read_text()
+    assert peak == 3 and active == 0
+    assert len(result.clip_paths) == (1 if direct else 2)
+    root = result.manifest_path.parent
+    manifest = json.loads(result.manifest_path.read_text())
+    for rank, reference in enumerate(manifest["clips"], 1):
+        assert root / reference["video"] == result.clip_paths[rank - 1]
+        assert [version["variant"] for version in reference["variants"]] == list(
+            VARIANTS
+        )
+        for version in reference["variants"]:
+            path = root / version["video"]
+            width, height = config.dimensions_for("short", version["variant"])
+            media = inspect_media_path(path)
+            assert (media.presentation_width, media.presentation_height) == (
+                width,
+                height,
+            )
+            assert media.has_audio and media.duration == pytest.approx(
+                4 if direct else 2, abs=0.25
+            )
+            metadata = json.loads(path.with_suffix(".json").read_text())
+            assert metadata["rank"] == rank
+            assert metadata["render"]["encoding"]["encoder"] == "libx264"
+            assert len(metadata["subtitle_files"]) == 3
+            ass = next(
+                path for path in metadata["subtitle_files"] if path.endswith(".ass")
+            )
+            text = (root / ass).read_text()
+            assert f"PlayResX: {width}" in text and f"PlayResY: {height}" in text
+    assert not (root / ".work").exists()
 
 
 @pytest.mark.parametrize(

@@ -22,12 +22,15 @@ Each proposal includes a social-media title in the language of its transcript, p
 
 ## Configuration and integrations
 
-`--jobs` / `JOBS` selects a positive maximum number of concurrent
-cuts (default 1; CLI > process environment > `.env` > default). Each cut owns
-its sequential variants and workspace. All jobs read the shared transcript;
-transcription and editorial analysis finish before scheduling render jobs.
-Completed outputs may appear out of order, while report/manifest references
-retain editorial ranking. A failure or interruption stops scheduling, requests
+`--jobs` / `JOBS` selects a positive global maximum number of simultaneous
+renders (default 1; CLI > process environment > `.env` > default). Each task owns
+one `(cut, variant)` pair and an exclusive workspace. All tasks read the shared
+transcript; transcription and editorial analysis finish before render scheduling.
+Schedule primary versions in editorial rank order first, then additional variants
+in rounds across cuts. A single cut can occupy multiple slots. Mark a cut complete
+only when every enabled variant succeeds. Completed outputs may appear out of
+order, while report/manifest references retain editorial rank and variant order.
+A failure or interruption stops scheduling, requests
 cooperative cancellation, and waits for active work before cleanup. Preserve
 completed files and publish the final manifest only after every cut succeeds.
 Record render concurrency and elapsed time, plus per-output preparation and

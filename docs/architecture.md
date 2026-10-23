@@ -207,11 +207,14 @@ subtitle rendering. Global encoder/preset/quality settings do not enter ASR/AI
 cache identities. Metadata records the requested encoding values.
 
 `--jobs` / `JOBS` maps to `AppConfig.render_jobs` and bounds a local thread pool
-after selection. One task renders a complete cut, with variants remaining
-sequential and an exclusive workspace.
-At most the configured number of cuts are submitted at a time. The coordinator
-collects results by original rank and publishes the report/manifest after all
-tasks succeed. One invocation-owned cancellation event stops all sibling jobs
+after selection. One task renders a `(cut, variant)` pair with an exclusive
+workspace. At most the configured number of renders are submitted at a time,
+including variants of the same cut. Submit primary versions in editorial order
+first, then distribute additional variants in rounds across cuts. Only the
+coordinator aggregates results, logs cut completion after every variant succeeds,
+and restores rank/variant order for the report and manifest. The first local
+custom-cut primary alone reuses the video prepared before ASR. One
+invocation-owned cancellation event stops all sibling jobs
 on failure or interruption. Native FFmpeg execution polls it and reaps its
 process; the adapter forwards it to multisubs and normalizes `CancelledError`.
 The outer CLI output-suppression context spans the pool lifetime; workers never
