@@ -466,7 +466,16 @@ to `all`; the ellipsis means one or more values. Do not type the brackets or ell
 | --- | --- | --- |
 | Omitted or `all` | Both classes and their outputs | `--subtitle-font-size 4%` |
 | `short` or `long` | One class and its outputs | `--subtitle-font-size short=5%` |
-| `TYPE:VARIANT` | One named output | `--subtitle-font-size short:vertical=6%` |
+| `all:VARIANT` | One named variant in both classes | `--subtitle-margin-bottom all:vertical=8%` |
+| `TYPE:VARIANT` | One named variant in one class | `--subtitle-font-size short:vertical=6%` |
+
+`TYPE` is `short` or `long`. To change only vertical outputs, including their
+blurred version, in both classes:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts \
+  --subtitle-margin-bottom all:vertical=8% all:vertical-blur=8%
+```
 
 Set several scopes after one flag, or repeat the flag:
 
@@ -499,12 +508,14 @@ unset. Scope belongs in the value; generated names such as `PRIMARY_SHORT` and
 from lower-priority sources. Conflicting assignments and duplicate output
 variables in `.env` fail validation.
 
-Within each configuration source,
-variant settings override class settings, which override shared settings,
-independently per field and argument order. Contradictory assignments to the same
+Within each configuration source, scope priority is
+`TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all`, independently per field and
+argument order. For example, `short:vertical=10%` overrides `all:vertical=8%`
+for short vertical outputs while long vertical outputs retain `8%`.
+Contradictory assignments to the same
 field/scope are rejected. Boolean values are explicit: `true` or `false`.
 
-`--render`, `--width`, `--height`, and every `--subtitle-*` option support all three
+`--render`, `--width`, `--height`, and every `--subtitle-*` option support all four
 scope levels. `--render` accepts `true` (all compatible variants), `false` (none), or `primary`
 (only the principal output). Named variant scopes accept only `true`/`false`;
 `primary` is available at `all`, `short`, or `long` scope.
@@ -544,7 +555,10 @@ multicuts ./interview.mp4 --output-dir ./interview-cuts \
 
 Environment names use uppercase and underscores; scopes stay in the value:
 `WIDTH="short=720 long:horizontal=1920"`. Named render settings can enable an
-output under a disabled class, following variant > class > shared priority.
+output under a disabled class, following
+`TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all` priority.
+For example, `RENDER="false all:vertical=true"` enables only vertical outputs
+in both classes. JSON presets accept the same `all:VARIANT` scopes.
 
 Dimensions must be positive even pixel counts. **Width and height define the
 ratio**, with horizontal outputs wider than tall, vertical outputs taller than
@@ -642,8 +656,8 @@ multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --render primary \
 All presentation options use the `--subtitle-` prefix and have matching
 `SUBTITLE_` environment variables: `--subtitle-font-size` corresponds to
 `SUBTITLE_FONT_SIZE`. CLI values override process environment, then `.env`, then
-the optional preset, then the selected template. Within each source, variant
-settings override class settings, which override shared settings; precedence is
+the optional preset, then the selected template. Within each source, scope
+priority is `TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all`; precedence is
 applied per field. Explicit false values and valid zero lengths/opacity replace
 inherited values. Changing presentation reuses transcription and AI caches and
 does not run ASR again.

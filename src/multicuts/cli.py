@@ -271,7 +271,8 @@ class _OutputCommand(TyperCommand):
         controls = {
             "render": "true: all compatible outputs; false: none; "
             "primary: only the primary (all/short/long scopes). Default: true. "
-            "Named variants accept true/false. Per source: variant > class > all.",
+            "Named variants accept true/false. Per source: "
+            "TYPE:VARIANT > all:VARIANT > TYPE > all.",
             "primary": "auto (default): follow source orientation, "
             "or a preferred variant name. All, short, or long scopes only.",
             "width": "Positive even pixels (default: horizontal 1920, "
@@ -423,14 +424,19 @@ def _output_settings(
             scopes = (
                 (clip_class, "all")
                 if variant is None
-                else (f"{clip_class}:{variant}", clip_class, "all")
+                else (
+                    f"{clip_class}:{variant}",
+                    f"all:{variant}",
+                    clip_class,
+                    "all",
+                )
             )
             enabled = None
             if variant is not None:
-                key = output_key(scopes[0], "render")
-                found = resolve(tuple(output_key(scope, "render") for scope in scopes))
-                if found is not None and found[0] == key:
-                    enabled = parse_boolean(found[1], key.upper())
+                keys = tuple(output_key(scope, "render") for scope in scopes)
+                found = resolve(keys)
+                if found is not None and found[0] in keys[:2]:
+                    enabled = parse_boolean(found[1], found[0].upper())
             dimensions: dict[str, int | None] = {}
             for field in ("width", "height"):
                 raw = value(field, scopes)
@@ -471,7 +477,7 @@ app = typer.Typer(
     help=(
         "Find and render short and long clips. Output controls accept multiple "
         "space-separated values or repeated flags: [SCOPE=]VALUE... "
-        "Omitted scope means all; use short, long, or TYPE:VARIANT "
+        "Omitted scope means all; use short, long, all:VARIANT, or TYPE:VARIANT "
         "for specific outputs. Boolean values are true/false. "
         "Matching environment variables accept the same values. "
         "Defaults shown apply when CLI, environment, .env, and JSON presets "
@@ -481,7 +487,9 @@ app = typer.Typer(
         "Examples: --render long=false short=primary "
         "publishes primary shorts. "
         "--subtitle-enabled false short:vertical=true captions "
-        "only vertical shorts. Scopes: all, short, long, TYPE:VARIANT."
+        "only vertical shorts. "
+        "--subtitle-margin-bottom all:vertical=8% adjusts verticals in both classes. "
+        "Scopes: all, short, long, all:VARIANT, TYPE:VARIANT."
         " Output controls: [SCOPE=]VALUE...; omitted scope means all. "
         "Place SOURCE before grouped values, or use -- before a trailing SOURCE. "
         "Quote values containing spaces. "

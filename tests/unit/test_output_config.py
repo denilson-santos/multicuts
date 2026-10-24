@@ -10,6 +10,7 @@ from typer.main import get_command
 from multicuts.cli import app, main, parse_run_config
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo
+from multicuts.variants import VARIANTS
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +74,165 @@ def test_scoped_settings_have_order_independent_specificity(reverse):
     assert horizontal.subtitle_options.font_size == "5%"
     assert horizontal.subtitles_for("short")
     assert config.for_output("long", "horizontal").subtitle_options.font_size == "4%"
+
+
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_all_variant_scope_configures_both_classes_without_affecting_other_variants(
+    source, variant, tmp_path, monkeypatch
+):
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "fonts").mkdir()
+    scope = f"all:{variant}"
+    width, height = {
+        "horizontal": (1280, 720),
+        "vertical": (720, 1280),
+        "square": (720, 720),
+    }[variant.removesuffix("-blur")]
+    subtitles = {
+        "enabled": False,
+        "template": "amber-word",
+        "template_dir": "templates",
+        "fonts_dir": "fonts",
+        "margin_bottom": "8%",
+        "font_size": "5%",
+        "italic": True,
+        "animation_word_text_emphasis": "none",
+    }
+    values = {
+        "render": ["false", f"{scope}=true"],
+        "width": [f"{scope}={width}"],
+        "height": [f"{scope}={height}"],
+        **{
+            f"subtitle_{field}": [
+                f"{scope}={str(value).lower() if isinstance(value, bool) else value}"
+            ]
+            for field, value in subtitles.items()
+        },
+    }
+    flags = []
+    if source == "cli":
+        flags = [
+            part
+            for field, items in values.items()
+            for part in ("--" + field.replace("_", "-"), *items)
+        ]
+    elif source == "json":
+        flags = [
+            "--config",
+            preset(
+                tmp_path,
+                {
+                    "render": {"all": False, scope: True},
+                    "width": {scope: width},
+                    "height": {scope: height},
+                    "subtitles": {scope: subtitles},
+                },
+            ),
+        ]
+    elif source == "process":
+        for field, items in values.items():
+            monkeypatch.setenv(field.upper(), " ".join(items))
+    else:
+        (tmp_path / ".env").write_text(
+            "\n".join(
+                f"{field.upper()}='{' '.join(items)}'"
+                for field, items in values.items()
+            ),
+            encoding="utf-8",
+        )
+    config = parse(*flags)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    directory = tmp_path if source == "json" else Path()
+    for kind in ("short", "long"):
+        assert config.outputs_for(kind, media) == (variant,)
+        assert config.dimensions_for(kind, variant) == (width, height)
+        output = config.for_output(kind, variant)
+        assert not output.subtitles_for(kind)
+        assert output.subtitle_template == "amber-word"
+        assert output.subtitle_template_dir == directory / "templates"
+        assert output.subtitle_options.fonts_dir == directory / "fonts"
+        assert output.subtitle_options.margin_bottom == "8%"
+        assert output.subtitle_options.font_size == "5%"
+        assert output.subtitle_options.italic is True
+        assert output.subtitle_options.animation_word_text_emphasis == "none"
+        for other in VARIANTS:
+            if other != variant:
+                assert (
+                    config.for_output(kind, other).subtitle_options.margin_bottom
+                    is None
+                )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_all_variant_scope_priority_is_independent_of_argument_order(reverse):
+    options = [
+        ["--subtitle-margin-bottom", "2%"],
+        ["--subtitle-margin-bottom", "short=4%"],
+        ["--subtitle-margin-bottom", "all:vertical=8%"],
+        ["--subtitle-margin-bottom", "short:vertical=10%"],
+        ["--subtitle-margin-left", "3%"],
+        ["--render", "false"],
+        ["--render", "short=false"],
+        ["--render", "all:vertical=true"],
+        ["--render", "short:vertical=false"],
+    ]
+    if reverse:
+        options.reverse()
+    config = parse(*(part for option in options for part in option))
+    short = config.for_output("short", "vertical")
+    long = config.for_output("long", "vertical")
+    assert short.subtitle_options.margin_bottom == "10%"
+    assert long.subtitle_options.margin_bottom == "8%"
+    assert (
+        short.subtitle_options.margin_left == long.subtitle_options.margin_left == "3%"
+    )
+    assert (
+        config.for_output("short", "horizontal").subtitle_options.margin_bottom == "4%"
+    )
+    assert (
+        config.for_output("long", "vertical-blur").subtitle_options.margin_bottom
+        == "2%"
+    )
+    assert not config.clips_for("short")
+    assert config.outputs_for("long", MediaInfo(60, 640, 360, 640, 360, 0, None)) == (
+        "vertical",
+    )
+
+
+def test_all_variant_scope_respects_source_priority_per_field(tmp_path, monkeypatch):
+    path = preset(
+        tmp_path,
+        {
+            "subtitles": {
+                "all:vertical": {
+                    "margin_bottom": "8%",
+                    "margin_left": "2%",
+                    "font_size": "5%",
+                }
+            }
+        },
+    )
+    (tmp_path / ".env").write_text(
+        'SUBTITLE_MARGIN_BOTTOM="all:vertical=9%"\n'
+        'SUBTITLE_FONT_SIZE="short:vertical=6%"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUBTITLE_MARGIN_BOTTOM", "long=10%")
+    monkeypatch.setenv("SUBTITLE_FONT_SIZE", "all:vertical=7%")
+    config = parse(
+        "--config",
+        path,
+        "--subtitle-margin-bottom",
+        "short=11%",
+        "--subtitle-font-size",
+        "long:vertical=8%",
+    )
+    short = config.for_output("short", "vertical").subtitle_options
+    long = config.for_output("long", "vertical").subtitle_options
+    assert (short.margin_bottom, short.font_size) == ("11%", "7%")
+    assert (long.margin_bottom, long.font_size) == ("10%", "8%")
+    assert short.margin_left == long.margin_left == "2%"
 
 
 def test_json_scopes_and_variant_switches(tmp_path):
@@ -190,7 +350,16 @@ def test_invalid_presets_fail_as_configuration_errors(contents, tmp_path):
 
 @pytest.mark.parametrize(
     "scope",
-    ["vertical", "short:", "short:wide", "short:vertical:extra", "all:vertical"],
+    [
+        "vertical",
+        "short:",
+        "short:wide",
+        "short:vertical:extra",
+        "all:",
+        "all:wide",
+        "all:all",
+        "all:vertical:extra",
+    ],
 )
 def test_invalid_scopes_fail_before_media_work(scope):
     with pytest.raises(ConfigurationError, match="scope"):
@@ -205,6 +374,8 @@ def test_invalid_scopes_fail_before_media_work(scope):
         ["--render", "short:vertical=true", "--render", "short:vertical=false"],
         ["--subtitle-font-size", "short=4%", "--subtitle-font-size", "short=5%"],
         ["--subtitle-enabled", "short=true", "--subtitle-enabled", "short=false"],
+        ["--render", "all:vertical=true", "--render", "all:vertical=false"],
+        ["--subtitle-margin-bottom", "all:vertical=8%", "all:vertical=10%"],
     ],
 )
 def test_contradictory_values_for_the_same_scope_are_rejected(flags):
@@ -318,9 +489,10 @@ def test_dimension_inheritance_and_source_precedence(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("field", ["primary"])
-def test_primary_controls_reject_named_variant_scopes(field):
+@pytest.mark.parametrize("scope", ["short:vertical", "all:vertical"])
+def test_primary_controls_reject_named_variant_scopes(field, scope):
     with pytest.raises(ConfigurationError, match="scopes must be all, short, or long"):
-        parse("--" + field, "short:vertical=true")
+        parse("--" + field, f"{scope}=vertical")
 
 
 @pytest.mark.parametrize("field", ["width", "height"])
@@ -354,6 +526,7 @@ def test_invalid_enabled_dimensions_fail_during_output_planning():
         {"width": {"short:vertical": 721}},
         {"primary": {"short": "2:1"}},
         {"primary": {"short:vertical": "9:16"}},
+        {"primary": {"all:vertical": "vertical"}},
     ],
 )
 def test_new_preset_fields_are_strict(contents, tmp_path):
@@ -416,6 +589,8 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         "default: horizontal 1920, vertical/square 1080",
         "default: vertical 1920, horizontal/square 1080",
         "Defaults shown apply when CLI, environment, .env, and JSON presets",
+        "all:VARIANT",
+        "--subtitle-margin-bottom all:vertical=8%",
     ):
         assert description in help_text
     for param in get_command(app).params:
@@ -684,16 +859,17 @@ def test_primary_only_with_named_addition_and_disabled_primary():
 
 @pytest.mark.parametrize("source", ["dotenv", "process", "json"])
 @pytest.mark.parametrize("value", ["true", "false", "primary"])
+@pytest.mark.parametrize("scope", ["short:square", "all:square"])
 def test_cli_render_policy_overrides_lower_priority_named_settings(
-    source, value, tmp_path, monkeypatch
+    source, value, scope, tmp_path, monkeypatch
 ):
     flags = []
     if source == "json":
-        flags = ["--config", preset(tmp_path, {"render": {"short:square": True}})]
+        flags = ["--config", preset(tmp_path, {"render": {scope: True}})]
     elif source == "process":
-        monkeypatch.setenv("RENDER", "short:square=true")
+        monkeypatch.setenv("RENDER", f"{scope}=true")
     else:
-        (tmp_path / ".env").write_text("RENDER=short:square=true\n", encoding="utf-8")
+        (tmp_path / ".env").write_text(f"RENDER={scope}=true\n", encoding="utf-8")
     config = parse(*flags, "--render", "short=" + value)
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     outputs = config.outputs_for("short", media)
@@ -746,21 +922,20 @@ def test_primary_render_and_auto_primary_are_available_in_all_sources(
 
 
 @pytest.mark.parametrize("source", ["cli", "dotenv", "process", "json"])
-def test_named_render_rejects_primary_value(source, tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope", ["short:vertical", "all:vertical"])
+def test_named_render_rejects_primary_value(source, scope, tmp_path, monkeypatch):
     flags = []
     if source == "cli":
-        flags = ["--render", "short:vertical=primary"]
+        flags = ["--render", f"{scope}=primary"]
     elif source == "json":
         flags = [
             "--config",
-            preset(tmp_path, {"render": {"short:vertical": "primary"}}),
+            preset(tmp_path, {"render": {scope: "primary"}}),
         ]
     elif source == "process":
-        monkeypatch.setenv("RENDER", "short:vertical=primary")
+        monkeypatch.setenv("RENDER", f"{scope}=primary")
     else:
-        (tmp_path / ".env").write_text(
-            "RENDER=short:vertical=primary\n", encoding="utf-8"
-        )
+        (tmp_path / ".env").write_text(f"RENDER={scope}=primary\n", encoding="utf-8")
     with pytest.raises(ConfigurationError):
         parse(*flags)
 

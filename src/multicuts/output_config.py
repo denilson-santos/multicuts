@@ -50,13 +50,15 @@ def parse_render(raw: object, name: str, *, named: bool = False) -> RenderMode:
 
 
 def output_scope(scope: str) -> str:
-    """Normalize all, TYPE, or TYPE:VARIANT into a configuration key suffix."""
+    """Normalize shared, class, or named-variant scopes into a key suffix."""
     if scope == "all":
         return ""
     clip_class, separator, variant = scope.partition(":")
-    if clip_class not in ("short", "long") or (separator and variant not in VARIANTS):
+    if clip_class not in ("all", "short", "long") or (
+        separator and variant not in VARIANTS
+    ):
         raise ConfigurationError(
-            "Output scope must be all, short, long, or TYPE:VARIANT "
+            "Output scope must be all, short, long, all:VARIANT, or TYPE:VARIANT "
             "(horizontal, vertical, square, horizontal-blur, "
             "vertical-blur, square-blur)"
         )
