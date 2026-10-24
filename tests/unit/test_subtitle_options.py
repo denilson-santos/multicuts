@@ -67,8 +67,8 @@ CASES = [
     ("animation_word_text_mode", "active-word"),
     ("animation_word_backdrop_mode", "active-word"),
     ("animation_word_text_highlight_color", "#FFEE00"),
-    ("disable_cue_animations", True),
-    ("disable_word_animations", False),
+    ("cue_animations", False),
+    ("word_animations", True),
 ]
 
 
@@ -76,7 +76,7 @@ CASES = [
 def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for name in tuple(os.environ):
-        if name.startswith("SUBTITLE_"):
+        if name.startswith("SUBTITLE_") or name == "SUBTITLES":
             monkeypatch.delenv(name)
 
 
@@ -93,6 +93,28 @@ def test_each_presentation_option_is_available_directly_in_cli(key, value):
     options = parse(*flags)
     expected = Path(str(value)) if key == "fonts_dir" else value
     assert options.overrides() == {key: expected}
+
+
+@pytest.mark.parametrize(
+    ("key", "value"), [*CASES, ("template", "yellow-pop"), ("template_dir", ".")]
+)
+@pytest.mark.parametrize("disabled", ["render", "subtitles"])
+def test_explicit_subtitle_adjustments_require_a_captioned_render_scope(
+    key, value, disabled
+):
+    flag = "--subtitle-" + key.replace("_", "-")
+    raw = str(value).lower() if isinstance(value, bool) else str(value)
+    scope = "all:vertical" if disabled == "render" else "long:vertical"
+    selection = (
+        ["--render=all:horizontal"]
+        if disabled == "render"
+        else ["--render=all:vertical", "--subtitles=short"]
+    )
+    with pytest.raises(
+        ConfigurationError,
+        match=f"{flag} at scope '{scope}'.*no rendered output with subtitles enabled",
+    ):
+        parse(*selection, flag, f"{scope}={raw}")
 
 
 @pytest.mark.parametrize(("key", "value"), CASES)
@@ -236,24 +258,24 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
     tmp_path, monkeypatch
 ):
     (tmp_path / ".env").write_text(
-        "SUBTITLE_ENABLED=long:vertical=true\n",
+        "SUBTITLES=long:vertical=true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false")
+    monkeypatch.setenv("SUBTITLES", "long=false")
     config = parse_run_config(
         [
             "source.mp4",
             "--output-dir",
             "out",
             "--clip-full",
-            "--subtitle-enabled",
+            "--subtitles",
             "long=false",
         ]
     )
     assert config.for_output("long", "vertical").subtitles_for("long") is False
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     assert config.for_output("long", "vertical").subtitles_for("long") is False
-    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false long:vertical=true")
+    monkeypatch.setenv("SUBTITLES", "long=false long:vertical=true")
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     # The named output keeps its captions when it changes publication order.
     assert config.for_output("long", "vertical").subtitles_for("long") is True
@@ -277,7 +299,7 @@ def test_each_named_render_and_caption_switch_is_available(
 ):
     scope = f"{clip_class}:{variant}"
     monkeypatch.setenv("RENDER", scope + "=true")
-    monkeypatch.setenv("SUBTITLE_ENABLED", scope + "=true")
+    monkeypatch.setenv("SUBTITLES", scope + "=true")
     config = parse_run_config(
         [
             "source.mp4",
@@ -286,7 +308,7 @@ def test_each_named_render_and_caption_switch_is_available(
             "--clip-full",
             "--render",
             scope + "=false",
-            "--subtitle-enabled",
+            "--subtitles",
             f"{scope}=false",
         ]
     )
@@ -328,8 +350,8 @@ def test_font_directory_expands_and_is_excluded_from_metadata(monkeypatch):
     [
         "SUBTITLE_BOLD",
         "SUBTITLE_ITALIC",
-        "SUBTITLE_DISABLE_CUE_ANIMATIONS",
-        "SUBTITLE_DISABLE_WORD_ANIMATIONS",
+        "SUBTITLE_CUE_ANIMATIONS",
+        "SUBTITLE_WORD_ANIMATIONS",
     ],
 )
 def test_invalid_environment_booleans_fail_explicitly(name, monkeypatch):

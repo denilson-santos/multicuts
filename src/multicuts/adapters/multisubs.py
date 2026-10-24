@@ -379,10 +379,16 @@ def _build_subtitle_config(
             "Subtitle presentation requires multisubs 6.1+; update its installation"
         )
     try:
+        overrides = options.overrides()
+        # Multisubs uses negative switches; invert only at the provider boundary.
+        for field in ("cue_animations", "word_animations"):
+            value = overrides.pop(field, None)
+            if value is not None:
+                overrides[f"disable_{field}"] = not value
         configured = builder(
             template=template,
             template_dir=template_dir,
-            overrides=options.overrides(),
+            overrides=overrides,
         )
         if container is None:
             return configured
@@ -398,7 +404,7 @@ def _build_subtitle_config(
                 raise ConfigurationError("Unsupported multisubs layout length")
             return value * container.width / 100 if unit == "%" else value
 
-        overrides = options.overrides()
+        overrides = overrides.copy()
         # Translate the horizontal reference; multisubs still owns wrapping,
         # typography, vertical placement, and every animation.
         if getattr(layout.placement_mode, "value", layout.placement_mode) == "explicit":
@@ -437,9 +443,13 @@ def _build_subtitle_config(
 
         def subtitle_flag(match: re.Match[str]) -> str:
             field = match[2]
+            inverted = field in ("disable-cue-animations", "disable-word-animations")
+            if inverted:
+                field = field.removeprefix("disable-")
             flag = "--subtitle-" + field
             if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
-                flag += " false" if match[1] else " true"
+                enabled = bool(match[1]) if inverted else not match[1]
+                flag += " true" if enabled else " false"
             return flag
 
         message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(exc))

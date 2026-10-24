@@ -466,7 +466,16 @@ to `all`; the ellipsis means one or more values. Do not type the brackets or ell
 | --- | --- | --- |
 | Omitted or `all` | Both classes and their outputs | `--subtitle-font-size 4%` |
 | `short` or `long` | One class and its outputs | `--subtitle-font-size short=5%` |
-| `TYPE:VARIANT` | One named output | `--subtitle-font-size short:vertical=6%` |
+| `all:VARIANT` | One named variant in both classes | `--subtitle-margin-bottom all:vertical=8%` |
+| `TYPE:VARIANT` | One named variant in one class | `--subtitle-font-size short:vertical=6%` |
+
+`TYPE` is `short` or `long`. To change only vertical outputs, including their
+blurred version, in both classes:
+
+```bash
+multicuts ./video.mp4 --output-dir ./cuts \
+  --subtitle-margin-bottom all:vertical=8% all:vertical-blur=8%
+```
 
 Set several scopes after one flag, or repeat the flag:
 
@@ -495,24 +504,88 @@ Use outer quotes for a group and inner quotes for values containing spaces.
 Simple defaults stay simple: `PRIMARY=auto`, `RENDER=true`. Empty variables are
 unset. Scope belongs in the value; generated names such as `PRIMARY_SHORT` and
 `SUBTITLE_SHORT_VERTICAL_FONT_SIZE` are no longer read. Process environment and
-`.env` resolve independently: scopes omitted in a higher-priority source inherit
-from lower-priority sources. Conflicting assignments and duplicate output
+`.env` resolve independently: presentation scopes omitted in a higher-priority
+source inherit from lower-priority sources. Render and caption selections replace
+the entire lower-priority selection for that control. Conflicting assignments and duplicate output
 variables in `.env` fail validation.
 
-Within each configuration source,
-variant settings override class settings, which override shared settings,
-independently per field and argument order. Contradictory assignments to the same
-field/scope are rejected. Boolean values are explicit: `true` or `false`.
+Within each configuration source, scope priority is
+`TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all`, independently per field and
+argument order. For example, `short:vertical=10%` overrides `all:vertical=8%`
+for short vertical outputs while long vertical outputs retain `8%`.
+Contradictory assignments to the same
+field/scope are rejected. Boolean controls accept `true` or `false`, and a scope
+alone means `true`. This applies to `--render`, `--subtitles`, `--subtitle-bold`,
+`--subtitle-italic`, `--subtitle-cue-animations`, and
+`--subtitle-word-animations`, including their environment variables.
+For example, `--render=all:vertical` equals `--render=all:vertical=true`.
 
-`--render`, `--width`, `--height`, and every `--subtitle-*` option support all three
+`--render`, `--subtitles`, `--width`, `--height`, and every `--subtitle-*` option support all four
 scope levels. `--render` accepts `true` (all compatible variants), `false` (none), or `primary`
 (only the principal output). Named variant scopes accept only `true`/`false`;
 `primary` is available at `all`, `short`, or `long` scope.
+
+`--render` and `--subtitles` select complete sets. Within each source, an explicit
+shared value (`true`, `false`, or render-only `primary`) sets the starting policy.
+Without one, any positive scoped value starts from none and selects those scopes;
+class-scoped `primary` also counts as positive. With only negative scoped values,
+start from all compatible outputs and exclude those scopes. Specific overrides
+still follow the scope priority above, independently of argument order.
+
+| Render selection | Outputs in both classes |
+| --- | --- |
+| `--render=all:vertical` | Only `vertical` |
+| `--render=all:vertical=false` | All compatible variants except `vertical` |
+| `--render all:vertical all:square` | Only `vertical` and `square` |
+| `--render primary all:square` | Primary output and `square` |
+
+`--render short` selects only short cuts. `vertical` and `vertical-blur` remain
+independent names. With no selection control, all compatible outputs and captions
+remain enabled. Add an explicit `true` base for additive enablement, such as
+`--render true all:vertical`. The highest-priority source configuring a selection
+replaces lower-priority selections for that control; unrelated visual settings
+still inherit per field. Font, margin, color, animation, and geometry options
+adjust their scopes without selecting outputs.
+
 `--primary` accepts only `all`, `short`, or `long`; its value is `auto` (the default
-for both classes) or a variant name. It chooses a preferred output independently
-of its dimensions. `auto` follows the source orientation, not its exact ratio. The
-source-orientation table above applies to both classes; no extra `original`
-output is generated.
+for both classes) or a variant name. An explicit primary must be compatible with
+the source and enabled by `--render`; conflicting requests fail instead of
+silently substituting another variant. `auto` follows the source orientation,
+falling back to an enabled compatible output. Primary selection is independent
+of dimensions. The source-orientation table above applies to both classes; no
+extra `original` output is generated.
+
+A positive effective subtitle selection must match at least one planned output.
+For example, `--render all:horizontal --subtitles all:vertical` is a configuration
+error. `--subtitles false` and exclusions that intentionally leave no captions,
+such as `--render all:vertical --subtitles all:vertical=false`, remain valid.
+Checks use resolved configuration after source/scope precedence. Conflicts that
+can be proved from settings alone fail during CLI parsing, before the pipeline
+starts, output folders are created, or the source/providers are accessed. Calls
+to the Python pipeline receive the same check at entry. Source-dependent checks
+run after probing the source, before ASR or clip rendering. Direct cuts validate
+only their interval's duration class; if that class is still unknown, ambiguous
+cases wait for media inspection. Automatic selection validates enabled classes.
+Primary settings for unused classes do not block processing. Visual
+settings and dimensions on disabled outputs remain reusable in presets.
+
+Every dimension or subtitle presentation scope supplied explicitly on the CLI
+must have a compatible destination in the resolved selection. `--width` and
+`--height` require at least one render-enabled output in their scope. All
+subtitle presentation options, including templates, directories, typography,
+layout, appearance, and animations, also require subtitles enabled on at least
+one matching output. Each grouped assignment is checked separately before the
+pipeline starts. For example, `--render all:vertical --subtitles short
+--subtitle-margin-bottom long:vertical=20%` fails because long captions are
+disabled. Use a caption-enabled scope or change the caption selection.
+
+Broad scopes need only one compatible destination; shared values with specific
+overrides remain valid. These checks compare configured scopes independently
+of source duration and the cuts eventually produced. `--clip-full --render
+all:vertical --subtitles all:vertical --subtitle-margin-bottom
+long:vertical=20%` therefore remains valid even when the video is short.
+Presentation and dimension settings inherited from process environment, `.env`,
+or JSON presets may remain unused without creating this CLI scope error.
 
 To publish only primary short cuts:
 
@@ -526,16 +599,16 @@ To publish only 21:9 horizontal cuts without captions:
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
   --primary horizontal --render primary --width 2520 --height 1080 \
-  --subtitle-enabled false
+  --subtitles false
 ```
 
 | Control | CLI example | Environment |
 | --- | --- | --- |
 | Render a class | `--render long=false` | `RENDER="long=false"` |
 | Render a variant | `--render short:horizontal-blur=false` | `RENDER="short:horizontal-blur=false"` |
-| Shared captions | `--subtitle-enabled false` | `SUBTITLE_ENABLED` |
-| Class captions | `--subtitle-enabled short=true` | `SUBTITLE_ENABLED="short=true"` |
-| Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_ENABLED="short:vertical=false"` |
+| Shared captions | `--subtitles false` | `SUBTITLES` |
+| Class captions | `--subtitles short=true` | `SUBTITLES="short=true"` |
+| Variant captions | `--subtitles short:vertical=false` | `SUBTITLES="short:vertical=false"` |
 | Shared font size | `--subtitle-font-size 4%` | `SUBTITLE_FONT_SIZE` |
 | Class font size | `--subtitle-font-size short=5%` | `SUBTITLE_FONT_SIZE="short=5%"` |
 | Variant font size | `--subtitle-font-size short:vertical=6%` | `SUBTITLE_FONT_SIZE="short:vertical=6%"` |
@@ -544,7 +617,10 @@ multicuts ./interview.mp4 --output-dir ./interview-cuts \
 
 Environment names use uppercase and underscores; scopes stay in the value:
 `WIDTH="short=720 long:horizontal=1920"`. Named render settings can enable an
-output under a disabled class, following variant > class > shared priority.
+output under a disabled class, following
+`TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all` priority.
+For example, `RENDER="false all:vertical=true"` enables only vertical outputs
+in both classes. JSON presets accept the same `all:VARIANT` scopes.
 
 Dimensions must be positive even pixel counts. **Width and height define the
 ratio**, with horizontal outputs wider than tall, vertical outputs taller than
@@ -568,7 +644,7 @@ vertical-short subtitle placement:
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
   --primary short=vertical --render primary --render short:horizontal-blur=true \
-  --subtitle-enabled short:horizontal-blur=false \
+  --subtitles short:horizontal-blur=false \
   --subtitle-position short:vertical=top-center \
   --subtitle-font-size short:vertical=5%
 ```
@@ -613,20 +689,23 @@ environment mechanisms.
 
 ### Subtitle controls
 
-Primary subtitles are enabled by default. Variants inherit their class setting
-unless a variant-specific flag overrides it. Choose the style with
+Captions are enabled by default. Use `--subtitles` to select captioned outputs
+with the same inclusion/exclusion rules as `--render`. Choose the style with
 `--subtitle-template` (default: `yellow-pop`).
 
 To enable subtitles only for short cuts and their variants:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
-  --subtitle-enabled short=true --subtitle-enabled long=false
+  --subtitles short
 ```
 
-Use `--subtitle-enabled false` to disable captions everywhere, then repeat it
-with a class or named scope to enable captions for selected outputs. The caption
-setting belongs to the named variant even if it becomes the primary output.
+Use `--subtitles all:vertical` to caption only vertical outputs, or
+`--subtitles all:vertical=false` to caption all other outputs. This controls
+captions independently of which videos are rendered. `--subtitles false`
+disables captions everywhere. The caption setting belongs to the named variant
+even if it becomes the primary output. The environment variable is `SUBTITLES`;
+replace the former `--subtitle-enabled` flag and `SUBTITLE_ENABLED` variable.
 
 Adjust a template directly from the command line. Only supplied fields replace
 template values; omitted settings inherit. For example:
@@ -642,8 +721,8 @@ multicuts ./video.mp4 --output-dir ./cuts --clip-range 0 30 --render primary \
 All presentation options use the `--subtitle-` prefix and have matching
 `SUBTITLE_` environment variables: `--subtitle-font-size` corresponds to
 `SUBTITLE_FONT_SIZE`. CLI values override process environment, then `.env`, then
-the optional preset, then the selected template. Within each source, variant
-settings override class settings, which override shared settings; precedence is
+the optional preset, then the selected template. Within each source, scope
+priority is `TYPE:VARIANT` > `all:VARIANT` > `TYPE` > `all`; precedence is
 applied per field. Explicit false values and valid zero lengths/opacity replace
 inherited values. Changing presentation reuses transcription and AI caches and
 does not run ASR again.
@@ -714,7 +793,7 @@ Settings are resolved in this order: CLI flags, process environment, `.env`, the
 optional output/subtitle preset, then defaults. Source priority is applied before
 scope specificity, independently for each field. For example:
 
-- `--subtitle-enabled false --subtitle-enabled short:vertical=true` captions only vertical shorts.
+- `--subtitles false --subtitles short:vertical=true` captions only vertical shorts.
 - `--render primary --render long=true` renders primary shorts and all compatible long variants.
 
 See the option tables below and `.env.example` for environment variable names.
@@ -764,8 +843,8 @@ Choose enabled classes, primary formats, dimensions, and variants.
 
 | Option | Purpose |
 | --- | --- |
-| `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`. |
-| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
+| `--render [SCOPE=]VALUE...` | Select outputs with positive scopes or exclude with negative scopes. A scope alone means true. Explicit shared true/false/primary sets the base. Default: all compatible variants. Environment: `RENDER`. |
+| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation and enabled outputs (default), or an explicit supported/enabled variant; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
 | `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
 | `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`. |
 
@@ -777,7 +856,7 @@ All options below accept grouped values or repeated flags and use
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-enabled [SCOPE=]VALUE...` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`. |
+| `--subtitles [SCOPE=]VALUE...` | Select captioned outputs with positive scopes or exclude with negative scopes. A scope alone means true; explicit shared true/false sets the base. Default: all captions enabled. Environment: `SUBTITLES`. |
 | `--subtitle-template [SCOPE=]VALUE...` | Template name; default: `yellow-pop`. |
 | `--subtitle-template-dir [SCOPE=]VALUE...` | Path to a custom template directory. |
 
@@ -870,24 +949,48 @@ Only explicitly supplied settings override the selected template.
 | `--subtitle-animation-word-text-mode [SCOPE=]VALUE...` | Timed word text behavior: progressive or active-word. |
 | `--subtitle-animation-word-backdrop-mode [SCOPE=]VALUE...` | Timed word backdrop behavior: progressive or active-word. |
 | `--subtitle-animation-word-text-highlight-color [SCOPE=]VALUE...` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
-| `--subtitle-disable-cue-animations [SCOPE=]VALUE...` | `true`/`false`; remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
-| `--subtitle-disable-word-animations [SCOPE=]VALUE...` | `true`/`false`; remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+| `--subtitle-cue-animations [SCOPE=]VALUE...` | `true` permits configured cue text/backdrop effects; `false` removes cue effects while preserving the static cue backdrop. Omission inherits the template. |
+| `--subtitle-word-animations [SCOPE=]VALUE...` | `true` permits configured word effects; `false` removes word animations, highlight, and timed decoration. Omission inherits the template. |
 
 Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
 and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases
 do not accept duration overrides. Set a phase to `none` to clear its inherited
-effect. Scope disables apply after validation; pass `false` to clear the
-corresponding disable setting. Word effects still depend on
+effect. The cue/word animation switches apply after validation. Use `false` to
+suppress effects and `true` to allow configured effects, clearing inherited
+suppression. A scope alone means `true`; these presentation switches preserve
+normal field inheritance and do not select captioned/rendered outputs. Enabling
+them does not add an effect to a phase configured as `none`. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
 See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
 
+```bash
+# Remove word effects everywhere, retaining configured effects on verticals.
+--subtitle-word-animations false all:vertical
+
+# Remove cue effects only on vertical outputs in both duration classes.
+--subtitle-cue-animations all:vertical=false
+```
+
+Migrate the former `--subtitle-disable-cue-animations` and
+`--subtitle-disable-word-animations` flags to the affirmative names above and
+invert their explicit booleans: old `true` becomes new `false`, and vice versa.
+Environment variables are now `SUBTITLE_CUE_ANIMATIONS` and
+`SUBTITLE_WORD_ANIMATIONS`; JSON presentation fields and metadata overrides use
+`cue_animations` and `word_animations`, with the same affirmative values. The
+former negative names are removed without aliases. Leaving a setting unset
+continues to inherit the selected template.
+
 #### Execution
 
-`--jobs 2` renders up to two cuts concurrently; `JOBS` supplies
-the same global setting. The default is 1. Each cut renders its enabled variants
-in sequence and shares the source transcript. Files appear as they finish;
-the final report keeps editorial rank order. The command waits for completion.
+`--jobs 2` runs up to two renders concurrently across cuts and variants; `JOBS`
+supplies the same global setting. The default is 1. Each task renders one
+`(cut, variant)` pair in its own workspace using the shared source transcript.
+Primary versions are scheduled first in editorial rank order, followed by rounds
+of additional variants across cuts. Even a single cut with multiple variants can
+use all available slots. A cut is complete only when all its enabled variants
+finish. Files appear as they finish; the final report keeps editorial rank and
+variant order. The command waits for completion.
 An error or interruption cancels active work before cleanup, preserving complete
 outputs. Increase concurrency only after comparing time and memory usage on
 your hardware: each FFmpeg can already use multiple CPU threads. The manifest
@@ -898,12 +1001,12 @@ Control intermediate files, cache reuse, and terminal output.
 
 | Option | Purpose |
 | --- | --- |
-| `--jobs COUNT` | Maximum cuts rendered concurrently; default: `1`. Environment: `JOBS`. |
+| `--jobs COUNT` | Global maximum simultaneous renders across cuts and variants; default: `1`. Environment: `JOBS`. |
 | `--keep-intermediates` / `--discard-intermediates` | Retain or discard intermediate files; default: discard. |
 | `--force-recompute` / `--reuse-cache` | Recompute transcription and AI analysis or reuse compatible caches; default: reuse. |
 | `--verbose` / `--quiet` | Show debug details and dependency output or use the normal progress display; default: normal progress. |
 
-By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
+By default, the terminal shows only `multicuts` progress: stages, cache reuse, candidate review, selection counts, and clip rendering. Each candidate reports `approved` or `rejected`, its score, and the reviewed interval as soon as its review finishes, including cached reviews. Each rendered variant reports its clip counter, variant name, output path, and elapsed preparation/rendering/publication time as soon as its video and metadata are saved. A separate cut summary appears after all its variants succeed. Dependency logs and progress bars are hidden unless `--verbose` is enabled. Progress and errors go to stderr; the final run summary goes to stdout.
 
 #### Video encoding
 
@@ -929,7 +1032,7 @@ NVENC requires a compatible NVIDIA device and driver.
 | `--video-preset NAME` | Encoder-specific preset; requires an explicit encoder. |
 | `--video-quality VALUE` | Encoder-specific quality from `0` through `51`; requires an explicit encoder. |
 
-For example, render only primary outputs, with two concurrent cuts and explicit
+For example, render only primary outputs, with two concurrent renders and explicit
 CPU encoding:
 
 ```bash

@@ -9,6 +9,7 @@ from types import ModuleType
 
 import pytest
 
+from multicuts.adapters.multisubs import MultisubsAdapter
 from multicuts.subtitles import SubtitleOptions
 
 
@@ -167,10 +168,24 @@ def test_public_subtitle_builder_rejects_invalid_settings(overrides) -> None:
 def test_public_subtitle_builder_supports_every_owned_presentation_field() -> None:
     provider = _installed_provider()
     overrides = {field.name: None for field in fields(SubtitleOptions)}
+    overrides["disable_cue_animations"] = overrides.pop("cue_animations")
+    overrides["disable_word_animations"] = overrides.pop("word_animations")
     assert len(overrides) == 57
     assert provider.build_subtitle_config(
         template="yellow-pop", overrides=overrides
     ) == provider.build_subtitle_config(template="yellow-pop")
+
+
+@pytest.mark.parametrize("enabled", [None, False, True])
+def test_affirmative_animation_switches_use_the_public_provider_contract(
+    enabled,
+) -> None:
+    _installed_provider()
+    MultisubsAdapter().validate_subtitle_options(
+        template="yellow-pop",
+        template_dir=None,
+        options=SubtitleOptions(cue_animations=enabled, word_animations=enabled),
+    )
 
 
 def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None:

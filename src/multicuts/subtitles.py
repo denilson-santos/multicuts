@@ -8,7 +8,7 @@ from pathlib import Path
 from multicuts.errors import ConfigurationError
 
 SUBTITLE_BOOLEAN_FIELDS = frozenset(
-    {"bold", "italic", "disable_cue_animations", "disable_word_animations"}
+    {"bold", "italic", "cue_animations", "word_animations"}
 )
 
 
@@ -96,8 +96,8 @@ class SubtitleOptions:
     animation_word_text_mode: str | None = None
     animation_word_backdrop_mode: str | None = None
     animation_word_text_highlight_color: str | None = None
-    disable_cue_animations: bool | None = None
-    disable_word_animations: bool | None = None
+    cue_animations: bool | None = None
+    word_animations: bool | None = None
 
     def __post_init__(self) -> None:
         for field in fields(self):
@@ -116,7 +116,7 @@ class SubtitleOptions:
                 )
 
     def overrides(self) -> dict[str, object]:
-        """Supply only explicit settings at the provider boundary."""
+        """Return only explicit project-owned presentation values."""
         return {
             field.name: value
             for field in fields(self)

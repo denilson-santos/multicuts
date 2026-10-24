@@ -240,7 +240,7 @@ def test_presentation_overrides_match_native_rendering_in_each_geometry(
         font_size="4.5%",
         text_case="original",
         italic=False,
-        disable_word_animations=True,
+        word_animations=False,
     )
     adapter = MultisubsAdapter()
     adapter.validate_subtitle_options(
@@ -256,12 +256,15 @@ def test_presentation_overrides_match_native_rendering_in_each_geometry(
         options=options,
     )
     speech = json.loads(actual.transcript_json_path.read_text())
+    native_overrides = options.overrides()
+    del native_overrides["word_animations"]
+    native_overrides["disable_word_animations"] = True
     native = provider.render_transcript(
         speech,
         raw_video,
         tmp_path / "native",
         subtitle_config=provider.build_subtitle_config(
-            template="yellow-pop", overrides=options.overrides()
+            template="yellow-pop", overrides=native_overrides
         ),
     )
     assert actual.srt_path.read_text() == native.srt_path.read_text()

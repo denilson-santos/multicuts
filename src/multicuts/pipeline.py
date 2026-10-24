@@ -446,6 +446,7 @@ def run_pipeline(
     composed_renderer: Callable[..., RenderedVariant] | None = None,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
+    config.validate_selection()
     # Retain explicitly supplied staged renderer boundaries for integrations.
     if (
         composed_renderer is None
@@ -576,9 +577,6 @@ def run_pipeline(
                     source.acquired_range.start,
                     source.acquired_range.end,
                 )
-        for clip_class in ("short", "long"):
-            if config.clips_for(clip_class):
-                config.outputs_for(clip_class, media)
         needs_title = direct_range is not None and bool(config.llm_backend)
         needs_transcript = True
         if direct_range is not None:
@@ -589,11 +587,18 @@ def run_pipeline(
                 raise ConfigurationError(
                     f"The cut interval is {clip_class}; use --render {clip_class}=true"
                 )
-            outputs = config.outputs_for(clip_class, media)
+            outputs_by_class = {clip_class: config.outputs_for(clip_class, media)}
+            outputs = outputs_by_class[clip_class]
             needs_transcript = needs_title or any(
-                config.for_output(clip_class, name).subtitles_for(clip_class)
-                for name in outputs
+                config.subtitles_for(clip_class, name) for name in outputs
             )
+        else:
+            outputs_by_class = {
+                kind: config.outputs_for(kind, media)
+                for kind in ("short", "long")
+                if config.clips_for(kind)
+            }
+        config.validate_subtitle_selection(outputs_by_class)
         if original_source is not None and requested_range is not None:
             logger.info(
                 "Copying local source interval %.2f-%.2fs without reencoding",
@@ -908,11 +913,164 @@ def run_pipeline(
         )
         render_started = perf_counter()
 
-        def render_clip(
-            rank: int, clip: JudgedClip | DirectClip
-        ) -> tuple[Path, dict[str, object], ReportClip]:
-            prepared_raw = initial_prepared if rank == 1 else None
-            clip_started = perf_counter()
+        output_names = tuple(
+            config.outputs_for(clip.proposal.clip_class, media) for clip in selected
+        )
+        stems = tuple(
+            clip_artifact_stem(clip.proposal, rank)
+            for rank, clip in enumerate(selected, start=1)
+        )
+
+        def render_variant(rank: int, index: int) -> tuple[Path, dict[str, object]]:
+            clip = selected[rank - 1]
+            prepared_raw = initial_prepared if rank == 1 and index == 0 else None
+            stem = stems[rank - 1]
+            clip_class = clip.proposal.clip_class
+            clip_dir = root / f"{clip_class}s" / stem
+            name = output_names[rank - 1][index]
+            variant_started = perf_counter()
+            ratio = config.aspect_ratio_for(clip_class, name)
+            is_variant = index != 0
+            variant_work = work / stem / name
+            final_path = clip_dir / f"{name}.mp4"
+            variant_config = config.for_output(clip_class, name)
+            if name in ("horizontal-blur", "square-blur"):
+                width, height = config.dimensions_for(clip_class, name)
+                fg_width, _ = foreground_dimensions(media, name, width, height)
+                left = (width - fg_width) // 2
+                variant_config = replace(
+                    variant_config,
+                    subtitle_container=SubtitleContainer(
+                        width, height, left - left % 2, fg_width
+                    ),
+                )
+            logger.info("Rendering clip %d/%d version: %s", rank, len(selected), name)
+            layout = (
+                "horizontal_center_blur"
+                if name == "vertical-blur"
+                else "vertical_center_blur"
+                if name.endswith("-blur")
+                else "center_crop"
+            )
+            strategy = "staged"
+            template_source = template_base = None
+            if composed_renderer is not None and not (
+                prepared_raw is not None and index == 0
+            ):
+                rendered = composed_renderer(
+                    source,
+                    media,
+                    transcript,
+                    clip,
+                    variant_config,
+                    output=final_path,
+                    work=variant_work,
+                    **cancellation,
+                )
+                final, sidecars, template = (
+                    rendered.video_path,
+                    rendered.sidecars,
+                    rendered.template_resolved,
+                )
+                rendered_media, rendered_ratio = (
+                    rendered.media,
+                    rendered.aspect_ratio,
+                )
+                raw_finished = variant_started + rendered.preparation_seconds
+                strategy = "composed"
+                template_source, template_base = (
+                    rendered.template_source,
+                    rendered.template_base,
+                )
+                if rendered_ratio != ratio:
+                    raise ArtifactError("Renderer returned an unexpected aspect ratio")
+            else:
+                if prepared_raw is not None and index == 0:
+                    raw, rendered_media, rendered_ratio = prepared_raw
+                else:
+                    raw, rendered_media, rendered_ratio = raw_renderer(
+                        source,
+                        media,
+                        clip,
+                        variant_config,
+                        output=variant_work / "raw.mp4",
+                        work=variant_work,
+                        **cancellation,
+                    )
+                raw_finished = perf_counter()
+                if rendered_ratio != ratio:
+                    raise ArtifactError(
+                        "Raw renderer returned an unexpected aspect ratio"
+                    )
+                if variant_config.subtitles_for(clip_class):
+                    logger.info(
+                        "Adding subtitles to clip %d/%d (version=%s, template=%s)",
+                        rank,
+                        len(selected),
+                        name,
+                        variant_config.subtitle_template,
+                    )
+                final, sidecars, template = final_renderer(
+                    raw,
+                    rendered_media,
+                    transcript,
+                    clip,
+                    variant_config,
+                    output=final_path,
+                    work=variant_work,
+                    **cancellation,
+                )
+            if final != final_path or not final.is_file():
+                raise ArtifactError("Final renderer did not publish the expected clip")
+            metadata = _clip_metadata(
+                clip,
+                rank=rank,
+                video=final,
+                sidecars=sidecars,
+                ratio=ratio,
+                width=rendered_media.presentation_width,
+                height=rendered_media.presentation_height,
+                template=template,
+                transcript=transcript,
+                config=variant_config,
+                run_root=root,
+                layout=layout,
+                is_variant=is_variant,
+                title_generation=title_generation,
+                render_strategy=strategy,
+                template_source=template_source,
+                template_base=template_base,
+                render_timings={
+                    "prepare_seconds": raw_finished - variant_started,
+                    "finalize_seconds": perf_counter() - raw_finished,
+                },
+            )
+            metadata_path = final.with_suffix(".json")
+            _publish_json(metadata_path, metadata, work)
+            logger.info(
+                "Clip %d/%d version %s saved: %s (%.1fs)",
+                rank,
+                len(selected),
+                name,
+                final.relative_to(root).as_posix(),
+                perf_counter() - variant_started,
+            )
+            reference: dict[str, object] = {
+                "variant": name,
+                "aspect_ratio": ratio,
+                "video": final.relative_to(root).as_posix(),
+                "metadata": metadata_path.relative_to(root).as_posix(),
+            }
+            return final, reference
+
+        results: dict[int, dict[int, tuple[Path, dict[str, object]]]] = {}
+        clip_started: dict[int, float] = {}
+
+        def start_clip(rank: int) -> None:
+            if rank in clip_started:
+                return
+            clip_started[rank] = perf_counter()
+            clip = selected[rank - 1]
             logger.info(
                 "Rendering clip %d/%d: %s, %.2f-%.2fs, score=%s",
                 rank,
@@ -922,158 +1080,74 @@ def run_pipeline(
                 clip.proposal.end,
                 f"{clip.score:.2f}" if isinstance(clip, JudgedClip) else "unscored",
             )
-            stem = clip_artifact_stem(clip.proposal, rank)
-            clip_class = clip.proposal.clip_class
-            clip_dir = root / f"{clip_class}s" / stem
-            outputs = config.outputs_for(clip_class, media)
-            variants: list[dict[str, object]] = []
-            report_videos: list[tuple[str, Path]] = []
-            primary_video = clip_dir / f"{outputs[0]}.mp4"
-            for index, name in enumerate(outputs):
-                variant_started = perf_counter()
-                ratio = config.aspect_ratio_for(clip_class, name)
-                is_variant = index != 0
-                variant_work = work / stem / name
-                final_path = clip_dir / f"{name}.mp4"
-                variant_config = config.for_output(clip_class, name)
-                if name in ("horizontal-blur", "square-blur"):
-                    width, height = config.dimensions_for(clip_class, name)
-                    fg_width, _ = foreground_dimensions(media, name, width, height)
-                    left = (width - fg_width) // 2
-                    variant_config = replace(
-                        variant_config,
-                        subtitle_container=SubtitleContainer(
-                            width, height, left - left % 2, fg_width
-                        ),
-                    )
+
+        def collect_variant(
+            rank: int, index: int, result: tuple[Path, dict[str, object]]
+        ) -> None:
+            variants = results.setdefault(rank, {})
+            variants[index] = result
+            if len(variants) == len(output_names[rank - 1]):
                 logger.info(
-                    "Rendering clip %d/%d version: %s", rank, len(selected), name
+                    "Clip %d/%d saved: %s, %d versions (%.1fs)",
+                    rank,
+                    len(selected),
+                    variants[0][0].relative_to(root).as_posix(),
+                    len(variants),
+                    perf_counter() - clip_started[rank],
                 )
-                layout = (
-                    "horizontal_center_blur"
-                    if name == "vertical-blur"
-                    else "vertical_center_blur"
-                    if name.endswith("-blur")
-                    else "center_crop"
-                )
-                strategy = "staged"
-                template_source = template_base = None
-                if composed_renderer is not None and not (
-                    prepared_raw is not None and index == 0
-                ):
-                    rendered = composed_renderer(
-                        source,
-                        media,
-                        transcript,
-                        clip,
-                        variant_config,
-                        output=final_path,
-                        work=variant_work,
-                        **cancellation,
-                    )
-                    final, sidecars, template = (
-                        rendered.video_path,
-                        rendered.sidecars,
-                        rendered.template_resolved,
-                    )
-                    rendered_media, rendered_ratio = (
-                        rendered.media,
-                        rendered.aspect_ratio,
-                    )
-                    raw_finished = variant_started + rendered.preparation_seconds
-                    strategy = "composed"
-                    template_source, template_base = (
-                        rendered.template_source,
-                        rendered.template_base,
-                    )
-                    if rendered_ratio != ratio:
-                        raise ArtifactError(
-                            "Renderer returned an unexpected aspect ratio"
-                        )
-                else:
-                    if prepared_raw is not None and index == 0:
-                        raw, rendered_media, rendered_ratio = prepared_raw
-                        prepared_raw = None
-                    else:
-                        raw, rendered_media, rendered_ratio = raw_renderer(
-                            source,
-                            media,
-                            clip,
-                            variant_config,
-                            output=variant_work / "raw.mp4",
-                            work=variant_work,
-                            **cancellation,
-                        )
-                    raw_finished = perf_counter()
-                    if rendered_ratio != ratio:
-                        raise ArtifactError(
-                            "Raw renderer returned an unexpected aspect ratio"
-                        )
-                    if variant_config.subtitles_for(clip_class):
-                        logger.info(
-                            "Adding subtitles to clip %d/%d (version=%s, template=%s)",
+
+        # Primary outputs lead; later rounds distribute variants across cuts.
+        jobs = (
+            (rank, index)
+            for index in range(max((len(names) for names in output_names), default=0))
+            for rank, names in enumerate(output_names, start=1)
+            if index < len(names)
+        )
+        if config.render_jobs == 1:
+            for rank, index in jobs:
+                start_clip(rank)
+                collect_variant(rank, index, render_variant(rank, index))
+        else:
+            with ThreadPoolExecutor(max_workers=config.render_jobs) as executor:
+                pending: dict[
+                    Future[tuple[Path, dict[str, object]]], tuple[int, int]
+                ] = {}
+                try:
+                    count = sum(len(names) for names in output_names)
+                    for _ in range(min(config.render_jobs, count)):
+                        rank, index = next(jobs)
+                        start_clip(rank)
+                        pending[executor.submit(render_variant, rank, index)] = (
                             rank,
-                            len(selected),
-                            name,
-                            variant_config.subtitle_template,
+                            index,
                         )
-                    final, sidecars, template = final_renderer(
-                        raw,
-                        rendered_media,
-                        transcript,
-                        clip,
-                        variant_config,
-                        output=final_path,
-                        work=variant_work,
-                        **cancellation,
-                    )
-                if final != final_path or not final.is_file():
-                    raise ArtifactError(
-                        "Final renderer did not publish the expected clip"
-                    )
-                metadata = _clip_metadata(
-                    clip,
-                    rank=rank,
-                    video=final,
-                    sidecars=sidecars,
-                    ratio=ratio,
-                    width=rendered_media.presentation_width,
-                    height=rendered_media.presentation_height,
-                    template=template,
-                    transcript=transcript,
-                    config=variant_config,
-                    run_root=root,
-                    layout=layout,
-                    is_variant=is_variant,
-                    title_generation=title_generation,
-                    render_strategy=strategy,
-                    template_source=template_source,
-                    template_base=template_base,
-                    render_timings={
-                        "prepare_seconds": raw_finished - variant_started,
-                        "finalize_seconds": perf_counter() - raw_finished,
-                    },
-                )
-                metadata_path = final.with_suffix(".json")
-                _publish_json(metadata_path, metadata, work)
-                reference: dict[str, object] = {
-                    "variant": name,
-                    "aspect_ratio": ratio,
-                    "video": final.relative_to(root).as_posix(),
-                    "metadata": metadata_path.relative_to(root).as_posix(),
-                }
-                variants.append(reference)
-                report_videos.append((name, final))
-            logger.info(
-                "Clip %d/%d saved: %s, %d versions (%.1fs)",
-                rank,
-                len(selected),
-                primary_video.relative_to(root).as_posix(),
-                len(variants),
-                perf_counter() - clip_started,
-            )
-            return (
-                primary_video,
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            rank, index = pending[future]
+                            collect_variant(rank, index, future.result())
+                        for future in done:
+                            del pending[future]
+                        for _ in done:
+                            next_job = next(jobs, None)
+                            if next_job is not None:
+                                rank, index = next_job
+                                start_clip(rank)
+                                pending[
+                                    executor.submit(render_variant, rank, index)
+                                ] = (rank, index)
+                except BaseException:
+                    cancel_render.set()
+                    for future in pending:
+                        future.cancel()
+                    raise
+        for rank, clip in enumerate(selected, start=1):
+            variants = [
+                results[rank][index] for index in range(len(output_names[rank - 1]))
+            ]
+            primary_video = variants[0][0]
+            clips.append(primary_video)
+            references.append(
                 {
                     "id": clip.proposal.id,
                     "class": clip.proposal.clip_class,
@@ -1082,46 +1156,20 @@ def run_pipeline(
                     "metadata": primary_video.with_suffix(".json")
                     .relative_to(root)
                     .as_posix(),
-                    "variants": variants,
-                },
-                ReportClip(clip, tuple(report_videos)),
+                    "variants": [reference for _, reference in variants],
+                }
             )
-
-        results: dict[int, tuple[Path, dict[str, object], ReportClip]] = {}
-        if config.render_jobs == 1:
-            for rank, clip in enumerate(selected, start=1):
-                results[rank] = render_clip(rank, clip)
-        else:
-            jobs = iter(enumerate(selected, start=1))
-            with ThreadPoolExecutor(max_workers=config.render_jobs) as executor:
-                pending: dict[
-                    Future[tuple[Path, dict[str, object], ReportClip]], int
-                ] = {}
-                try:
-                    for _ in range(min(config.render_jobs, len(selected))):
-                        rank, clip = next(jobs)
-                        pending[executor.submit(render_clip, rank, clip)] = rank
-                    while pending:
-                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
-                        for future in done:
-                            results[pending[future]] = future.result()
-                        for future in done:
-                            del pending[future]
-                        for _ in done:
-                            next_job = next(jobs, None)
-                            if next_job is not None:
-                                rank, clip = next_job
-                                pending[executor.submit(render_clip, rank, clip)] = rank
-                except BaseException:
-                    cancel_render.set()
-                    for future in pending:
-                        future.cancel()
-                    raise
-        for rank in sorted(results):
-            video, reference, report = results[rank]
-            clips.append(video)
-            references.append(reference)
-            report_clips.append(report)
+            report_clips.append(
+                ReportClip(
+                    clip,
+                    tuple(
+                        (name, path)
+                        for name, (path, _) in zip(
+                            output_names[rank - 1], variants, strict=True
+                        )
+                    ),
+                )
+            )
         manifest = {
             "schema_version": 5,
             "report": "report.md",

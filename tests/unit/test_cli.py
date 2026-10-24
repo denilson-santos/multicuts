@@ -1,5 +1,6 @@
 """Public CLI configuration and process-boundary behavior."""
 
+import json
 import logging
 import os
 import subprocess
@@ -28,6 +29,108 @@ def _args() -> list[str]:
         "--llm-model",
         "test-model",
     ]
+
+
+@pytest.mark.parametrize("configured_in", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize("reason", ["primary", "captions"])
+@pytest.mark.parametrize(
+    "source", ["missing.mp4", "https://www.youtube.com/watch?v=test"]
+)
+def test_output_conflicts_fail_before_pipeline_or_output_creation(
+    configured_in, reason, source, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    settings = (
+        {"primary": "horizontal", "render": "all:vertical"}
+        if reason == "primary"
+        else {"render": "all:horizontal", "subtitles": "all:vertical"}
+    )
+    flags = []
+    if configured_in == "cli":
+        flags = [
+            part for field, value in settings.items() for part in ("--" + field, value)
+        ]
+    elif configured_in == "process":
+        for field, value in settings.items():
+            monkeypatch.setenv(field.upper(), value)
+    elif configured_in == "dotenv":
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{field.upper()}={value}" for field, value in settings.items()),
+            encoding="utf-8",
+        )
+    else:
+        data = (
+            {"primary": {"all": "horizontal"}, "render": {"all:vertical": True}}
+            if reason == "primary"
+            else {
+                "render": {"all:horizontal": True},
+                "subtitles": {"all:vertical": {"enabled": True}},
+            }
+        )
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        flags = ["--config", str(path)]
+    code = main(
+        [source, *_args()[1:], *flags],
+        pipeline=lambda _: pytest.fail("Pipeline must not start"),
+    )
+    assert code == 2
+    assert not (tmp_path / "out").exists()
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert ("Primary output" if reason == "primary" else "Subtitle selection") in error
+    assert "Run " not in error
+
+
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize(
+    "source", ["missing.mp4", "https://www.youtube.com/watch?v=test"]
+)
+@pytest.mark.parametrize(
+    ("flags", "option", "scope"),
+    [
+        (
+            [
+                "--render=all:vertical",
+                "--subtitles=short",
+                "--subtitle-margin-bottom=long=5%",
+                "long:vertical=20%",
+            ],
+            "--subtitle-margin-bottom",
+            "long",
+        ),
+        (
+            ["--render=all:vertical", "--subtitle-font-size=all:horizontal=5%"],
+            "--subtitle-font-size",
+            "all:horizontal",
+        ),
+        (
+            ["--render=all:vertical", "--width=all:horizontal=1280"],
+            "--width",
+            "all:horizontal",
+        ),
+        (
+            ["--render=short", "--height=long=1280"],
+            "--height",
+            "long",
+        ),
+    ],
+)
+def test_explicit_adjustment_conflicts_fail_before_pipeline_or_output_creation(
+    direct, source, flags, option, scope, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    code = main(
+        [source, *_args()[1:], *(["--clip-full"] if direct else []), *flags],
+        pipeline=lambda _: pytest.fail("Pipeline must not start"),
+    )
+    assert code == 2
+    assert not (tmp_path / "out").exists()
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert f"{option} at scope '{scope}'" in error
+    assert "Adjust its scope" in error
+    assert "Run " not in error
 
 
 @pytest.mark.parametrize(
@@ -172,6 +275,7 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
                 "WIDTH",
                 "HEIGHT",
                 "SUBTITLE_",
+                "SUBTITLES",
             )
         ):
             monkeypatch.delenv(name)
@@ -179,12 +283,12 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
 @pytest.mark.parametrize("configured_in", ["dotenv", "process"])
-@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitles"])
 def test_output_boolean_sources_and_scope_precedence(
     clip_class, configured_in, field, tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
-    name = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
+    name = "SUBTITLES" if field == "subtitles" else field.upper()
     raw = f"{clip_class}=false"
     if configured_in == "dotenv":
         (tmp_path / ".env").write_text(f"{name}={raw}\n", encoding="utf-8")
@@ -210,10 +314,10 @@ def test_output_boolean_sources_and_scope_precedence(
         assert effective(config) is True
 
 
-@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitles"])
 def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    parent = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
+    parent = "SUBTITLES" if field == "subtitles" else field.upper()
     (tmp_path / ".env").write_text(f"{parent}=long=false\n", encoding="utf-8")
     monkeypatch.setenv(parent, "true")
     config = parse_run_config(_args())
@@ -223,7 +327,7 @@ def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypa
 
 @pytest.mark.parametrize(
     "name",
-    ["RENDER", "SUBTITLE_ENABLED"],
+    ["RENDER", "SUBTITLES"],
 )
 def test_output_settings_reject_invalid_booleans(name, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -278,7 +382,7 @@ def test_cli_options_override_process_environment_and_dotenv(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
         "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\n"
-        "OVERLAP_THRESHOLD=0.7\nSUBTITLE_ENABLED=short=false long=false\n",
+        "OVERLAP_THRESHOLD=0.7\nSUBTITLES=short=false long=false\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LLM_MODEL", "process-model")
@@ -294,7 +398,7 @@ def test_cli_options_override_process_environment_and_dotenv(
             "high",
             "--overlap-threshold",
             "0.8",
-            "--subtitle-enabled",
+            "--subtitles",
             "true",
         ]
     )

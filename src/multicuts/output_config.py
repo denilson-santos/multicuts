@@ -22,7 +22,15 @@ SUBTITLE_FIELDS = frozenset(
     }
 )
 OUTPUT_FIELDS = frozenset({"render", "primary", "width", "height"})
-ENVIRONMENT_FIELDS = OUTPUT_FIELDS | {"subtitle_" + field for field in SUBTITLE_FIELDS}
+ENVIRONMENT_FIELDS = (
+    OUTPUT_FIELDS
+    | {"subtitles"}
+    | {"subtitle_" + field for field in SUBTITLE_FIELDS if field != "enabled"}
+)
+SCOPE_SHORTHAND_FIELDS = frozenset(
+    {"render", "subtitles", "subtitle_enabled"}
+    | {"subtitle_" + field for field in SUBTITLE_BOOLEAN_FIELDS}
+)
 
 
 def parse_boolean(raw: object, name: str) -> bool:
@@ -50,13 +58,15 @@ def parse_render(raw: object, name: str, *, named: bool = False) -> RenderMode:
 
 
 def output_scope(scope: str) -> str:
-    """Normalize all, TYPE, or TYPE:VARIANT into a configuration key suffix."""
+    """Normalize shared, class, or named-variant scopes into a key suffix."""
     if scope == "all":
         return ""
     clip_class, separator, variant = scope.partition(":")
-    if clip_class not in ("short", "long") or (separator and variant not in VARIANTS):
+    if clip_class not in ("all", "short", "long") or (
+        separator and variant not in VARIANTS
+    ):
         raise ConfigurationError(
-            "Output scope must be all, short, long, or TYPE:VARIANT "
+            "Output scope must be all, short, long, all:VARIANT, or TYPE:VARIANT "
             "(horizontal, vertical, square, horizontal-blur, "
             "vertical-blur, square-blur)"
         )
@@ -92,7 +102,15 @@ def collect_output_values(
     field: str, values: Sequence[str], destination: dict[str, object], *, name: str
 ) -> None:
     """Use the same scope and conflict rules for CLI and environment values."""
+    if field == "subtitles":
+        field = "subtitle_enabled"
     for raw in values:
+        if (
+            field in SCOPE_SHORTHAND_FIELDS
+            and "=" not in raw
+            and (raw.strip() in ("all", "short", "long") or ":" in raw)
+        ):
+            raw += "=true"
         scope, supplied = scoped_value(raw)
         if field.startswith("subtitle_"):
             subtitle_field = field.removeprefix("subtitle_")
@@ -111,6 +129,35 @@ def collect_output_values(
         if key in destination and destination[key] != normalized:
             raise ConfigurationError(f"Conflicting values for {name} at scope {scope}")
         destination[key] = normalized
+
+
+def with_selection_defaults(settings: Mapping[str, object]) -> dict[str, object]:
+    """Complete each source's render/caption selection before applying priority."""
+    result = dict(settings)
+    scopes = (
+        "short",
+        "long",
+        *(
+            f"{kind}:{variant}"
+            for kind in ("all", "short", "long")
+            for variant in VARIANTS
+        ),
+    )
+    for field in ("render", "subtitle_enabled"):
+        if field in settings:
+            continue
+        keys = (
+            output_key(scope, "render")
+            if field == "render"
+            else subtitle_key(scope, "enabled")
+            for scope in scopes
+        )
+        choices = [settings[key] for key in keys if key in settings]
+        if choices:
+            result[field] = not any(
+                choice is True or choice == "primary" for choice in choices
+            )
+    return result
 
 
 def environment_output_config(values: Mapping[str, str]) -> dict[str, object]:
