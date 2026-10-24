@@ -160,7 +160,7 @@ def test_grouped_cli_controls_publish_only_the_requested_variant(
     for field in ENVIRONMENT_FIELDS:
         monkeypatch.delenv(field.upper(), raising=False)
     values = {
-        "primary": "short=vertical long=horizontal",
+        "primary": "short=square long=horizontal",
         "render": "short:square",
         "width": "short:square=64 long:square=96",
         "height": "short:square=64 long:square=96",

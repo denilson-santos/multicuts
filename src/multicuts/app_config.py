@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
@@ -323,7 +324,7 @@ class AppConfig:
             return "full_video"
         return "custom" if self.clip_range is not None else "automatic"
 
-    def subtitles_for(self, clip_class: str) -> bool:
+    def subtitles_for(self, clip_class: str, variant: str | None = None) -> bool:
         """Read the caption decision for the current effective render config."""
         if clip_class not in ("short", "long"):
             raise ConfigurationError("Subtitle class must be short or long")
@@ -332,15 +333,68 @@ class AppConfig:
             if clip_class == "short"
             else self.long_subtitles_enabled
         )
-        return self.subtitles_enabled if override is None else override
+        enabled = self.subtitles_enabled if override is None else override
+        if variant is None:
+            return enabled
+        if variant not in VARIANTS:
+            raise ConfigurationError("Unknown output variant")
+        for scope in (None, variant):
+            output = next(
+                (
+                    option
+                    for option in self.output_options
+                    if option.clip_class == clip_class and option.variant == scope
+                ),
+                None,
+            )
+            if output is not None and output.subtitles_enabled is not None:
+                enabled = output.subtitles_enabled
+        return enabled
+
+    def validate_subtitle_selection(
+        self, outputs: Mapping[str, tuple[str, ...]]
+    ) -> None:
+        """Require an inclusive caption selection to reach a planned output."""
+        if self.subtitles_enabled:
+            return
+        requested = [
+            f"{kind}:{variant}"
+            for kind in ("short", "long")
+            for variant in VARIANTS
+            if self.subtitles_for(kind, variant)
+        ]
+        if not requested or any(
+            self.subtitles_for(kind, variant)
+            for kind, variants in outputs.items()
+            for variant in variants
+        ):
+            return
+        rendered = [
+            f"{kind}:{variant}"
+            for kind, variants in outputs.items()
+            for variant in variants
+        ]
+        raise ConfigurationError(
+            "Subtitle selection matches no enabled output. "
+            f"Rendered outputs: {', '.join(rendered)}. "
+            f"Requested subtitle outputs: {', '.join(requested)}. "
+            "Include a matching output in --render or use --subtitles false."
+        )
 
     def outputs_for(self, clip_class: str, media: MediaInfo) -> tuple[str, ...]:
         """Select and validate supported outputs before transcription."""
         if not self.clips_for(clip_class):
             return ()
         available = available_variants(media)
+        preferred = self.short_primary if clip_class == "short" else self.long_primary
         primary = self.primary_for(clip_class, media)
         if primary not in available:
+            if preferred != "auto":
+                raise ConfigurationError(
+                    f"Primary output '{preferred}' is unavailable for {clip_class} "
+                    "clips with this source orientation. "
+                    "Choose a supported --primary or use --primary auto."
+                )
             primary = available[0]
         mode = self.render_for(clip_class)
         overrides = {
@@ -362,6 +416,12 @@ class AppConfig:
                 else mode is True or (mode == "primary" and name == primary)
             )
         )
+        if preferred != "auto" and preferred not in outputs:
+            raise ConfigurationError(
+                f"Primary output '{preferred}' is disabled by the render selection "
+                f"for {clip_class} clips. Include it in --render or choose an "
+                "enabled --primary."
+            )
         if not outputs:
             raise ConfigurationError(f"Enable at least one {clip_class} output variant")
         for name in outputs:
@@ -427,7 +487,7 @@ class AppConfig:
 
     def for_output(self, clip_class: str, variant: str) -> AppConfig:
         """Resolve captions and presentation before entering the render boundary."""
-        enabled = self.subtitles_for(clip_class)
+        enabled = self.subtitles_for(clip_class, variant)
         template, template_dir = self.subtitle_template, self.subtitle_template_dir
         options = self.subtitle_options
         self.dimensions_for(clip_class, variant)
@@ -442,8 +502,6 @@ class AppConfig:
             )
             if override is None:
                 continue
-            if override.subtitles_enabled is not None:
-                enabled = override.subtitles_enabled
             if override.subtitle_template is not None:
                 template = override.subtitle_template
             if override.subtitle_template_dir is not None:

@@ -284,7 +284,8 @@ class _OutputCommand(TyperCommand):
             "Without an explicit all base, positive scopes select only those "
             "outputs; negative-only scopes exclude from all outputs.",
             "primary": "auto (default): follow source orientation, "
-            "or a preferred variant name. All, short, or long scopes only.",
+            "or an explicit variant that must be supported and enabled. "
+            "All, short, or long scopes only.",
             "width": "Positive even pixels (default: horizontal 1920, "
             "vertical/square 1080). If height is omitted, derive it from "
             "the default variant ratio and round to even pixels. "
@@ -297,7 +298,8 @@ class _OutputCommand(TyperCommand):
         subtitle_help = {
             "enabled": "Caption selection (default: true). "
             "Without an explicit all base, positive scopes select only those "
-            "outputs; negative-only scopes exclude from all outputs.",
+            "outputs; negative-only scopes exclude from all outputs. "
+            "An inclusive selection must match an enabled output.",
             "template": "Template name (default: yellow-pop).",
             "template_dir": "Template directory (default: built-in templates).",
             "position": "Position: top/middle/bottom with left/center/right.",

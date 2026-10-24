@@ -1100,6 +1100,134 @@ def test_auto_primary_uses_presentation_geometry():
     assert config.outputs_for("long", media) == ("vertical",)
 
 
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize("kind", ["short", "long"])
+@pytest.mark.parametrize("reason", ["disabled", "unavailable"])
+def test_explicit_primary_must_be_rendered_and_supported(
+    source, kind, reason, tmp_path, monkeypatch
+):
+    flags = ["--render", "all:vertical"]
+    if source == "cli":
+        flags += ["--primary", f"{kind}=horizontal"]
+    elif source == "process":
+        monkeypatch.setenv("PRIMARY", f"{kind}=horizontal")
+    elif source == "dotenv":
+        (tmp_path / ".env").write_text(f"PRIMARY={kind}=horizontal\n", encoding="utf-8")
+    else:
+        flags += ["--config", preset(tmp_path, {"primary": {kind: "horizontal"}})]
+    config = parse(*flags)
+    width, height = (640, 360) if reason == "disabled" else (360, 640)
+    media = MediaInfo(60, width, height, width, height, 0, None)
+    with pytest.raises(
+        ConfigurationError, match=f"Primary output 'horizontal'.*{reason}"
+    ):
+        config.outputs_for(kind, media)
+
+
+def test_primary_validation_uses_effective_precedence_and_allows_auto(
+    tmp_path, monkeypatch
+):
+    path = preset(tmp_path, {"primary": {"all": "horizontal"}})
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    monkeypatch.setenv("PRIMARY", "vertical")
+    config = parse("--config", path, "--render", "all:vertical")
+    assert config.outputs_for("short", media) == ("vertical",)
+    monkeypatch.setenv("PRIMARY", "horizontal")
+    config = parse("--config", path, "--render", "all:vertical", "--primary", "auto")
+    assert config.outputs_for("short", media) == ("vertical",)
+    assert config.outputs_for("long", media) == ("vertical",)
+
+
+def test_explicit_primary_in_disabled_class_is_not_validated():
+    config = parse("--render", "short", "--primary", "long=horizontal")
+    media = MediaInfo(60, 360, 640, 360, 640, 0, None)
+    assert config.outputs_for("long", media) == ()
+    assert config.outputs_for("short", media)[0] == "vertical"
+
+
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize(
+    ("render", "captions", "valid"),
+    [
+        ("all:horizontal", ["all:vertical=true"], False),
+        ("all:horizontal", ["false", "all:vertical=true"], False),
+        ("long:vertical", ["short:vertical=true"], False),
+        ("all:vertical", ["all:vertical=true"], True),
+        ("all:vertical", ["short:vertical=true"], True),
+        ("all:horizontal", ["false"], True),
+        ("all:horizontal", ["all:horizontal=false"], True),
+        ("all:horizontal", ["true", "all:horizontal=false"], True),
+    ],
+)
+def test_caption_selection_must_reach_a_rendered_output_unless_intentionally_disabled(
+    source, render, captions, valid, tmp_path, monkeypatch
+):
+    flags = ["--render", render]
+    if source == "cli":
+        flags += ["--subtitles", *captions]
+    elif source == "process":
+        monkeypatch.setenv("SUBTITLES", " ".join(captions))
+    elif source == "dotenv":
+        (tmp_path / ".env").write_text(
+            f'SUBTITLES="{" ".join(captions)}"\n', encoding="utf-8"
+        )
+    else:
+        settings = {}
+        for token in captions:
+            scope, separator, value = token.partition("=")
+            if not separator:
+                scope, value = "all", token
+            settings[scope] = {"enabled": value == "true"}
+        flags += ["--config", preset(tmp_path, {"subtitles": settings})]
+    config = parse(*flags)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    outputs = {kind: config.outputs_for(kind, media) for kind in ("short", "long")}
+    if valid:
+        config.validate_subtitle_selection(outputs)
+    else:
+        with pytest.raises(
+            ConfigurationError, match="Subtitle selection matches no enabled output"
+        ):
+            config.validate_subtitle_selection(outputs)
+
+
+def test_caption_validation_uses_precedence_and_ignores_unused_geometry(
+    tmp_path, monkeypatch
+):
+    path = preset(
+        tmp_path,
+        {"subtitles": {"all:vertical": {"enabled": True}}},
+    )
+    monkeypatch.setenv("SUBTITLES", "false")
+    config = parse("--config", path, "--render", "all:horizontal")
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    config.validate_subtitle_selection({"short": config.outputs_for("short", media)})
+    config = parse(
+        "--render",
+        "all:vertical",
+        "--subtitles",
+        "all:vertical",
+        "--width",
+        "all:horizontal=720",
+        "--height",
+        "all:horizontal=720",
+    )
+    config.validate_subtitle_selection({"short": config.outputs_for("short", media)})
+
+
+def test_caption_positive_parent_cancelled_by_negative_children_can_disable_all():
+    config = parse(
+        "--render",
+        "all:horizontal",
+        "--subtitles",
+        "short",
+        *(f"short:{variant}=false" for variant in VARIANTS),
+    )
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    config.validate_subtitle_selection({"short": config.outputs_for("short", media)})
+    assert not any(config.subtitles_for("short", variant) for variant in VARIANTS)
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("parent", ["false", "short=false"])
 def test_named_render_can_enable_an_output_under_a_disabled_parent(parent, reverse):

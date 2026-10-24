@@ -548,10 +548,22 @@ still inherit per field. Font, margin, color, animation, and geometry options
 adjust their scopes without selecting outputs.
 
 `--primary` accepts only `all`, `short`, or `long`; its value is `auto` (the default
-for both classes) or a variant name. It chooses a preferred output independently
-of its dimensions. `auto` follows the source orientation, not its exact ratio. The
-source-orientation table above applies to both classes; no extra `original`
-output is generated.
+for both classes) or a variant name. An explicit primary must be compatible with
+the source and enabled by `--render`; conflicting requests fail instead of
+silently substituting another variant. `auto` follows the source orientation,
+falling back to an enabled compatible output. Primary selection is independent
+of dimensions. The source-orientation table above applies to both classes; no
+extra `original` output is generated.
+
+A positive effective subtitle selection must match at least one planned output.
+For example, `--render all:horizontal --subtitles all:vertical` is a configuration
+error. `--subtitles false` and exclusions that intentionally leave no captions,
+such as `--render all:vertical --subtitles all:vertical=false`, remain valid.
+These checks use resolved configuration after source/scope precedence and run
+after probing the source, before ASR or clip rendering. Direct cuts validate
+only their interval's duration class; automatic selection validates enabled
+classes. Primary settings for unused classes do not block processing. Visual
+settings and dimensions on disabled outputs remain reusable in presets.
 
 To publish only primary short cuts:
 
@@ -810,7 +822,7 @@ Choose enabled classes, primary formats, dimensions, and variants.
 | Option | Purpose |
 | --- | --- |
 | `--render [SCOPE=]VALUE...` | Select outputs with positive scopes or exclude with negative scopes. A scope alone means true. Explicit shared true/false/primary sets the base. Default: all compatible variants. Environment: `RENDER`. |
-| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
+| `--primary [SCOPE=]VALUE...` | `auto` follows source orientation and enabled outputs (default), or an explicit supported/enabled variant; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
 | `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
 | `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`. |
 

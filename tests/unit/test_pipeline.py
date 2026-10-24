@@ -172,6 +172,90 @@ def test_scoped_render_without_captions_skips_asr(
     assert metadata["render"]["subtitles_enabled"] is False
 
 
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize(
+    "reason", ["primary-disabled", "primary-unavailable", "captions"]
+)
+def test_conflicting_output_requests_fail_before_asr_or_ai(
+    tmp_path, monkeypatch, direct, reason
+):
+    monkeypatch.chdir(tmp_path)
+    flags = (
+        ["--render", "all:horizontal", "--subtitles", "all:vertical"]
+        if reason == "captions"
+        else ["--primary", "horizontal", "--render", "all:vertical"]
+    )
+    config = parse_run_config(
+        [
+            str(tmp_path / "source.mp4"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--llm-backend",
+            "codex",
+            "--llm-model",
+            "test-model",
+            *(["--clip-full"] if direct else []),
+            *flags,
+        ]
+    )
+    asr, backend = FakeTranscriber(), FakeBackend()
+    media = _media(360, 640) if reason == "primary-unavailable" else _media()
+    message = "Subtitle selection" if reason == "captions" else "Primary output"
+    with pytest.raises(ConfigurationError, match=message):
+        _run(tmp_path, asr, backend, config=config, source_media=media)
+    assert asr.calls == backend.calls == 0
+    assert not list(config.output_dir.rglob("*.mp4"))
+    assert not list(config.output_dir.rglob("manifest.json"))
+
+
+def test_direct_cut_validates_caption_selection_only_against_its_actual_class(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    config = parse_run_config(
+        [
+            str(tmp_path / "source.mp4"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render",
+            "all:vertical",
+            "--subtitles",
+            "short:vertical",
+        ]
+    )
+    asr, backend = FakeTranscriber(), FakeBackend()
+    with pytest.raises(ConfigurationError, match="Subtitle selection"):
+        _run(tmp_path, asr, backend, config=config)
+    assert asr.calls == backend.calls == 0
+
+
+def test_direct_cut_ignores_explicit_primary_of_the_unused_class(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_BACKEND", "")
+    monkeypatch.setenv("LLM_MODEL", "")
+    config = parse_run_config(
+        [
+            str(tmp_path / "source.mp4"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render",
+            "all:vertical",
+            "--primary",
+            "short=horizontal",
+            "--subtitles",
+            "false",
+        ]
+    )
+    asr = FakeTranscriber()
+    result = _run(tmp_path, asr, FakeBackend(), config=config)
+    assert asr.calls == 0
+    (video,) = result.clip_paths
+    assert video.name == "vertical.mp4"
+    assert video.parent.parent.name == "longs"
+
+
 def test_search_range_scopes_discovery_review_and_reuses_full_cache(
     tmp_path: Path,
 ) -> None:

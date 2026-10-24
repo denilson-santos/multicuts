@@ -576,9 +576,6 @@ def run_pipeline(
                     source.acquired_range.start,
                     source.acquired_range.end,
                 )
-        for clip_class in ("short", "long"):
-            if config.clips_for(clip_class):
-                config.outputs_for(clip_class, media)
         needs_title = direct_range is not None and bool(config.llm_backend)
         needs_transcript = True
         if direct_range is not None:
@@ -589,11 +586,18 @@ def run_pipeline(
                 raise ConfigurationError(
                     f"The cut interval is {clip_class}; use --render {clip_class}=true"
                 )
-            outputs = config.outputs_for(clip_class, media)
+            outputs_by_class = {clip_class: config.outputs_for(clip_class, media)}
+            outputs = outputs_by_class[clip_class]
             needs_transcript = needs_title or any(
-                config.for_output(clip_class, name).subtitles_for(clip_class)
-                for name in outputs
+                config.subtitles_for(clip_class, name) for name in outputs
             )
+        else:
+            outputs_by_class = {
+                kind: config.outputs_for(kind, media)
+                for kind in ("short", "long")
+                if config.clips_for(kind)
+            }
+        config.validate_subtitle_selection(outputs_by_class)
         if original_source is not None and requested_range is not None:
             logger.info(
                 "Copying local source interval %.2f-%.2fs without reencoding",
