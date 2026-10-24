@@ -53,6 +53,18 @@ automatic selection, consider enabled classes without requiring AI to produce
 candidates in every class. Settings of inactive classes and disabled output
 geometry do not create primary/caption conflicts.
 
+Validate each explicitly supplied CLI presentation/dimension scope against the
+resolved configured output sets. Width/height require at least one render-enabled
+target; all subtitle presentation fields, templates, and directories additionally
+require captions enabled on a matching target. Reject incompatible scopes during
+CLI parsing before provider/media work. Broad scopes need only one matching
+target, and general values with more-specific overrides remain valid. Do not
+filter this check by the source's actual duration class or eventual AI results:
+a configured long style remains valid for a short full-video run when long
+rendering/captions are permitted. Unused values inherited from process
+environment, `.env`, or JSON presets remain permitted, subject to the existing
+value/provider validation. Presentation options never enable rendering/captions.
+
 `--jobs` / `JOBS` selects a positive global maximum number of simultaneous
 renders (default 1; CLI > process environment > `.env` > default). Each task owns
 one `(cut, variant)` pair and an exclusive workspace. All tasks read the shared

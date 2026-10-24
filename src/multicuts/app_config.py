@@ -415,18 +415,24 @@ class AppConfig:
         if not outputs:
             raise ConfigurationError(f"Enable at least one {clip_class} output variant")
 
-    def validate_selection(self) -> None:
-        """Reject impossible selections without assuming source geometry/duration."""
-        possible: dict[str, tuple[str, ...]] = {}
-        errors: list[ConfigurationError] = []
+    def possible_outputs(self) -> dict[str, tuple[str, ...]]:
+        """List configured output possibilities without source geometry/duration."""
+        outputs: dict[str, tuple[str, ...]] = {}
         for kind in ("short", "long"):
             if not self.clips_for(kind):
                 continue
             preferred = self.short_primary if kind == "short" else self.long_primary
             primary = None if preferred == "auto" else preferred
-            variants = tuple(
+            outputs[kind] = tuple(
                 name for name in VARIANTS if self._render_enabled(kind, name, primary)
             )
+        return outputs
+
+    def validate_selection(self) -> None:
+        """Reject impossible selections without assuming source geometry/duration."""
+        possible: dict[str, tuple[str, ...]] = {}
+        errors: list[ConfigurationError] = []
+        for kind, variants in self.possible_outputs().items():
             try:
                 self._validate_selected_outputs(kind, variants)
             except ConfigurationError as error:

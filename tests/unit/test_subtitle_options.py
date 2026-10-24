@@ -95,6 +95,28 @@ def test_each_presentation_option_is_available_directly_in_cli(key, value):
     assert options.overrides() == {key: expected}
 
 
+@pytest.mark.parametrize(
+    ("key", "value"), [*CASES, ("template", "yellow-pop"), ("template_dir", ".")]
+)
+@pytest.mark.parametrize("disabled", ["render", "subtitles"])
+def test_explicit_subtitle_adjustments_require_a_captioned_render_scope(
+    key, value, disabled
+):
+    flag = "--subtitle-" + key.replace("_", "-")
+    raw = str(value).lower() if isinstance(value, bool) else str(value)
+    scope = "all:vertical" if disabled == "render" else "long:vertical"
+    selection = (
+        ["--render=all:horizontal"]
+        if disabled == "render"
+        else ["--render=all:vertical", "--subtitles=short"]
+    )
+    with pytest.raises(
+        ConfigurationError,
+        match=f"{flag} at scope '{scope}'.*no rendered output with subtitles enabled",
+    ):
+        parse(*selection, flag, f"{scope}={raw}")
+
+
 @pytest.mark.parametrize(("key", "value"), CASES)
 @pytest.mark.parametrize("source", ["cli", "process", "dotenv"])
 def test_each_presentation_option_accepts_grouped_class_and_variant_values(

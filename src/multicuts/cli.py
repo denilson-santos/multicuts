@@ -480,6 +480,59 @@ def _output_settings(
     return result
 
 
+def _validate_output_scopes(config: AppConfig, cli: dict[str, object]) -> None:
+    """Require explicit CLI adjustments to reach a configured output scope."""
+    outputs = config.possible_outputs()
+    scopes = (
+        "all",
+        "short",
+        "long",
+        *(
+            f"{kind}:{variant}"
+            for kind in ("all", "short", "long")
+            for variant in VARIANTS
+        ),
+    )
+    subtitle_fields = (
+        "template",
+        "template_dir",
+        *(f.name for f in fields(SubtitleOptions)),
+    )
+    for field in ("width", "height", *("subtitle_" + f for f in subtitle_fields)):
+        subtitle = field.startswith("subtitle_")
+        for scope in scopes:
+            key = (
+                subtitle_key(scope, field.removeprefix("subtitle_"))
+                if subtitle
+                else output_key(scope, field)
+            )
+            if key not in cli:
+                continue
+            kind, separator, variant = scope.partition(":")
+            if any(
+                (kind == "all" or kind == output_class)
+                and (not separator or variant == name)
+                and (not subtitle or config.subtitles_for(output_class, name))
+                for output_class, variants in outputs.items()
+                for name in variants
+            ):
+                continue
+            target = (
+                "rendered output with subtitles enabled"
+                if subtitle
+                else "output enabled by --render"
+            )
+            suggestion = (
+                "Adjust its scope, --render, or --subtitles."
+                if subtitle
+                else "Adjust its scope or --render."
+            )
+            raise ConfigurationError(
+                f"--{field.replace('_', '-')} at scope '{scope}' matches no {target}. "
+                f"{suggestion}"
+            )
+
+
 app = typer.Typer(
     name="multicuts",
     help=(
@@ -501,7 +554,9 @@ app = typer.Typer(
         "a scope alone means true. "
         "Matching environment variables accept the same values. "
         "Defaults shown apply when CLI, environment, .env, and JSON presets "
-        "leave the setting unset."
+        "leave the setting unset. "
+        "Explicit CLI dimension scopes must match render-enabled outputs; "
+        "subtitle presentation scopes must also match subtitle-enabled outputs."
     ),
     epilog=(
         "Examples: --render all:vertical selects only vertical outputs. "
@@ -765,6 +820,7 @@ def run_command(
     state = ctx.obj if isinstance(ctx.obj, _CliContext) else _CliContext()
     config = replace(config, **output_settings)
     config.validate_selection()
+    _validate_output_scopes(config, ctx.meta.get("output_options", {}))
     state.parsed_config = config
 
 

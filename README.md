@@ -569,6 +569,24 @@ cases wait for media inspection. Automatic selection validates enabled classes.
 Primary settings for unused classes do not block processing. Visual
 settings and dimensions on disabled outputs remain reusable in presets.
 
+Every dimension or subtitle presentation scope supplied explicitly on the CLI
+must have a compatible destination in the resolved selection. `--width` and
+`--height` require at least one render-enabled output in their scope. All
+subtitle presentation options, including templates, directories, typography,
+layout, appearance, and animations, also require subtitles enabled on at least
+one matching output. Each grouped assignment is checked separately before the
+pipeline starts. For example, `--render all:vertical --subtitles short
+--subtitle-margin-bottom long:vertical=20%` fails because long captions are
+disabled. Use a caption-enabled scope or change the caption selection.
+
+Broad scopes need only one compatible destination; shared values with specific
+overrides remain valid. These checks compare configured scopes independently
+of source duration and the cuts eventually produced. `--clip-full --render
+all:vertical --subtitles all:vertical --subtitle-margin-bottom
+long:vertical=20%` therefore remains valid even when the video is short.
+Presentation and dimension settings inherited from process environment, `.env`,
+or JSON presets may remain unused without creating this CLI scope error.
+
 To publish only primary short cuts:
 
 ```bash

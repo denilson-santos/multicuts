@@ -313,6 +313,152 @@ def test_visual_options_and_primary_preference_do_not_select_outputs():
     assert config.for_output("long", "vertical").subtitle_options.italic is None
 
 
+@pytest.mark.parametrize("field", ["width", "height"])
+@pytest.mark.parametrize(
+    ("render", "scope"),
+    [
+        ("all:vertical", "all:horizontal"),
+        ("short", "long"),
+        ("short:vertical", "long:vertical"),
+        ("all:vertical-blur", "all:vertical"),
+        ("primary", "all:vertical-blur"),
+    ],
+)
+def test_explicit_dimensions_require_a_render_enabled_scope(field, render, scope):
+    with pytest.raises(
+        ConfigurationError,
+        match=f"--{field} at scope '{scope}'.*no output enabled by --render",
+    ):
+        parse(f"--render={render}", f"--{field}={scope}=720")
+
+
+@pytest.mark.parametrize(
+    ("selection", "scopes"),
+    [
+        (["--render=all:vertical", "--subtitles=short"], ["all:vertical=5%"]),
+        (["--render=short:vertical"], ["short=5%"]),
+        (
+            ["--render=all:vertical", "--subtitles=short"],
+            ["all=5%", "short:vertical=20%"],
+        ),
+        (["--render=primary", "--subtitles=all:vertical"], ["all:vertical=5%"]),
+        (["--render=all:vertical", "--subtitles=all:vertical"], ["long:vertical=20%"]),
+    ],
+)
+def test_subtitle_scopes_allow_partial_matches_precedence_and_unused_duration_classes(
+    selection, scopes
+):
+    config = parse(*selection, "--subtitle-margin-bottom", *scopes)
+    assert config.subtitle_options.margin_bottom == (
+        "5%" if "all=5%" in scopes else None
+    )
+    assert not Path("out").exists()
+
+
+@pytest.mark.parametrize(
+    ("selection", "scopes", "invalid_scope"),
+    [
+        (["--subtitles=short"], ["short=5%", "long=6%"], "long"),
+        (["--subtitles=false"], ["5%"], "all"),
+        (["--render=all:vertical-blur"], ["all:vertical=5%"], "all:vertical"),
+        (
+            ["--render=all:vertical", "--subtitles=all:vertical=false"],
+            ["all:vertical=5%"],
+            "all:vertical",
+        ),
+    ],
+)
+def test_each_explicit_adjustment_scope_must_be_compatible(
+    selection, scopes, invalid_scope
+):
+    with pytest.raises(
+        ConfigurationError, match=f"--subtitle-font-size at scope '{invalid_scope}'"
+    ):
+        parse(*selection, "--subtitle-font-size", *scopes)
+
+
+def test_dimensions_do_not_require_subtitles_and_keep_general_overrides():
+    config = parse(
+        "--render=all:vertical",
+        "--subtitles=false",
+        "--width",
+        "all=720",
+        "all:vertical=1080",
+        "--height=all:vertical=1920",
+    )
+    assert config.dimensions_for("short", "vertical") == (1080, 1920)
+    assert not config.subtitles_for("short", "vertical")
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv", "json"])
+def test_inherited_unused_presentation_and_dimensions_remain_reusable(
+    source, tmp_path, monkeypatch
+):
+    flags = ["--render=all:vertical", "--subtitles=short"]
+    if source == "json":
+        flags += [
+            "--config",
+            preset(
+                tmp_path,
+                {
+                    "width": {"all:horizontal": 720},
+                    "height": {"all:horizontal": 720},
+                    "subtitles": {"long:vertical": {"margin_bottom": "20%"}},
+                },
+            ),
+        ]
+    else:
+        values = {
+            "WIDTH": "all:horizontal=720",
+            "HEIGHT": "all:horizontal=720",
+            "SUBTITLE_MARGIN_BOTTOM": "long:vertical=20%",
+        }
+        if source == "process":
+            for name, value in values.items():
+                monkeypatch.setenv(name, value)
+        else:
+            (tmp_path / ".env").write_text(
+                "\n".join(f"{name}={value}" for name, value in values.items()),
+                encoding="utf-8",
+            )
+    config = parse(*flags)
+    assert config.for_output("long", "vertical").subtitle_options.margin_bottom == "20%"
+    assert not config.subtitles_for("long", "vertical")
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == ("vertical",)
+
+
+@pytest.mark.parametrize("source", ["process", "dotenv", "json"])
+def test_explicit_adjustments_use_resolved_selection_precedence(
+    source, tmp_path, monkeypatch
+):
+    flags = []
+    if source == "json":
+        flags += [
+            "--config",
+            preset(
+                tmp_path,
+                {
+                    "render": {"all:vertical": True},
+                    "subtitles": {"short": {"enabled": True}},
+                },
+            ),
+        ]
+    elif source == "process":
+        monkeypatch.setenv("RENDER", "all:vertical")
+        monkeypatch.setenv("SUBTITLES", "short")
+    else:
+        (tmp_path / ".env").write_text(
+            "RENDER=all:vertical\nSUBTITLES=short\n", encoding="utf-8"
+        )
+    flags += ["--subtitle-margin-bottom=long:vertical=20%"]
+    with pytest.raises(ConfigurationError, match="scope 'long:vertical'"):
+        parse(*flags)
+    config = parse(*flags, "--subtitles=all:vertical")
+    assert config.for_output("long", "vertical").subtitle_options.margin_bottom == "20%"
+    assert config.subtitles_for("long", "vertical")
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_scoped_settings_have_order_independent_specificity(reverse):
     options = [
@@ -321,7 +467,7 @@ def test_scoped_settings_have_order_independent_specificity(reverse):
         ["--subtitle-font-size", "short:vertical=6%"],
         ["--subtitles", "false"],
         ["--subtitles", "short=true"],
-        ["--subtitles", "short:vertical=false"],
+        ["--subtitles", "short:horizontal-blur=false"],
         ["--render", "false"],
         ["--render", "short=primary"],
         ["--primary", "short=vertical"],
@@ -339,10 +485,10 @@ def test_scoped_settings_have_order_independent_specificity(reverse):
     assert config.outputs_for("short", media) == ("vertical", "horizontal-blur")
     vertical = config.for_output("short", "vertical")
     assert vertical.subtitle_options.font_size == "6%"
-    assert not vertical.subtitles_for("short")
+    assert vertical.subtitles_for("short")
     horizontal = config.for_output("short", "horizontal-blur")
     assert horizontal.subtitle_options.font_size == "5%"
-    assert horizontal.subtitles_for("short")
+    assert not horizontal.subtitles_for("short")
     assert config.for_output("long", "horizontal").subtitle_options.font_size == "4%"
 
 
@@ -360,7 +506,7 @@ def test_all_variant_scope_configures_both_classes_without_affecting_other_varia
         "square": (720, 720),
     }[variant.removesuffix("-blur")]
     subtitles = {
-        "enabled": False,
+        "enabled": True,
         "template": "amber-word",
         "template_dir": "templates",
         "fonts_dir": "fonts",
@@ -418,7 +564,7 @@ def test_all_variant_scope_configures_both_classes_without_affecting_other_varia
         assert config.outputs_for(kind, media) == (variant,)
         assert config.dimensions_for(kind, variant) == (width, height)
         output = config.for_output(kind, variant)
-        assert not output.subtitles_for(kind)
+        assert output.subtitles_for(kind)
         assert output.subtitle_template == "amber-word"
         assert output.subtitle_template_dir == directory / "templates"
         assert output.subtitle_options.fonts_dir == directory / "fonts"
@@ -438,9 +584,9 @@ def test_all_variant_scope_configures_both_classes_without_affecting_other_varia
 def test_all_variant_scope_priority_is_independent_of_argument_order(reverse):
     options = [
         ["--subtitle-margin-bottom", "2%"],
-        ["--subtitle-margin-bottom", "short=4%"],
+        ["--subtitle-margin-bottom", "long=4%"],
         ["--subtitle-margin-bottom", "all:vertical=8%"],
-        ["--subtitle-margin-bottom", "short:vertical=10%"],
+        ["--subtitle-margin-bottom", "long:vertical=10%"],
         ["--subtitle-margin-left", "3%"],
         ["--render", "false"],
         ["--render", "short=false"],
@@ -452,16 +598,16 @@ def test_all_variant_scope_priority_is_independent_of_argument_order(reverse):
     config = parse(*(part for option in options for part in option))
     short = config.for_output("short", "vertical")
     long = config.for_output("long", "vertical")
-    assert short.subtitle_options.margin_bottom == "10%"
-    assert long.subtitle_options.margin_bottom == "8%"
+    assert short.subtitle_options.margin_bottom == "8%"
+    assert long.subtitle_options.margin_bottom == "10%"
     assert (
         short.subtitle_options.margin_left == long.subtitle_options.margin_left == "3%"
     )
     assert (
-        config.for_output("short", "horizontal").subtitle_options.margin_bottom == "4%"
+        config.for_output("long", "horizontal").subtitle_options.margin_bottom == "4%"
     )
     assert (
-        config.for_output("long", "vertical-blur").subtitle_options.margin_bottom
+        config.for_output("short", "vertical-blur").subtitle_options.margin_bottom
         == "2%"
     )
     assert not config.clips_for("short")
@@ -557,7 +703,12 @@ def test_cli_and_environment_override_more_specific_file_values(tmp_path, monkey
     assert parse("--config", path).clips_for("long")
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=9%")
     config = parse(
-        "--config", path, "--subtitle-font-size", "10%", "--subtitles", "false"
+        "--config",
+        path,
+        "--subtitle-font-size",
+        "10%",
+        "--subtitles",
+        "short:vertical=false",
     )
     vertical = config.for_output("short", "vertical")
     assert vertical.subtitle_options.font_size == "10%"
@@ -998,14 +1149,17 @@ def test_dimension_pairs_enforce_variant_orientation_before_output(
         config.outputs_for("short", media)
 
 
-def test_invalid_dimensions_on_disabled_output_do_not_block_other_outputs():
+def test_inherited_invalid_dimensions_on_disabled_output_do_not_block_other_outputs(
+    tmp_path,
+):
     config = parse(
+        "--config",
+        preset(
+            tmp_path,
+            {"width": {"short:vertical": 720}, "height": {"short:vertical": 720}},
+        ),
         "--render",
         "short:vertical=false",
-        "--width",
-        "short:vertical=720",
-        "--height",
-        "short:vertical=720",
     )
     media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
     assert "vertical" not in config.outputs_for("short", media)
@@ -1049,16 +1203,17 @@ def test_dimension_fields_resolve_independently_across_sources(tmp_path, monkeyp
         "square-blur",
     ],
 )
-def test_primary_selects_named_output_without_changing_dimensions(variant):
+def test_primary_selects_named_output_without_changing_dimensions(variant, tmp_path):
     config = parse(
+        "--config",
+        preset(
+            tmp_path,
+            {"width": {"short:horizontal": 2520}, "height": {"short:horizontal": 1080}},
+        ),
         "--primary",
         f"short={variant}",
         "--render",
         "short=primary",
-        "--width",
-        "short:horizontal=2520",
-        "--height",
-        "short:horizontal=1080",
     )
     media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
     assert config.outputs_for("short", media) == (variant,)
@@ -1237,14 +1392,15 @@ def test_caption_validation_uses_precedence_and_ignores_unused_geometry(
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     config.validate_subtitle_selection({"short": config.outputs_for("short", media)})
     config = parse(
+        "--config",
+        preset(
+            tmp_path,
+            {"width": {"all:horizontal": 720}, "height": {"all:horizontal": 720}},
+        ),
         "--render",
         "all:vertical",
         "--subtitles",
         "all:vertical",
-        "--width",
-        "all:horizontal=720",
-        "--height",
-        "all:horizontal=720",
     )
     config.validate_subtitle_selection({"short": config.outputs_for("short", media)})
 
@@ -1441,8 +1597,9 @@ def test_grouped_dimensions_and_subtitle_controls_keep_quoted_values_intact(tmp_
         "short:horizontal=1080",
         "long:horizontal=1080",
         "--subtitles",
-        "short=false",
-        "long=true",
+        "short=true",
+        "long=false",
+        "long:horizontal=true",
         "--subtitle-template",
         "short=yellow-pop",
         "long=amber-word",
@@ -1455,7 +1612,8 @@ def test_grouped_dimensions_and_subtitle_controls_keep_quoted_values_intact(tmp_
     assert config.dimensions_for("long", "horizontal") == (1920, 1080)
     short = config.for_output("short", "horizontal")
     long = config.for_output("long", "horizontal")
-    assert not short.subtitles_for("short") and long.subtitles_for("long")
+    assert short.subtitles_for("short") and long.subtitles_for("long")
+    assert not config.subtitles_for("long", "vertical")
     assert short.subtitle_template == "yellow-pop"
     assert long.subtitle_template == "amber-word"
     assert short.subtitle_template_dir == short_dir
@@ -1584,7 +1742,7 @@ def test_grouped_cli_values_override_more_specific_environment_values(monkeypatc
     config = parse(
         "--subtitle-font-size",
         "short=5%",
-        "long=4%",
+        "all=4%",
         "--render",
         "short=primary",
         "long=false",

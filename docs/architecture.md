@@ -257,6 +257,18 @@ FFmpeg encodes each interval into private MP4s; FFprobe validates geometry, dura
 
 Subtitles resolve against final-canvas geometry before encoding. Source segment and word timings are shifted to the local clip timeline without another transcription. Words and source segments may retain equal start/end timestamps; clips and subtitle segments require positive duration, and unusable observed segment intervals fail explicitly. Point words inside the clip retain their observed segment association. A point at the clip end is also retained when its observed parent segment ends there; the following clip excludes it when that parent is absent. Words without segment provenance use a half-open clip interval and interval-based association. The adapter calls public `prepare_subtitles()` (or `render_transcript()` for staged outputs) with clip-local speech data (schema version 1), preserving individual word times, leading spaces, partial alignment, and unknown language. Multisubs performs its native subtitle grouping and layout once against the final template and geometry. Point-only groups use the native coarse path over observed segment bounds when they cannot form a positive cue; no word receives invented timing. Missing or partial word alignment uses the native segment fallback, with warnings about suppressed effects. Original words, confidence, timestamps, and segment association remain in the normalized transcript and cache. Published `.transcript.json` files use the public speech dictionary with `schema_version`, language, task, backend/model, full text, and segments; SRT and ASS reflect the provider's native layout. Final MP4 and subtitle sidecars are validated and published beside per-clip metadata. The default suite mocks these external boundaries; opt-in integration tests exercise installed tools.
 
+`AppConfig.possible_outputs()` exposes the configured variant possibilities
+without source geometry or duration and is shared by static selection validation
+and the CLI scope check. The CLI retains the captured explicit assignments until
+after normalization, then checks each width/height scope against render-enabled
+possibilities and each subtitle presentation/template scope against the captioned
+subset. It preserves original shared/class/variant scope identity, accepts partial
+matches and normal specific overrides, and does not persist CLI provenance in the
+domain configuration. This check runs before pipeline entry and is never narrowed
+by the actual source duration class or AI results. Unused presentation/dimension
+values from environment or presets remain permitted; existing value/provider
+validation still applies.
+
 ## Limits and failure behavior
 
 The app never sets a clip quota or a run-wide AI call limit. Text blocks keep each provider request within a configurable context size and overlap so ideas around ordinary boundaries can be proposed. This context size is a model-input constraint, not a clip duration rule. An idea spanning more text than any one block covers may require a larger block supported by the selected model. Long clips are not rejected merely for exceeding 15 minutes.

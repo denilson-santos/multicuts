@@ -82,6 +82,57 @@ def test_output_conflicts_fail_before_pipeline_or_output_creation(
     assert "Run " not in error
 
 
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize(
+    "source", ["missing.mp4", "https://www.youtube.com/watch?v=test"]
+)
+@pytest.mark.parametrize(
+    ("flags", "option", "scope"),
+    [
+        (
+            [
+                "--render=all:vertical",
+                "--subtitles=short",
+                "--subtitle-margin-bottom=long=5%",
+                "long:vertical=20%",
+            ],
+            "--subtitle-margin-bottom",
+            "long",
+        ),
+        (
+            ["--render=all:vertical", "--subtitle-font-size=all:horizontal=5%"],
+            "--subtitle-font-size",
+            "all:horizontal",
+        ),
+        (
+            ["--render=all:vertical", "--width=all:horizontal=1280"],
+            "--width",
+            "all:horizontal",
+        ),
+        (
+            ["--render=short", "--height=long=1280"],
+            "--height",
+            "long",
+        ),
+    ],
+)
+def test_explicit_adjustment_conflicts_fail_before_pipeline_or_output_creation(
+    direct, source, flags, option, scope, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    code = main(
+        [source, *_args()[1:], *(["--clip-full"] if direct else []), *flags],
+        pipeline=lambda _: pytest.fail("Pipeline must not start"),
+    )
+    assert code == 2
+    assert not (tmp_path / "out").exists()
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert f"{option} at scope '{scope}'" in error
+    assert "Adjust its scope" in error
+    assert "Run " not in error
+
+
 @pytest.mark.parametrize(
     ("start", "end", "expected"),
     [

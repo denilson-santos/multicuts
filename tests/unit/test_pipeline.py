@@ -312,6 +312,48 @@ def test_direct_cut_ignores_explicit_primary_of_the_unused_class(tmp_path, monke
     assert video.parent.parent.name == "longs"
 
 
+@pytest.mark.parametrize(("duration", "kind"), [(120, "short"), (360, "long")])
+def test_direct_cut_allows_configured_styles_and_dimensions_for_an_unused_class(
+    duration, kind, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_BACKEND", "")
+    monkeypatch.setenv("LLM_MODEL", "")
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options",
+        lambda self, **kwargs: None,
+    )
+    config = parse_run_config(
+        [
+            str(tmp_path / "source.mp4"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render=all:vertical",
+            "--subtitles=all:vertical",
+            "--subtitle-margin-bottom=long:vertical=20%",
+            "--width=long:vertical=720",
+        ]
+    )
+    asr, ai = FakeTranscriber(), FakeBackend()
+    result = _run(
+        tmp_path,
+        asr,
+        ai,
+        config=config,
+        source_media=replace(_media(), duration=duration),
+    )
+    assert result.outcome.value == "completed"
+    assert asr.calls == 1 and ai.calls == 0
+    (video,) = result.clip_paths
+    metadata = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))
+    assert metadata["class"] == kind
+    assert metadata["render"]["subtitle_overrides"] == (
+        {"margin_bottom": "20%"} if kind == "long" else {}
+    )
+    assert metadata["render"]["width"] == (720 if kind == "long" else 1080)
+
+
 def test_search_range_scopes_discovery_review_and_reuses_full_cache(
     tmp_path: Path,
 ) -> None:

@@ -162,8 +162,8 @@ def test_grouped_cli_controls_publish_only_the_requested_variant(
     values = {
         "primary": "short=square long=horizontal",
         "render": "short:square",
-        "width": "short:square=64 long:square=96",
-        "height": "short:square=64 long:square=96",
+        "width": "all=96 short:square=64",
+        "height": "all=96 short:square=64",
         "subtitles": "all:square=false",
     }
     flags = []
