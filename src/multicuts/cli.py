@@ -763,7 +763,9 @@ def run_command(
         verbose=bool(verbose),
     )
     state = ctx.obj if isinstance(ctx.obj, _CliContext) else _CliContext()
-    state.parsed_config = replace(config, **output_settings)
+    config = replace(config, **output_settings)
+    config.validate_selection()
+    state.parsed_config = config
 
 
 def parse_run_config(argv: Sequence[str] | None = None) -> AppConfig:

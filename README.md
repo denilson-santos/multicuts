@@ -559,10 +559,14 @@ A positive effective subtitle selection must match at least one planned output.
 For example, `--render all:horizontal --subtitles all:vertical` is a configuration
 error. `--subtitles false` and exclusions that intentionally leave no captions,
 such as `--render all:vertical --subtitles all:vertical=false`, remain valid.
-These checks use resolved configuration after source/scope precedence and run
-after probing the source, before ASR or clip rendering. Direct cuts validate
-only their interval's duration class; automatic selection validates enabled
-classes. Primary settings for unused classes do not block processing. Visual
+Checks use resolved configuration after source/scope precedence. Conflicts that
+can be proved from settings alone fail during CLI parsing, before the pipeline
+starts, output folders are created, or the source/providers are accessed. Calls
+to the Python pipeline receive the same check at entry. Source-dependent checks
+run after probing the source, before ASR or clip rendering. Direct cuts validate
+only their interval's duration class; if that class is still unknown, ambiguous
+cases wait for media inspection. Automatic selection validates enabled classes.
+Primary settings for unused classes do not block processing. Visual
 settings and dimensions on disabled outputs remain reusable in presets.
 
 To publish only primary short cuts:

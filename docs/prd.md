@@ -37,12 +37,17 @@ variant must be supported and enabled in each active class.
 The rule applies equally to CLI, process environment, `.env`, and JSON presets;
 JSON retains native boolean types and its `subtitles.enabled` fields.
 
-After resolving source/scope precedence and probing source geometry, reject an
-explicit primary that is unsupported or disabled for an active class. Auto
-primaries keep automatic choice/fallback. Reject a positive effective caption
-selection that reaches no planned output; explicit all-off, exclusions, and
-positive parents completely cancelled by negative children remain valid. Check
-these conditions before ASR, AI review, local range extraction, or clip rendering.
+After resolving source/scope precedence, reject configuration-only contradictions
+during CLI parsing and at Python pipeline entry, before provider validation,
+workspace creation, source acquisition, probing, or encoder initialization. Use
+possible source orientations and enabled classes without inventing media facts;
+when a direct cut's duration class is unknown, defer cases that could still be
+valid for another class. After probing, reject any remaining explicit primary
+that is unsupported or disabled for an active class. Auto primaries keep
+automatic choice/fallback. Reject a positive effective caption selection that
+reaches no planned output; explicit all-off, exclusions, and positive parents
+completely cancelled by negative children remain valid. All remaining checks
+precede ASR, AI review, local range extraction, and clip rendering.
 For direct cuts, only the interval's actual duration class is active; for
 automatic selection, consider enabled classes without requiring AI to produce
 candidates in every class. Settings of inactive classes and disabled output

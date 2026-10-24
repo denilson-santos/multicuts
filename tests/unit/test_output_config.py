@@ -553,6 +553,7 @@ def test_cli_and_environment_override_more_specific_file_values(tmp_path, monkey
     assert config.render_for("short") is True
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "8%")
     monkeypatch.setenv("RENDER", "long=true")
+    monkeypatch.setenv("SUBTITLES", "true")
     assert parse("--config", path).clips_for("long")
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=9%")
     config = parse(
@@ -1145,6 +1146,35 @@ def test_explicit_primary_in_disabled_class_is_not_validated():
     assert config.outputs_for("short", media)[0] == "vertical"
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "matches"), [(640, 360, False), (360, 640, True)]
+)
+def test_auto_primary_caption_compatibility_is_deferred_until_media(
+    width, height, matches
+):
+    config = parse("--render", "primary", "--subtitles", "all:vertical")
+    media = MediaInfo(60, width, height, width, height, 0, None)
+    outputs = {"short": config.outputs_for("short", media)}
+    if matches:
+        config.validate_subtitle_selection(outputs)
+    else:
+        with pytest.raises(ConfigurationError, match="Subtitle selection"):
+            config.validate_subtitle_selection(outputs)
+
+
+def test_auto_primary_does_not_assume_a_blurred_variant_without_named_enablement():
+    with pytest.raises(ConfigurationError, match="Subtitle selection"):
+        parse("--render", "primary", "--subtitles", "all:vertical-blur")
+    config = parse(
+        "--render",
+        "primary",
+        "all:vertical-blur",
+        "--subtitles",
+        "all:vertical-blur",
+    )
+    assert config.render_for("short") == "primary"
+
+
 @pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
 @pytest.mark.parametrize(
     ("render", "captions", "valid"),
@@ -1179,15 +1209,19 @@ def test_caption_selection_must_reach_a_rendered_output_unless_intentionally_dis
                 scope, value = "all", token
             settings[scope] = {"enabled": value == "true"}
         flags += ["--config", preset(tmp_path, {"subtitles": settings})]
-    config = parse(*flags)
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
-    outputs = {kind: config.outputs_for(kind, media) for kind in ("short", "long")}
     if valid:
+        config = parse(*flags)
+        outputs = {kind: config.outputs_for(kind, media) for kind in ("short", "long")}
         config.validate_subtitle_selection(outputs)
     else:
         with pytest.raises(
             ConfigurationError, match="Subtitle selection matches no enabled output"
         ):
+            config = parse(*flags)
+            outputs = {
+                kind: config.outputs_for(kind, media) for kind in ("short", "long")
+            }
             config.validate_subtitle_selection(outputs)
 
 

@@ -446,6 +446,7 @@ def run_pipeline(
     composed_renderer: Callable[..., RenderedVariant] | None = None,
 ) -> RunResult:
     """Publish automatic selections or one exact user-selected source interval."""
+    config.validate_selection()
     # Retain explicitly supplied staged renderer boundaries for integrations.
     if (
         composed_renderer is None

@@ -183,29 +183,85 @@ def test_conflicting_output_requests_fail_before_asr_or_ai(
     flags = (
         ["--render", "all:horizontal", "--subtitles", "all:vertical"]
         if reason == "captions"
-        else ["--primary", "horizontal", "--render", "all:vertical"]
-    )
-    config = parse_run_config(
-        [
-            str(tmp_path / "source.mp4"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--llm-backend",
-            "codex",
-            "--llm-model",
-            "test-model",
-            *(["--clip-full"] if direct else []),
-            *flags,
+        else [
+            "--primary",
+            "horizontal",
+            "--render",
+            "primary" if reason == "primary-unavailable" else "all:vertical",
         ]
     )
     asr, backend = FakeTranscriber(), FakeBackend()
     media = _media(360, 640) if reason == "primary-unavailable" else _media()
     message = "Subtitle selection" if reason == "captions" else "Primary output"
     with pytest.raises(ConfigurationError, match=message):
+        config = parse_run_config(
+            [
+                str(tmp_path / "source.mp4"),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--llm-backend",
+                "codex",
+                "--llm-model",
+                "test-model",
+                *(["--clip-full"] if direct else []),
+                *flags,
+            ]
+        )
         _run(tmp_path, asr, backend, config=config, source_media=media)
     assert asr.calls == backend.calls == 0
-    assert not list(config.output_dir.rglob("*.mp4"))
-    assert not list(config.output_dir.rglob("manifest.json"))
+    assert not list((tmp_path / "out").rglob("*.mp4"))
+    assert not list((tmp_path / "out").rglob("manifest.json"))
+
+
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize("reason", ["primary", "captions"])
+def test_programmatic_conflicts_fail_before_provider_validation_or_acquisition(
+    tmp_path, monkeypatch, direct, reason
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("A processing boundary ran before static validation")
+
+    monkeypatch.setattr(
+        "multicuts.pipeline.MultisubsAdapter.validate_subtitle_options", unexpected
+    )
+    options = (
+        tuple(
+            OutputOptions(kind, "vertical", enabled=True) for kind in ("short", "long")
+        )
+        if reason == "primary"
+        else tuple(
+            OutputOptions(
+                kind,
+                name,
+                enabled=name == "horizontal",
+                subtitles_enabled=name == "vertical",
+            )
+            for kind in ("short", "long")
+            for name in ("horizontal", "vertical")
+        )
+    )
+    config = AppConfig(
+        "missing.mp4",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        full_video=direct,
+        render=False,
+        output_options=options,
+        short_primary="horizontal" if reason == "primary" else "auto",
+        long_primary="horizontal" if reason == "primary" else "auto",
+        subtitles_enabled=reason == "primary",
+        subtitle_options=SubtitleOptions(font_size="4%"),
+    )
+    with pytest.raises(ConfigurationError):
+        run_pipeline(
+            config,
+            acquire=unexpected,
+            probe=unexpected,
+            raw_renderer=unexpected,
+            final_renderer=unexpected,
+        )
+    assert not config.output_dir.exists()
 
 
 def test_direct_cut_validates_caption_selection_only_against_its_actual_class(

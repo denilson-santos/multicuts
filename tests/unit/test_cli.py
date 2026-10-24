@@ -1,5 +1,6 @@
 """Public CLI configuration and process-boundary behavior."""
 
+import json
 import logging
 import os
 import subprocess
@@ -28,6 +29,57 @@ def _args() -> list[str]:
         "--llm-model",
         "test-model",
     ]
+
+
+@pytest.mark.parametrize("configured_in", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize("reason", ["primary", "captions"])
+@pytest.mark.parametrize(
+    "source", ["missing.mp4", "https://www.youtube.com/watch?v=test"]
+)
+def test_output_conflicts_fail_before_pipeline_or_output_creation(
+    configured_in, reason, source, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    settings = (
+        {"primary": "horizontal", "render": "all:vertical"}
+        if reason == "primary"
+        else {"render": "all:horizontal", "subtitles": "all:vertical"}
+    )
+    flags = []
+    if configured_in == "cli":
+        flags = [
+            part for field, value in settings.items() for part in ("--" + field, value)
+        ]
+    elif configured_in == "process":
+        for field, value in settings.items():
+            monkeypatch.setenv(field.upper(), value)
+    elif configured_in == "dotenv":
+        (tmp_path / ".env").write_text(
+            "\n".join(f"{field.upper()}={value}" for field, value in settings.items()),
+            encoding="utf-8",
+        )
+    else:
+        data = (
+            {"primary": {"all": "horizontal"}, "render": {"all:vertical": True}}
+            if reason == "primary"
+            else {
+                "render": {"all:horizontal": True},
+                "subtitles": {"all:vertical": {"enabled": True}},
+            }
+        )
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        flags = ["--config", str(path)]
+    code = main(
+        [source, *_args()[1:], *flags],
+        pipeline=lambda _: pytest.fail("Pipeline must not start"),
+    )
+    assert code == 2
+    assert not (tmp_path / "out").exists()
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert ("Primary output" if reason == "primary" else "Subtitle selection") in error
+    assert "Run " not in error
 
 
 @pytest.mark.parametrize(

@@ -381,6 +381,63 @@ class AppConfig:
             "Include a matching output in --render or use --subtitles false."
         )
 
+    def _render_enabled(
+        self, clip_class: str, variant: str, primary: str | None
+    ) -> bool:
+        override = next(
+            (
+                option.enabled
+                for option in self.output_options
+                if option.clip_class == clip_class and option.variant == variant
+            ),
+            None,
+        )
+        if override is not None:
+            return override
+        mode = self.render_for(clip_class)
+        if mode != "primary":
+            return mode is True
+        if primary is None:
+            # Auto can choose any source orientation until the media is probed.
+            return variant in ("horizontal", "vertical", "square")
+        return variant == primary
+
+    def _validate_selected_outputs(
+        self, clip_class: str, outputs: tuple[str, ...]
+    ) -> None:
+        preferred = self.short_primary if clip_class == "short" else self.long_primary
+        if preferred != "auto" and preferred not in outputs:
+            raise ConfigurationError(
+                f"Primary output '{preferred}' is disabled by the render selection "
+                f"for {clip_class} clips. Include it in --render or choose an "
+                "enabled --primary."
+            )
+        if not outputs:
+            raise ConfigurationError(f"Enable at least one {clip_class} output variant")
+
+    def validate_selection(self) -> None:
+        """Reject impossible selections without assuming source geometry/duration."""
+        possible: dict[str, tuple[str, ...]] = {}
+        errors: list[ConfigurationError] = []
+        for kind in ("short", "long"):
+            if not self.clips_for(kind):
+                continue
+            preferred = self.short_primary if kind == "short" else self.long_primary
+            primary = None if preferred == "auto" else preferred
+            variants = tuple(
+                name for name in VARIANTS if self._render_enabled(kind, name, primary)
+            )
+            try:
+                self._validate_selected_outputs(kind, variants)
+            except ConfigurationError as error:
+                errors.append(error)
+            else:
+                possible[kind] = variants
+        # A direct cut's duration class is unknown until acquisition/probing.
+        if errors and (not self.direct_clip or not possible):
+            raise errors[0]
+        self.validate_subtitle_selection(possible)
+
     def outputs_for(self, clip_class: str, media: MediaInfo) -> tuple[str, ...]:
         """Select and validate supported outputs before transcription."""
         if not self.clips_for(clip_class):
@@ -396,7 +453,6 @@ class AppConfig:
                     "Choose a supported --primary or use --primary auto."
                 )
             primary = available[0]
-        mode = self.render_for(clip_class)
         overrides = {
             option.variant: option.enabled
             for option in self.output_options
@@ -410,20 +466,9 @@ class AppConfig:
         outputs = tuple(
             name
             for name in dict.fromkeys((primary, *available))
-            if (
-                overrides.get(name)
-                if overrides.get(name) is not None
-                else mode is True or (mode == "primary" and name == primary)
-            )
+            if self._render_enabled(clip_class, name, primary)
         )
-        if preferred != "auto" and preferred not in outputs:
-            raise ConfigurationError(
-                f"Primary output '{preferred}' is disabled by the render selection "
-                f"for {clip_class} clips. Include it in --render or choose an "
-                "enabled --primary."
-            )
-        if not outputs:
-            raise ConfigurationError(f"Enable at least one {clip_class} output variant")
+        self._validate_selected_outputs(clip_class, outputs)
         for name in outputs:
             self.for_output(clip_class, name)
         return outputs
