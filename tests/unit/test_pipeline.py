@@ -145,6 +145,33 @@ def _media(width: int = 1920, height: int = 1080) -> MediaInfo:
     return MediaInfo(360.0, width, height, width, height, 0, 1)
 
 
+def test_scoped_render_without_captions_skips_asr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_BACKEND", "")
+    monkeypatch.setenv("LLM_MODEL", "")
+    config = parse_run_config(
+        [
+            str(tmp_path / "source.mp4"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render=all:vertical=true",
+            "--subtitles=all:vertical=false",
+        ]
+    )
+    asr = FakeTranscriber()
+    result = _run(tmp_path, asr, FakeBackend(), config=config)
+    assert asr.calls == 0
+    (video,) = result.clip_paths
+    assert video.name == "vertical.mp4"
+    metadata = json.loads(video.with_suffix(".json").read_text())
+    assert metadata["subtitle_files"] == []
+    assert metadata["render"]["subtitles_enabled"] is False
+
+
 def test_search_range_scopes_discovery_review_and_reuses_full_cache(
     tmp_path: Path,
 ) -> None:
@@ -1552,7 +1579,7 @@ def test_named_render_reenables_judgment_and_publication_for_its_class(
             "false",
             "--render",
             f"{kind}:square=true",
-            "--subtitle-enabled",
+            "--subtitles",
             "false",
         ]
     )
@@ -1672,7 +1699,7 @@ def test_named_caption_switch_skips_asr_for_the_only_published_output(
             "short:horizontal=false",
             "--render",
             "short:square-blur=true",
-            "--subtitle-enabled",
+            "--subtitles",
             "short:square-blur=false",
         ]
     )

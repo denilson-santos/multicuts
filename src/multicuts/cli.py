@@ -29,13 +29,16 @@ from multicuts.errors import (
 )
 from multicuts.models import TimeRange
 from multicuts.output_config import (
+    SCOPE_SHORTHAND_FIELDS,
     collect_output_values,
     load_output_config,
     load_output_environment,
     output_key,
+    output_scope,
     parse_boolean,
     parse_render,
     subtitle_key,
+    with_selection_defaults,
 )
 from multicuts.pipeline import RunOutcome, RunResult, run_pipeline
 from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS, SubtitleOptions
@@ -258,10 +261,15 @@ class _OutputCommand(TyperCommand):
             if option.callback is not _capture_output_option:
                 continue
             while index < len(args) and not args[index].startswith("-"):
-                # Before SOURCE, only explicit assignments can be distinguished
-                # from the positional video path. Use -- to end a value group.
+                # Recognize selection scopes before SOURCE without consuming
+                # video paths or URLs. Use -- to end an ambiguous value group.
                 if not source_seen and "=" not in args[index]:
-                    break
+                    if option.name not in SCOPE_SHORTHAND_FIELDS:
+                        break
+                    try:
+                        output_scope(args[index])
+                    except ConfigurationError:
+                        break
                 expanded.extend((flag, args[index]))
                 index += 1
         return super().parse_args(ctx, expanded)
@@ -272,7 +280,9 @@ class _OutputCommand(TyperCommand):
             "render": "true: all compatible outputs; false: none; "
             "primary: only the primary (all/short/long scopes). Default: true. "
             "Named variants accept true/false. Per source: "
-            "TYPE:VARIANT > all:VARIANT > TYPE > all.",
+            "TYPE:VARIANT > all:VARIANT > TYPE > all. "
+            "Without an explicit all base, positive scopes select only those "
+            "outputs; negative-only scopes exclude from all outputs.",
             "primary": "auto (default): follow source orientation, "
             "or a preferred variant name. All, short, or long scopes only.",
             "width": "Positive even pixels (default: horizontal 1920, "
@@ -285,7 +295,9 @@ class _OutputCommand(TyperCommand):
             "With both dimensions, their ratio is used; preserve variant orientation.",
         }
         subtitle_help = {
-            "enabled": "Caption switch (default: true).",
+            "enabled": "Caption selection (default: true). "
+            "Without an explicit all base, positive scopes select only those "
+            "outputs; negative-only scopes exclude from all outputs.",
             "template": "Template name (default: yellow-pop).",
             "template_dir": "Template directory (default: built-in templates).",
             "position": "Position: top/middle/bottom with left/center/right.",
@@ -301,13 +313,13 @@ class _OutputCommand(TyperCommand):
         }
         for key in (
             *controls,
-            "subtitle_enabled",
+            "subtitles",
             "subtitle_template",
             "subtitle_template_dir",
             *("subtitle_" + field.name for field in fields(SubtitleOptions)),
         ):
-            subtitle = key.startswith("subtitle_")
-            field = key.removeprefix("subtitle_")
+            subtitle = key == "subtitles" or key.startswith("subtitle_")
+            field = "enabled" if key == "subtitles" else key.removeprefix("subtitle_")
             boolean = field == "enabled" or field in SUBTITLE_BOOLEAN_FIELDS
             help_text = controls.get(
                 key, subtitle_help.get(field, f"Subtitle {field.replace('_', ' ')}.")
@@ -340,6 +352,8 @@ class _OutputCommand(TyperCommand):
                 "shadow_size",
             ):
                 help_text += " Value: % or px."
+            if key in SCOPE_SHORTHAND_FIELDS:
+                help_text += " A scope alone means true."
             if subtitle and field not in ("enabled", "template", "template_dir"):
                 help_text += " Default: inherit selected template."
             self.params.append(
@@ -368,9 +382,12 @@ def _output_settings(
 ) -> dict[str, object]:
     """Normalize output values once, resolving source before scope specificity."""
     process, dotenv = load_output_environment()
+    sources = tuple(
+        with_selection_defaults(source) for source in (cli, process, dotenv, preset)
+    )
 
     def resolve(keys: tuple[str, ...]) -> tuple[str, object] | None:
-        for source in (cli, process, dotenv, preset):
+        for source in sources:
             for key in keys:
                 if key in source:
                     return key, source[key]
@@ -478,15 +495,18 @@ app = typer.Typer(
         "Find and render short and long clips. Output controls accept multiple "
         "space-separated values or repeated flags: [SCOPE=]VALUE... "
         "Omitted scope means all; use short, long, all:VARIANT, or TYPE:VARIANT "
-        "for specific outputs. Boolean values are true/false. "
+        "for specific outputs. Boolean values are true/false; "
+        "a scope alone means true. "
         "Matching environment variables accept the same values. "
         "Defaults shown apply when CLI, environment, .env, and JSON presets "
         "leave the setting unset."
     ),
     epilog=(
-        "Examples: --render long=false short=primary "
+        "Examples: --render all:vertical selects only vertical outputs. "
+        "--render all:vertical=false excludes vertical outputs. "
+        "--render long=false short=primary "
         "publishes primary shorts. "
-        "--subtitle-enabled false short:vertical=true captions "
+        "--subtitles short:vertical captions "
         "only vertical shorts. "
         "--subtitle-margin-bottom all:vertical=8% adjusts verticals in both classes. "
         "Scopes: all, short, long, all:VARIANT, TYPE:VARIANT."

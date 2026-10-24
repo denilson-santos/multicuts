@@ -76,7 +76,7 @@ CASES = [
 def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for name in tuple(os.environ):
-        if name.startswith("SUBTITLE_"):
+        if name.startswith("SUBTITLE_") or name == "SUBTITLES":
             monkeypatch.delenv(name)
 
 
@@ -236,24 +236,24 @@ def test_named_caption_precedence_remains_correct_when_primary_changes(
     tmp_path, monkeypatch
 ):
     (tmp_path / ".env").write_text(
-        "SUBTITLE_ENABLED=long:vertical=true\n",
+        "SUBTITLES=long:vertical=true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false")
+    monkeypatch.setenv("SUBTITLES", "long=false")
     config = parse_run_config(
         [
             "source.mp4",
             "--output-dir",
             "out",
             "--clip-full",
-            "--subtitle-enabled",
+            "--subtitles",
             "long=false",
         ]
     )
     assert config.for_output("long", "vertical").subtitles_for("long") is False
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     assert config.for_output("long", "vertical").subtitles_for("long") is False
-    monkeypatch.setenv("SUBTITLE_ENABLED", "long=false long:vertical=true")
+    monkeypatch.setenv("SUBTITLES", "long=false long:vertical=true")
     config = parse_run_config(["source.mp4", "--output-dir", "out", "--clip-full"])
     # The named output keeps its captions when it changes publication order.
     assert config.for_output("long", "vertical").subtitles_for("long") is True
@@ -277,7 +277,7 @@ def test_each_named_render_and_caption_switch_is_available(
 ):
     scope = f"{clip_class}:{variant}"
     monkeypatch.setenv("RENDER", scope + "=true")
-    monkeypatch.setenv("SUBTITLE_ENABLED", scope + "=true")
+    monkeypatch.setenv("SUBTITLES", scope + "=true")
     config = parse_run_config(
         [
             "source.mp4",
@@ -286,7 +286,7 @@ def test_each_named_render_and_caption_switch_is_available(
             "--clip-full",
             "--render",
             scope + "=false",
-            "--subtitle-enabled",
+            "--subtitles",
             f"{scope}=false",
         ]
     )

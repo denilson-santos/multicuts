@@ -172,6 +172,7 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
                 "WIDTH",
                 "HEIGHT",
                 "SUBTITLE_",
+                "SUBTITLES",
             )
         ):
             monkeypatch.delenv(name)
@@ -179,12 +180,12 @@ def _clear_output_controls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("clip_class", ["short", "long"])
 @pytest.mark.parametrize("configured_in", ["dotenv", "process"])
-@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitles"])
 def test_output_boolean_sources_and_scope_precedence(
     clip_class, configured_in, field, tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
-    name = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
+    name = "SUBTITLES" if field == "subtitles" else field.upper()
     raw = f"{clip_class}=false"
     if configured_in == "dotenv":
         (tmp_path / ".env").write_text(f"{name}={raw}\n", encoding="utf-8")
@@ -210,10 +211,10 @@ def test_output_boolean_sources_and_scope_precedence(
         assert effective(config) is True
 
 
-@pytest.mark.parametrize("field", ["render", "subtitle-enabled"])
+@pytest.mark.parametrize("field", ["render", "subtitles"])
 def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    parent = "SUBTITLE_ENABLED" if field == "subtitle-enabled" else field.upper()
+    parent = "SUBTITLES" if field == "subtitles" else field.upper()
     (tmp_path / ".env").write_text(f"{parent}=long=false\n", encoding="utf-8")
     monkeypatch.setenv(parent, "true")
     config = parse_run_config(_args())
@@ -223,7 +224,7 @@ def test_process_shared_setting_overrides_dotenv_class(field, tmp_path, monkeypa
 
 @pytest.mark.parametrize(
     "name",
-    ["RENDER", "SUBTITLE_ENABLED"],
+    ["RENDER", "SUBTITLES"],
 )
 def test_output_settings_reject_invalid_booleans(name, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -278,7 +279,7 @@ def test_cli_options_override_process_environment_and_dotenv(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
         "LLM_BACKEND=gemini\nLLM_MODEL=dotenv-model\nLLM_EFFORT=low\n"
-        "OVERLAP_THRESHOLD=0.7\nSUBTITLE_ENABLED=short=false long=false\n",
+        "OVERLAP_THRESHOLD=0.7\nSUBTITLES=short=false long=false\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LLM_MODEL", "process-model")
@@ -294,7 +295,7 @@ def test_cli_options_override_process_environment_and_dotenv(
             "high",
             "--overlap-threshold",
             "0.8",
-            "--subtitle-enabled",
+            "--subtitles",
             "true",
         ]
     )

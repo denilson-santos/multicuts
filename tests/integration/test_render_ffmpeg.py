@@ -161,10 +161,10 @@ def test_grouped_cli_controls_publish_only_the_requested_variant(
         monkeypatch.delenv(field.upper(), raising=False)
     values = {
         "primary": "short=vertical long=horizontal",
-        "render": "false short:square=true",
+        "render": "short:square",
         "width": "short:square=64 long:square=96",
         "height": "short:square=64 long:square=96",
-        "subtitle_enabled": "short=false long=false",
+        "subtitles": "all:square=false",
     }
     flags = []
     if configured_in == "cli":

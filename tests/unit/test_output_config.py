@@ -10,6 +10,7 @@ from typer.main import get_command
 from multicuts.cli import app, main, parse_run_config
 from multicuts.errors import ConfigurationError
 from multicuts.models import MediaInfo
+from multicuts.subtitles import SUBTITLE_BOOLEAN_FIELDS
 from multicuts.variants import VARIANTS
 
 
@@ -20,6 +21,7 @@ def isolated_settings(tmp_path, monkeypatch):
         if name.startswith(
             (
                 "SUBTITLE_",
+                "SUBTITLES",
                 "RENDER",
                 "VARIANTS",
                 "PRIMARY",
@@ -43,15 +45,283 @@ def preset(tmp_path, data):
     return str(path)
 
 
+@pytest.mark.parametrize("field", ["render", "subtitles"])
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
+@pytest.mark.parametrize(
+    ("tokens", "short", "long"),
+    [
+        ([], VARIANTS, VARIANTS),
+        (["all:vertical=true"], ("vertical",), ("vertical",)),
+        (
+            ["all:vertical=false"],
+            set(VARIANTS) - {"vertical"},
+            set(VARIANTS) - {"vertical"},
+        ),
+        (
+            ["all:vertical=true", "all:square=true"],
+            ("vertical", "square"),
+            ("vertical", "square"),
+        ),
+        (["short=true"], VARIANTS, ()),
+        (["short=false"], (), VARIANTS),
+        (["long=true"], (), VARIANTS),
+        (["short:vertical=true"], ("vertical",), ()),
+        (["short:vertical=false"], set(VARIANTS) - {"vertical"}, VARIANTS),
+        (["all:vertical=true", "short:vertical=false"], (), ("vertical",)),
+        (["all:vertical=true", "all:square=false"], ("vertical",), ("vertical",)),
+        (["true", "all:vertical=true"], VARIANTS, VARIANTS),
+        (["false", "all:vertical=true"], ("vertical",), ("vertical",)),
+        (["short=true", "all:vertical=false"], set(VARIANTS) - {"vertical"}, ()),
+    ],
+)
+def test_render_and_caption_controls_select_or_exclude_outputs(
+    field, source, tokens, short, long, tmp_path, monkeypatch
+):
+    flags = []
+    name = field.upper().replace("-", "_")
+    if source == "cli" and tokens:
+        flags = [f"--{field}={tokens[0]}", *tokens[1:]]
+    elif source == "json":
+        assignments = {}
+        for token in tokens:
+            scope, separator, raw = token.partition("=")
+            if not separator:
+                scope, raw = "all", token
+            assignments[scope] = raw == "true"
+        data = (
+            {"render": assignments}
+            if field == "render"
+            else {
+                "subtitles": {
+                    scope: {"enabled": value} for scope, value in assignments.items()
+                }
+            }
+        )
+        flags = ["--config", preset(tmp_path, data)]
+    elif source == "process":
+        monkeypatch.setenv(name, " ".join(tokens))
+    elif source == "dotenv":
+        (tmp_path / ".env").write_text(
+            f'{name}="{" ".join(tokens)}"\n', encoding="utf-8"
+        )
+    config = parse(*flags)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    for kind, expected in (("short", short), ("long", long)):
+        outputs = config.outputs_for(kind, media)
+        captions = tuple(
+            variant
+            for variant in outputs
+            if config.for_output(kind, variant).subtitles_for(kind)
+        )
+        if field == "render":
+            assert set(outputs) == set(expected)
+            assert captions == outputs
+        else:
+            assert set(outputs) == set(VARIANTS)
+            assert set(captions) == set(expected)
+
+
+@pytest.mark.parametrize("field", ["render", "subtitles"])
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv"])
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ["all:vertical"],
+        ["all:vertical-blur"],
+        ["short"],
+        ["all:vertical", "all:square"],
+        ["short:vertical", "long:square=false"],
+        ["all", "all:vertical=false"],
+    ],
+)
+def test_selection_scopes_without_values_mean_true(
+    field, source, tokens, tmp_path, monkeypatch
+):
+    explicit = [token if "=" in token else token + "=true" for token in tokens]
+    expected = parse(f"--{field}", *explicit)
+    if source == "cli":
+        actual = parse(f"--{field}={tokens[0]}", *tokens[1:])
+    else:
+        name = field.upper()
+        if source == "process":
+            monkeypatch.setenv(name, " ".join(tokens))
+        else:
+            (tmp_path / ".env").write_text(
+                f'{name}="{" ".join(tokens)}"\n', encoding="utf-8"
+            )
+        actual = parse()
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "render",
+        "subtitles",
+        *(
+            "subtitle-" + name.replace("_", "-")
+            for name in sorted(SUBTITLE_BOOLEAN_FIELDS)
+        ),
+    ],
+)
+@pytest.mark.parametrize("trailing_source", ["source.mp4", "https://example.com/video"])
+def test_grouped_selection_scopes_before_source_preserve_the_source(
+    field, trailing_source
+):
+    config = parse_run_config(
+        [
+            "--output-dir",
+            "out",
+            "--clip-full",
+            f"--{field}=all:vertical",
+            "all:square",
+            trailing_source,
+        ]
+    )
+    assert config.source == trailing_source
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    for kind in ("short", "long"):
+        outputs = config.outputs_for(kind, media)
+        if field in ("render", "subtitles"):
+            selected = {
+                variant
+                for variant in outputs
+                if field == "render"
+                or config.for_output(kind, variant).subtitles_for(kind)
+            }
+            assert selected == {"vertical", "square"}
+        else:
+            assert set(outputs) == set(VARIANTS)
+            option = field.removeprefix("subtitle-").replace("-", "_")
+            assert {
+                variant
+                for variant in outputs
+                if getattr(config.for_output(kind, variant).subtitle_options, option)
+            } == {"vertical", "square"}
+
+
+@pytest.mark.parametrize("field", sorted(SUBTITLE_BOOLEAN_FIELDS))
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv"])
+def test_visual_boolean_shorthand_does_not_select_outputs(
+    field, source, tmp_path, monkeypatch
+):
+    flag = "--subtitle-" + field.replace("_", "-")
+    expected = parse(flag, "all:vertical=true")
+    if source == "cli":
+        actual = parse(flag, "all:vertical")
+    else:
+        name = "SUBTITLE_" + field.upper()
+        if source == "process":
+            monkeypatch.setenv(name, "all:vertical")
+        else:
+            (tmp_path / ".env").write_text(f"{name}=all:vertical\n", encoding="utf-8")
+        actual = parse()
+    assert actual == expected
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    for kind in ("short", "long"):
+        assert set(actual.outputs_for(kind, media)) == set(VARIANTS)
+        for variant in VARIANTS:
+            output = actual.for_output(kind, variant)
+            assert output.subtitles_for(kind)
+            assert getattr(output.subtitle_options, field) is (
+                True if variant == "vertical" else None
+            )
+
+
+@pytest.mark.parametrize("field", ["render", "subtitles"])
+def test_selection_source_replaces_lower_selections_without_changing_style_inheritance(
+    field, tmp_path, monkeypatch
+):
+    name = field.upper().replace("-", "_")
+    data = (
+        {"render": {"all": True}, "subtitles": {"all": {"font_size": "4%"}}}
+        if field == "render"
+        else {"subtitles": {"all": {"font_size": "4%", "enabled": True}}}
+    )
+    path = preset(tmp_path, data)
+    (tmp_path / ".env").write_text(f'{name}="long:horizontal=true"\n', encoding="utf-8")
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+
+    def selected(flags=()):
+        config = parse("--config", path, *flags)
+        assert config.for_output("long", "square").subtitle_options.font_size == "4%"
+        return tuple(
+            {
+                variant
+                for variant in config.outputs_for(kind, media)
+                if field == "render"
+                or config.for_output(kind, variant).subtitles_for(kind)
+            }
+            for kind in ("short", "long")
+        )
+
+    assert selected() == (set(), {"horizontal"})
+    monkeypatch.setenv(name, "all:vertical=false")
+    assert selected() == (set(VARIANTS) - {"vertical"},) * 2
+    assert selected([f"--{field}", "short:vertical=true"]) == ({"vertical"}, set())
+    assert selected([f"--{field}", "true", "short:vertical=false"]) == (
+        set(VARIANTS) - {"vertical"},
+        set(VARIANTS),
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    ("base", "short", "long"),
+    [
+        ("primary", ("horizontal", "square"), ("horizontal", "square")),
+        ("short=primary", ("horizontal", "square"), ("square",)),
+        ("long=primary", ("square",), ("horizontal", "square")),
+    ],
+)
+def test_explicit_primary_base_and_named_additions_remain_order_independent(
+    reverse, base, short, long
+):
+    tokens = [base, "all:square=true"]
+    if reverse:
+        tokens.reverse()
+    config = parse("--render", *tokens)
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    assert config.outputs_for("short", media) == short
+    assert config.outputs_for("long", media) == long
+
+
+def test_visual_options_and_primary_preference_do_not_select_outputs():
+    config = parse(
+        "--primary",
+        "vertical",
+        "--width",
+        "all:vertical=720",
+        "--subtitle-margin-bottom",
+        "all:vertical=8%",
+        "--subtitle-italic",
+        "short:vertical=true",
+    )
+    media = MediaInfo(60, 640, 360, 640, 360, 0, None)
+    for kind in ("short", "long"):
+        outputs = config.outputs_for(kind, media)
+        assert outputs[0] == "vertical"
+        assert set(outputs) == set(VARIANTS)
+        assert all(
+            config.for_output(kind, variant).subtitles_for(kind) for variant in outputs
+        )
+        assert config.dimensions_for(kind, "vertical") == (720, 1280)
+        assert (
+            config.for_output(kind, "horizontal").subtitle_options.margin_bottom is None
+        )
+    assert config.for_output("short", "vertical").subtitle_options.italic is True
+    assert config.for_output("long", "vertical").subtitle_options.italic is None
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_scoped_settings_have_order_independent_specificity(reverse):
     options = [
         ["--subtitle-font-size", "4%"],
         ["--subtitle-font-size", "short=5%"],
         ["--subtitle-font-size", "short:vertical=6%"],
-        ["--subtitle-enabled", "false"],
-        ["--subtitle-enabled", "short=true"],
-        ["--subtitle-enabled", "short:vertical=false"],
+        ["--subtitles", "false"],
+        ["--subtitles", "short=true"],
+        ["--subtitles", "short:vertical=false"],
         ["--render", "false"],
         ["--render", "short=primary"],
         ["--primary", "short=vertical"],
@@ -104,7 +374,7 @@ def test_all_variant_scope_configures_both_classes_without_affecting_other_varia
         "width": [f"{scope}={width}"],
         "height": [f"{scope}={height}"],
         **{
-            f"subtitle_{field}": [
+            "subtitles" if field == "enabled" else f"subtitle_{field}": [
                 f"{scope}={str(value).lower() if isinstance(value, bool) else value}"
             ]
             for field, value in subtitles.items()
@@ -286,7 +556,7 @@ def test_cli_and_environment_override_more_specific_file_values(tmp_path, monkey
     assert parse("--config", path).clips_for("long")
     monkeypatch.setenv("SUBTITLE_FONT_SIZE", "short:vertical=9%")
     config = parse(
-        "--config", path, "--subtitle-font-size", "10%", "--subtitle-enabled", "false"
+        "--config", path, "--subtitle-font-size", "10%", "--subtitles", "false"
     )
     vertical = config.for_output("short", "vertical")
     assert vertical.subtitle_options.font_size == "10%"
@@ -373,7 +643,7 @@ def test_invalid_scopes_fail_before_media_work(scope):
     [
         ["--render", "short:vertical=true", "--render", "short:vertical=false"],
         ["--subtitle-font-size", "short=4%", "--subtitle-font-size", "short=5%"],
-        ["--subtitle-enabled", "short=true", "--subtitle-enabled", "short=false"],
+        ["--subtitles", "short=true", "--subtitles", "short=false"],
         ["--render", "all:vertical=true", "--render", "all:vertical=false"],
         ["--subtitle-margin-bottom", "all:vertical=8%", "all:vertical=10%"],
     ],
@@ -595,7 +865,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         assert description in help_text
     for param in get_command(app).params:
         if param.opts[0].startswith("--subtitle-") and param.opts[0] not in (
-            "--subtitle-enabled",
+            "--subtitles",
             "--subtitle-template",
             "--subtitle-template-dir",
         ):
@@ -613,6 +883,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         "--aspect-ratio",
         "--square-size",
         "--no-subtitles",
+        "--subtitle-enabled",
         "--no-subtitle-bold",
         "--render-jobs",
         "--render-encoder",
@@ -644,6 +915,7 @@ def test_removed_flags_are_rejected(flag, capsys):
         "LONG_VARIANT_SUBTITLES_ENABLED",
         "SHORT_HORIZONTAL_BLUR_ENABLED",
         "SUBTITLES_ENABLED",
+        "SUBTITLE_ENABLED",
         "SHORT_ASPECT_RATIO",
         "ASPECT_RATIO",
         "ASPECT_RATIO_SHORT",
@@ -790,7 +1062,7 @@ def test_primary_selects_named_output_without_changing_dimensions(variant):
     media = MediaInfo(60, 2520, 1080, 2520, 1080, 0, None)
     assert config.outputs_for("short", media) == (variant,)
     assert config.dimensions_for("short", "horizontal") == (2520, 1080)
-    assert config.outputs_for("long", media)[0] == "horizontal"
+    assert config.outputs_for("long", media) == ()
 
 
 @pytest.mark.parametrize("value", ["original", "16:9", "9:16", "1:1", "wide"])
@@ -838,7 +1110,7 @@ def test_named_render_can_enable_an_output_under_a_disabled_parent(parent, rever
     media = MediaInfo(60, 640, 360, 640, 360, 0, None)
     assert config.clips_for("short")
     assert config.outputs_for("short", media) == ("square",)
-    assert config.clips_for("long") is (parent != "false")
+    assert not config.clips_for("long")
 
 
 def test_primary_only_with_named_addition_and_disabled_primary():
@@ -1006,7 +1278,7 @@ def test_grouped_dimensions_and_subtitle_controls_keep_quoted_values_intact(tmp_
         "--height",
         "short:horizontal=1080",
         "long:horizontal=1080",
-        "--subtitle-enabled",
+        "--subtitles",
         "short=false",
         "long=true",
         "--subtitle-template",
@@ -1036,7 +1308,7 @@ def test_grouped_dimensions_and_subtitle_controls_keep_quoted_values_intact(tmp_
         ["--render", "short=true", "short=false"],
         ["--render", "primary", "--render", "primary", "false"],
         ["--subtitle-font-size", "short=4%", "short=5%"],
-        ["--subtitle-enabled", "short=true", "short=false"],
+        ["--subtitles", "short=true", "short=false"],
     ],
 )
 def test_grouped_contradictory_assignments_are_rejected(flags):
@@ -1182,7 +1454,7 @@ def test_grouped_environment_options_match_cli_config(
         "render": ["primary", "long=false", "short:square=true"],
         "width": ["short:horizontal-blur=2520", "short:square=720"],
         "height": ["short:horizontal-blur=1080", "short:square=720"],
-        "subtitle_enabled": ["false", "short:square=true"],
+        "subtitles": ["false", "short:square=true"],
         "subtitle_font_size": ["4%", "short=5%", "short:square=6%"],
         "subtitle_text_color": ["#FFEE00", "short:square=#AABBCC"],
     }
@@ -1283,7 +1555,7 @@ def test_grouped_environment_inherits_missing_scopes_from_lower_priority_sources
     ("name", "value"),
     [
         ("RENDER", "true short=true short=false"),
-        ("SUBTITLE_ENABLED", "short=true short=false"),
+        ("SUBTITLES", "short=true short=false"),
         ("SUBTITLE_FONT_SIZE", "short=4% short=5%"),
         ("PRIMARY", "short=auto short=vertical"),
         ("WIDTH", "short=720 short=640"),

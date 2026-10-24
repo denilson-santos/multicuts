@@ -504,8 +504,9 @@ Use outer quotes for a group and inner quotes for values containing spaces.
 Simple defaults stay simple: `PRIMARY=auto`, `RENDER=true`. Empty variables are
 unset. Scope belongs in the value; generated names such as `PRIMARY_SHORT` and
 `SUBTITLE_SHORT_VERTICAL_FONT_SIZE` are no longer read. Process environment and
-`.env` resolve independently: scopes omitted in a higher-priority source inherit
-from lower-priority sources. Conflicting assignments and duplicate output
+`.env` resolve independently: presentation scopes omitted in a higher-priority
+source inherit from lower-priority sources. Render and caption selections replace
+the entire lower-priority selection for that control. Conflicting assignments and duplicate output
 variables in `.env` fail validation.
 
 Within each configuration source, scope priority is
@@ -513,12 +514,39 @@ Within each configuration source, scope priority is
 argument order. For example, `short:vertical=10%` overrides `all:vertical=8%`
 for short vertical outputs while long vertical outputs retain `8%`.
 Contradictory assignments to the same
-field/scope are rejected. Boolean values are explicit: `true` or `false`.
+field/scope are rejected. Boolean controls accept `true` or `false`, and a scope
+alone means `true`. This applies to `--render`, `--subtitles`, `--subtitle-bold`,
+`--subtitle-italic`, `--subtitle-disable-cue-animations`, and
+`--subtitle-disable-word-animations`, including their environment variables.
+For example, `--render=all:vertical` equals `--render=all:vertical=true`.
 
-`--render`, `--width`, `--height`, and every `--subtitle-*` option support all four
+`--render`, `--subtitles`, `--width`, `--height`, and every `--subtitle-*` option support all four
 scope levels. `--render` accepts `true` (all compatible variants), `false` (none), or `primary`
 (only the principal output). Named variant scopes accept only `true`/`false`;
 `primary` is available at `all`, `short`, or `long` scope.
+
+`--render` and `--subtitles` select complete sets. Within each source, an explicit
+shared value (`true`, `false`, or render-only `primary`) sets the starting policy.
+Without one, any positive scoped value starts from none and selects those scopes;
+class-scoped `primary` also counts as positive. With only negative scoped values,
+start from all compatible outputs and exclude those scopes. Specific overrides
+still follow the scope priority above, independently of argument order.
+
+| Render selection | Outputs in both classes |
+| --- | --- |
+| `--render=all:vertical` | Only `vertical` |
+| `--render=all:vertical=false` | All compatible variants except `vertical` |
+| `--render all:vertical all:square` | Only `vertical` and `square` |
+| `--render primary all:square` | Primary output and `square` |
+
+`--render short` selects only short cuts. `vertical` and `vertical-blur` remain
+independent names. With no selection control, all compatible outputs and captions
+remain enabled. Add an explicit `true` base for additive enablement, such as
+`--render true all:vertical`. The highest-priority source configuring a selection
+replaces lower-priority selections for that control; unrelated visual settings
+still inherit per field. Font, margin, color, animation, and geometry options
+adjust their scopes without selecting outputs.
+
 `--primary` accepts only `all`, `short`, or `long`; its value is `auto` (the default
 for both classes) or a variant name. It chooses a preferred output independently
 of its dimensions. `auto` follows the source orientation, not its exact ratio. The
@@ -537,16 +565,16 @@ To publish only 21:9 horizontal cuts without captions:
 ```bash
 multicuts ./interview.mp4 --output-dir ./interview-cuts \
   --primary horizontal --render primary --width 2520 --height 1080 \
-  --subtitle-enabled false
+  --subtitles false
 ```
 
 | Control | CLI example | Environment |
 | --- | --- | --- |
 | Render a class | `--render long=false` | `RENDER="long=false"` |
 | Render a variant | `--render short:horizontal-blur=false` | `RENDER="short:horizontal-blur=false"` |
-| Shared captions | `--subtitle-enabled false` | `SUBTITLE_ENABLED` |
-| Class captions | `--subtitle-enabled short=true` | `SUBTITLE_ENABLED="short=true"` |
-| Variant captions | `--subtitle-enabled short:vertical=false` | `SUBTITLE_ENABLED="short:vertical=false"` |
+| Shared captions | `--subtitles false` | `SUBTITLES` |
+| Class captions | `--subtitles short=true` | `SUBTITLES="short=true"` |
+| Variant captions | `--subtitles short:vertical=false` | `SUBTITLES="short:vertical=false"` |
 | Shared font size | `--subtitle-font-size 4%` | `SUBTITLE_FONT_SIZE` |
 | Class font size | `--subtitle-font-size short=5%` | `SUBTITLE_FONT_SIZE="short=5%"` |
 | Variant font size | `--subtitle-font-size short:vertical=6%` | `SUBTITLE_FONT_SIZE="short:vertical=6%"` |
@@ -582,7 +610,7 @@ vertical-short subtitle placement:
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts \
   --primary short=vertical --render primary --render short:horizontal-blur=true \
-  --subtitle-enabled short:horizontal-blur=false \
+  --subtitles short:horizontal-blur=false \
   --subtitle-position short:vertical=top-center \
   --subtitle-font-size short:vertical=5%
 ```
@@ -627,20 +655,23 @@ environment mechanisms.
 
 ### Subtitle controls
 
-Primary subtitles are enabled by default. Variants inherit their class setting
-unless a variant-specific flag overrides it. Choose the style with
+Captions are enabled by default. Use `--subtitles` to select captioned outputs
+with the same inclusion/exclusion rules as `--render`. Choose the style with
 `--subtitle-template` (default: `yellow-pop`).
 
 To enable subtitles only for short cuts and their variants:
 
 ```bash
 multicuts ./podcast.mp4 --output-dir ./cuts --lang pt \
-  --subtitle-enabled short=true --subtitle-enabled long=false
+  --subtitles short
 ```
 
-Use `--subtitle-enabled false` to disable captions everywhere, then repeat it
-with a class or named scope to enable captions for selected outputs. The caption
-setting belongs to the named variant even if it becomes the primary output.
+Use `--subtitles all:vertical` to caption only vertical outputs, or
+`--subtitles all:vertical=false` to caption all other outputs. This controls
+captions independently of which videos are rendered. `--subtitles false`
+disables captions everywhere. The caption setting belongs to the named variant
+even if it becomes the primary output. The environment variable is `SUBTITLES`;
+replace the former `--subtitle-enabled` flag and `SUBTITLE_ENABLED` variable.
 
 Adjust a template directly from the command line. Only supplied fields replace
 template values; omitted settings inherit. For example:
@@ -728,7 +759,7 @@ Settings are resolved in this order: CLI flags, process environment, `.env`, the
 optional output/subtitle preset, then defaults. Source priority is applied before
 scope specificity, independently for each field. For example:
 
-- `--subtitle-enabled false --subtitle-enabled short:vertical=true` captions only vertical shorts.
+- `--subtitles false --subtitles short:vertical=true` captions only vertical shorts.
 - `--render primary --render long=true` renders primary shorts and all compatible long variants.
 
 See the option tables below and `.env.example` for environment variable names.
@@ -778,7 +809,7 @@ Choose enabled classes, primary formats, dimensions, and variants.
 
 | Option | Purpose |
 | --- | --- |
-| `--render [SCOPE=]VALUE...` | `true`: all compatible variants; `false`: none; `primary`: principal only (all/short/long scopes). Named scopes accept true/false. Default: `true`. Environment: `RENDER`. |
+| `--render [SCOPE=]VALUE...` | Select outputs with positive scopes or exclude with negative scopes. A scope alone means true. Explicit shared true/false/primary sets the base. Default: all compatible variants. Environment: `RENDER`. |
 | `--primary [SCOPE=]VALUE...` | `auto` follows source orientation (default for both classes), or a preferred variant name; scopes: `all`, `short`, `long`. Environment: `PRIMARY`. |
 | `--width [SCOPE=]VALUE...` | Positive even pixel width. With height, defines the ratio; otherwise derives height from the default ratio. Environment: `WIDTH`. |
 | `--height [SCOPE=]VALUE...` | Positive even pixel height. With width, defines the ratio; otherwise derives width from the default ratio. Environment: `HEIGHT`. |
@@ -791,7 +822,7 @@ All options below accept grouped values or repeated flags and use
 
 | Option | Purpose |
 | --- | --- |
-| `--subtitle-enabled [SCOPE=]VALUE...` | `true`/`false`; default: `true`. Environment: `SUBTITLE_ENABLED`. |
+| `--subtitles [SCOPE=]VALUE...` | Select captioned outputs with positive scopes or exclude with negative scopes. A scope alone means true; explicit shared true/false sets the base. Default: all captions enabled. Environment: `SUBTITLES`. |
 | `--subtitle-template [SCOPE=]VALUE...` | Template name; default: `yellow-pop`. |
 | `--subtitle-template-dir [SCOPE=]VALUE...` | Path to a custom template directory. |
 
