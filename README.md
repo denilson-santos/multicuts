@@ -516,8 +516,8 @@ for short vertical outputs while long vertical outputs retain `8%`.
 Contradictory assignments to the same
 field/scope are rejected. Boolean controls accept `true` or `false`, and a scope
 alone means `true`. This applies to `--render`, `--subtitles`, `--subtitle-bold`,
-`--subtitle-italic`, `--subtitle-disable-cue-animations`, and
-`--subtitle-disable-word-animations`, including their environment variables.
+`--subtitle-italic`, `--subtitle-cue-animations`, and
+`--subtitle-word-animations`, including their environment variables.
 For example, `--render=all:vertical` equals `--render=all:vertical=true`.
 
 `--render`, `--subtitles`, `--width`, `--height`, and every `--subtitle-*` option support all four
@@ -949,17 +949,37 @@ Only explicitly supplied settings override the selected template.
 | `--subtitle-animation-word-text-mode [SCOPE=]VALUE...` | Timed word text behavior: progressive or active-word. |
 | `--subtitle-animation-word-backdrop-mode [SCOPE=]VALUE...` | Timed word backdrop behavior: progressive or active-word. |
 | `--subtitle-animation-word-text-highlight-color [SCOPE=]VALUE...` | Highlight text color as #RRGGBB or #RRGGBBAA; requires highlight emphasis. |
-| `--subtitle-disable-cue-animations [SCOPE=]VALUE...` | `true`/`false`; remove all cue text/backdrop animation phases while preserving the static cue backdrop. |
-| `--subtitle-disable-word-animations [SCOPE=]VALUE...` | `true`/`false`; remove all word text/backdrop animation phases, word highlight, and timed word decoration. |
+| `--subtitle-cue-animations [SCOPE=]VALUE...` | `true` permits configured cue text/backdrop effects; `false` removes cue effects while preserving the static cue backdrop. Omission inherits the template. |
+| `--subtitle-word-animations [SCOPE=]VALUE...` | `true` permits configured word effects; `false` removes word animations, highlight, and timed decoration. Omission inherits the template. |
 
 Phase durations accept `10ms`–`5000ms`, including seconds such as `0.15s`,
 and must resolve to whole milliseconds. Disabled (`none`) and `highlight` phases
 do not accept duration overrides. Set a phase to `none` to clear its inherited
-effect. Scope disables apply after validation; pass `false` to clear the
-corresponding disable setting. Word effects still depend on
+effect. The cue/word animation switches apply after validation. Use `false` to
+suppress effects and `true` to allow configured effects, clearing inherited
+suppression. A scope alone means `true`; these presentation switches preserve
+normal field inheritance and do not select captioned/rendered outputs. Enabling
+them does not add an effect to a phase configured as `none`. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
 See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
+
+```bash
+# Remove word effects everywhere, retaining configured effects on verticals.
+--subtitle-word-animations false all:vertical
+
+# Remove cue effects only on vertical outputs in both duration classes.
+--subtitle-cue-animations all:vertical=false
+```
+
+Migrate the former `--subtitle-disable-cue-animations` and
+`--subtitle-disable-word-animations` flags to the affirmative names above and
+invert their explicit booleans: old `true` becomes new `false`, and vice versa.
+Environment variables are now `SUBTITLE_CUE_ANIMATIONS` and
+`SUBTITLE_WORD_ANIMATIONS`; JSON presentation fields and metadata overrides use
+`cue_animations` and `word_animations`, with the same affirmative values. The
+former negative names are removed without aliases. Leaving a setting unset
+continues to inherit the selected template.
 
 #### Execution
 

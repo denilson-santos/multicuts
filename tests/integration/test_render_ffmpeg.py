@@ -1129,8 +1129,8 @@ def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
     width, height = size
     options = SubtitleOptions(
         font_size="5%",
-        disable_cue_animations=True,
-        disable_word_animations=True,
+        cue_animations=False,
+        word_animations=False,
     )
     if placement == "custom":
         options = replace(

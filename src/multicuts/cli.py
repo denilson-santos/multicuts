@@ -312,6 +312,10 @@ class _OutputCommand(TyperCommand):
             "opacity": "Opacity: 0% through 100%.",
             "backdrop": "Cue backdrop: none, outline, or box.",
             "word_backdrop": "Timed word backdrop: none, outline, or box.",
+            "cue_animations": "true: allow configured cue text/backdrop effects; "
+            "false: suppress cue effects while preserving the static backdrop.",
+            "word_animations": "true: allow configured word effects; "
+            "false: suppress word animations, highlight, and timed decoration.",
         }
         for key in (
             *controls,

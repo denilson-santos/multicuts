@@ -112,6 +112,17 @@ checks run during rendering against each final frame. Presentation changes
 invalidate neither transcript nor AI caches. Clip metadata records supplied
 overrides without absolute font-directory paths.
 
+Expose cue/word animation switches as affirmative `--subtitle-cue-animations`
+and `--subtitle-word-animations`, with matching `SUBTITLE_CUE_ANIMATIONS` /
+`SUBTITLE_WORD_ANIMATIONS` environment names and `cue_animations` /
+`word_animations` JSON/model/metadata fields. True permits configured effects;
+false suppresses them, and unset inherits the template. A scope alone is true
+and specific true values can clear inherited false values. These switches do
+not select rendered/captioned outputs or create effects on phases set to none.
+Remove former negative names without aliases; migration inverts explicit
+booleans. Keep translation to the provider's negative switches inside the
+multisubs adapter, including user-facing error translation.
+
 `--config PATH` is an optional CLI-only JSON output/subtitle preset, parsed and
 validated before media/provider work. Accept only `render`, `primary`, `width`, `height`, and
 `subtitles` objects. Render scopes map to JSON booleans, or the string `"primary"`

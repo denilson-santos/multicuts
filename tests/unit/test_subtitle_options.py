@@ -67,8 +67,8 @@ CASES = [
     ("animation_word_text_mode", "active-word"),
     ("animation_word_backdrop_mode", "active-word"),
     ("animation_word_text_highlight_color", "#FFEE00"),
-    ("disable_cue_animations", True),
-    ("disable_word_animations", False),
+    ("cue_animations", False),
+    ("word_animations", True),
 ]
 
 
@@ -350,8 +350,8 @@ def test_font_directory_expands_and_is_excluded_from_metadata(monkeypatch):
     [
         "SUBTITLE_BOLD",
         "SUBTITLE_ITALIC",
-        "SUBTITLE_DISABLE_CUE_ANIMATIONS",
-        "SUBTITLE_DISABLE_WORD_ANIMATIONS",
+        "SUBTITLE_CUE_ANIMATIONS",
+        "SUBTITLE_WORD_ANIMATIONS",
     ],
 )
 def test_invalid_environment_booleans_fail_explicitly(name, monkeypatch):

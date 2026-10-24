@@ -390,6 +390,75 @@ def test_dimensions_do_not_require_subtitles_and_keep_general_overrides():
     assert not config.subtitles_for("short", "vertical")
 
 
+@pytest.mark.parametrize("field", ["cue_animations", "word_animations"])
+@pytest.mark.parametrize("source", ["cli", "process", "dotenv", "json"])
+def test_positive_animation_switches_preserve_false_and_scoped_true(
+    field, source, tmp_path, monkeypatch
+):
+    flag = "--subtitle-" + field.replace("_", "-")
+    values = ["false", "all:vertical", "short:vertical=false"]
+    flags = []
+    if source == "cli":
+        flags = [flag, *values]
+    elif source == "json":
+        flags = [
+            "--config",
+            preset(
+                tmp_path,
+                {
+                    "subtitles": {
+                        "all": {field: False},
+                        "all:vertical": {field: True},
+                        "short:vertical": {field: False},
+                    }
+                },
+            ),
+        ]
+    else:
+        name = "SUBTITLE_" + field.upper()
+        if source == "process":
+            monkeypatch.setenv(name, " ".join(values))
+        else:
+            (tmp_path / ".env").write_text(
+                f'{name}="{" ".join(values)}"\n', encoding="utf-8"
+            )
+    config = parse(*flags)
+    assert config.subtitle_options.metadata() == {field: False}
+    assert config.for_output("long", "vertical").subtitle_options.metadata() == {
+        field: True
+    }
+    assert config.for_output("short", "vertical").subtitle_options.metadata() == {
+        field: False
+    }
+    assert config.for_output("long", "horizontal").subtitle_options.metadata() == {
+        field: False
+    }
+    assert config.subtitles_for("long", "vertical")
+
+
+@pytest.mark.parametrize("track", ["cue", "word"])
+@pytest.mark.parametrize("source", ["process", "dotenv"])
+def test_removed_negative_animation_environment_names_are_not_aliases(
+    track, source, tmp_path, monkeypatch
+):
+    name = f"SUBTITLE_DISABLE_{track.upper()}_ANIMATIONS"
+    if source == "process":
+        monkeypatch.setenv(name, "true")
+    else:
+        (tmp_path / ".env").write_text(f"{name}=true\n", encoding="utf-8")
+    assert parse().subtitle_options.overrides() == {}
+
+
+@pytest.mark.parametrize("track", ["cue", "word"])
+def test_json_animation_switches_require_new_names_and_native_booleans(track, tmp_path):
+    for field, value, message in (
+        (f"disable_{track}_animations", False, "Unknown field"),
+        (f"{track}_animations", "false", "Invalid --config subtitle field"),
+    ):
+        with pytest.raises(ConfigurationError, match=message):
+            parse("--config", preset(tmp_path, {"subtitles": {"all": {field: value}}}))
+
+
 @pytest.mark.parametrize("source", ["process", "dotenv", "json"])
 def test_inherited_unused_presentation_and_dimensions_remain_reusable(
     source, tmp_path, monkeypatch
@@ -981,6 +1050,7 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
             assert f"`{flag} [SCOPE=]VALUE...`" in readme
     assert "--no-render" not in help_text
     assert "--no-subtitle" not in help_text
+    assert "--subtitle-disable-" not in help_text
     panels = {
         "Clip selection": ("--clip-range", "--clip-full", "--overlap-threshold"),
         "Outputs": ("--render", "--primary", "--width", "--height"),
@@ -1036,6 +1106,8 @@ def test_rendered_help_and_readme_show_every_scoped_option(monkeypatch, force_co
         "--square-size",
         "--no-subtitles",
         "--subtitle-enabled",
+        "--subtitle-disable-cue-animations",
+        "--subtitle-disable-word-animations",
         "--no-subtitle-bold",
         "--render-jobs",
         "--render-encoder",

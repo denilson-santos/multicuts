@@ -940,6 +940,59 @@ def test_public_builder_configures_rendering_without_template_conflicts(
     assert result.template_requested == result.template_resolved == "yellow-pop"
 
 
+@pytest.mark.parametrize("cue", [None, False, True])
+@pytest.mark.parametrize("word", [None, False, True])
+def test_animation_switches_translate_only_at_the_provider_boundary(
+    cue, word, monkeypatch
+):
+    calls = []
+
+    def build(**kwargs):
+        calls.append(kwargs["overrides"])
+        return object()
+
+    monkeypatch.setattr(
+        sys.modules["multisubs"], "build_subtitle_config", build, raising=False
+    )
+    options = SubtitleOptions(cue_animations=cue, word_animations=word)
+    MultisubsAdapter().validate_subtitle_options(
+        template="yellow-pop", template_dir=None, options=options
+    )
+    expected = {}
+    if cue is not None:
+        expected["disable_cue_animations"] = not cue
+    if word is not None:
+        expected["disable_word_animations"] = not word
+    assert calls == [expected]
+    assert options.metadata() == {
+        key: value
+        for key, value in (("cue_animations", cue), ("word_animations", word))
+        if value is not None
+    }
+
+
+@pytest.mark.parametrize("track", ["cue", "word"])
+@pytest.mark.parametrize("negated", [False, True])
+def test_provider_animation_errors_use_positive_multicuts_switches(
+    track, negated, monkeypatch
+):
+    def reject(**kwargs):
+        prefix = "no-" if negated else ""
+        raise ValueError(
+            f"Invalid combination involving --{prefix}disable-{track}-animations"
+        )
+
+    monkeypatch.setattr(
+        sys.modules["multisubs"], "build_subtitle_config", reject, raising=False
+    )
+    expected = f"--subtitle-{track}-animations {'true' if negated else 'false'}"
+    with pytest.raises(ConfigurationError, match=expected) as error:
+        MultisubsAdapter().validate_subtitle_options(
+            template="yellow-pop", template_dir=None, options=SubtitleOptions()
+        )
+    assert "disable-" not in str(error.value)
+
+
 def test_public_builder_failure_becomes_configuration_error(monkeypatch) -> None:
     def reject(**_kwargs):
         raise ValueError("font-weight cannot be combined with --bold or --no-bold")
@@ -1285,6 +1338,8 @@ def test_foreground_container_translates_public_layout_without_changing_style(
     )
     options = SubtitleOptions(
         font_size="5%",
+        cue_animations=False,
+        word_animations=True,
         position_x="50%" if explicit else None,
         position_y="90%" if explicit else None,
         anchor="bottom-center" if explicit else None,
@@ -1318,8 +1373,14 @@ def test_foreground_container_translates_public_layout_without_changing_style(
         container=container,
     )
     translated = calls[1]["overrides"]
-    assert calls[0]["overrides"] == options.overrides()
+    expected = options.overrides()
+    del expected["cue_animations"], expected["word_animations"]
+    expected.update(disable_cue_animations=True, disable_word_animations=False)
+    assert calls[0]["overrides"] == expected
     assert translated["font_size"] == "5%"
+    assert translated["disable_cue_animations"] is True
+    assert translated["disable_word_animations"] is False
+    assert "cue_animations" not in translated and "word_animations" not in translated
     if explicit:
         assert translated["position_x"] == "319px"
         assert translated["max_width"] == "162px"

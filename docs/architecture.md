@@ -243,6 +243,14 @@ units resolve during rendering against final geometry. The clip's
 `render.subtitle_overrides` records explicit values, replacing a local font
 directory with `custom_fonts: true`. Presentation never enters ASR or AI keys.
 
+The owned `cue_animations` / `word_animations` fields and their CLI/environment/JSON
+controls use affirmative booleans. Only the adapter maps explicit values to the
+public multisubs `disable_cue_animations` / `disable_word_animations` overrides,
+inverting each boolean and omitting unset fields so templates remain authoritative.
+Both initial configuration and central-container layout translation retain these
+provider overrides. Provider errors translate negative flag references back to
+affirmative multicuts names and values; metadata retains the owned positive names.
+
 Encoding keeps constant frame rate with per-stream `-fps_mode:v cfr` on
 FFmpeg 6+ and legacy `-vsync cfr` on older versions. Both encoding and Opus
 remuxing select compatibility behavior from FFmpeg's libavformat version.
