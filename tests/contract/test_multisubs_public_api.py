@@ -10,6 +10,9 @@ from types import ModuleType
 import pytest
 
 from multicuts.adapters.multisubs import MultisubsAdapter
+from multicuts.cli import main
+from multicuts.models import Transcript, TranscriptSegment
+from multicuts.render import clip_transcript
 from multicuts.subtitles import SubtitleOptions
 
 
@@ -28,8 +31,8 @@ def _assert_supported_provider_version() -> None:
     assert len(parts) >= 2 and all(part.isdigit() for part in parts[:2]), (
         "multisubs distribution lacks a numeric major/minor version"
     )
-    assert parts[0] == "6" and int(parts[1]) >= 1, (
-        "multisubs >=6.1,<7 is required by the consumed public contract"
+    assert parts[0] == "7" and int(parts[1]) >= 0, (
+        "multisubs >=7.0,<8 is required by the consumed public contract"
     )
 
 
@@ -188,6 +191,75 @@ def test_affirmative_animation_switches_use_the_public_provider_contract(
     )
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [{"position_x": "50%"}, {"position_y": "80%"}, {"anchor": "center"}],
+)
+def test_partial_coordinates_inherit_template_dimensions(overrides) -> None:
+    provider = _installed_provider()
+    native = provider.build_subtitle_config(template="yellow-pop")
+    custom = provider.build_subtitle_config(template="yellow-pop", overrides=overrides)
+    assert custom.layout.has_custom_coordinates
+    assert custom.layout.max_width_inherited
+    assert custom.layout.max_width == native.layout.max_width
+    assert custom.layout.max_height == native.layout.max_height
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "anton-impact",
+        "bangers-comic",
+        "press-start-arcade",
+        "quantico-tech",
+        "russo-punch",
+    ],
+)
+def test_display_font_templates_are_available_through_the_public_builder(
+    template,
+) -> None:
+    provider = _installed_provider()
+    assert provider.build_subtitle_config(template=template).style.typography.font
+
+
+def test_vertical_margins_preserve_line_breaks_with_inherited_height(tmp_path) -> None:
+    provider = _installed_provider()
+    text = "Subtitles keep their line capacity when the bottom margin changes."
+    speech = {
+        "schema_version": 1,
+        "language": "en",
+        "task": "transcribe",
+        "asr_backend": "faster-whisper",
+        "model_name": "turbo",
+        "full_text": text,
+        "segments": [
+            {
+                "text": text,
+                "start": 0.0,
+                "end": 4.0,
+            }
+        ],
+    }
+    subtitles = []
+    for margin in ("3%", "20%"):
+        config = provider.build_subtitle_config(
+            template="yellow-pop", overrides={"margin_bottom": margin}
+        )
+        with provider.prepare_subtitles(
+            speech,
+            output_dir=tmp_path / margin,
+            frame_width=1080,
+            frame_height=1920,
+            subtitle_config=config,
+            progress=lambda message: None,
+        ) as prepared:
+            subtitles.append(prepared.srt_path.read_text(encoding="utf-8"))
+    assert subtitles[0] == subtitles[1]
+    assert any(
+        len(block.splitlines()) > 3 for block in subtitles[0].strip().split("\n\n")
+    )
+
+
 def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None:
     provider = _installed_provider()
     (tmp_path / "custom.json").write_text(
@@ -200,6 +272,63 @@ def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None
     )
     assert configured.layout.margin_bottom.original == "15%"
     assert configured.style.typography.font_size.original == "4.5%"
+
+
+def test_invalid_coordinates_report_provider_geometry_details_through_cli(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _installed_provider()
+    monkeypatch.chdir(tmp_path)
+    local = clip_transcript(
+        Transcript(
+            None,
+            "en",
+            1.0,
+            "Hello.",
+            (TranscriptSegment("Hello.", 0.0, 1.0),),
+            (),
+            "multisubs",
+            "7.0.0",
+        ),
+        0.0,
+        1.0,
+    )
+
+    def pipeline(config):
+        output = config.for_output("short", "vertical")
+        with MultisubsAdapter().prepare_clip_subtitles(
+            local,
+            frame_width=1080,
+            frame_height=1920,
+            template=output.subtitle_template,
+            template_dir=output.subtitle_template_dir,
+            options=output.subtitle_options,
+            workspace=tmp_path / "subtitles",
+        ):
+            pytest.fail("Invalid coordinates must not reach rendering")
+
+    code = main(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render=short:vertical",
+            "--subtitles=short",
+            "--subtitle-position-y=all:vertical=20%",
+            "--subtitle-position-x=all:vertical=0%",
+        ],
+        pipeline=pipeline,
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert "--subtitle-position-x=0px" in error
+    assert "cannot anchor a 692px --subtitle-max-width" in error
+    assert "346px to 734px" in error
+    assert "Rendering failed" not in error
+    assert "Could not prepare native subtitles" not in error
+    assert not (tmp_path / "out").exists()
 
 
 def test_public_speech_interchange_preserves_optional_alignment_and_language() -> None:

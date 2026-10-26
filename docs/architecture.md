@@ -194,9 +194,12 @@ The manifest's `analysis.editorial_context` and per-clip `viral_potential.editor
 
 ## Media and subtitles
 
-The provider pin is multisubs 6.1.0 (supported contract: >=6.1,<7), including
+The provider pin is multisubs 7.0.0 (supported contract: >=7.0,<8), including
 public media-free subtitle preparation and cooperative cancellation. Provider
 upgrades use separate transcript cache identities; completed runs remain intact.
+The 7.0 layout contract accepts partial X/Y/anchor overrides and inherits other
+coordinates/dimensions. Maximum height percentages use full render height;
+vertical margins do not reduce line capacity, while side margins affect width.
 Final rendering uses accurate input seeking to decode only the keyframe lead-in
 before each requested cut, preserving the original interval and local timings.
 
@@ -242,6 +245,12 @@ through `subtitle_config`, without also supplying template arguments. Relative
 units resolve during rendering against final geometry. The clip's
 `render.subtitle_overrides` records explicit values, replacing a local font
 directory with `custom_fonts: true`. Presentation never enters ASR or AI keys.
+
+For central foregrounds, the adapter reads the public `max_width_inherited`
+layout field to preserve the side-margin width budget and rounding. Missing X
+inherits the effective anchor's local margin point; only X and width are
+translated into final-canvas pixels. Multisubs retains inherited Y, height,
+typography, grouping, and animation semantics.
 
 The owned `cue_animations` / `word_animations` fields and their CLI/environment/JSON
 controls use affirmative booleans. Only the adapter maps explicit values to the

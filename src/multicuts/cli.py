@@ -303,7 +303,12 @@ class _OutputCommand(TyperCommand):
             "template": "Template name (default: yellow-pop).",
             "template_dir": "Template directory (default: built-in templates).",
             "position": "Position: top/middle/bottom with left/center/right.",
-            "anchor": "Subtitle-box anchor for custom x/y coordinates.",
+            "anchor": "Subtitle-box anchor; alone enables custom placement. "
+            "Omitted coordinates and dimensions inherit the selected template.",
+            "position_x": "Horizontal coordinate within the subtitle container; "
+            "can be supplied independently of y, anchor, and dimensions.",
+            "position_y": "Vertical coordinate within the subtitle container; "
+            "can be supplied independently of x, anchor, and dimensions.",
             "font": "Font family name.",
             "font_weight": "Weight name or 100-900; cannot be combined with bold.",
             "fonts_dir": "Directory containing additional font files.",

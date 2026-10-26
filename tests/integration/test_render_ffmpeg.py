@@ -1099,7 +1099,9 @@ def test_blurred_custom_canvas_preserves_native_foreground_ratio(
         ("vertical-blur", "320x180", (360, 640), None),
     ],
 )
-@pytest.mark.parametrize("placement", ["top-left", "bottom-right", "custom"])
+@pytest.mark.parametrize(
+    "placement", ["top-left", "bottom-right", "custom", "custom-y"]
+)
 def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
     variant, source_size, size, foreground, placement, tmp_path
 ):
@@ -1141,6 +1143,8 @@ def test_blurred_subtitles_fit_the_central_video_except_vertical_blur(
             max_width="80%",
             max_height="20%",
         )
+    elif placement == "custom-y":
+        options = replace(options, position_y="50%")
     else:
         options = replace(options, position=placement)
     config = AppConfig(

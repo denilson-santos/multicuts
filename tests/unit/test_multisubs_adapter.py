@@ -756,7 +756,7 @@ def _clip(*, complete: bool = True) -> ClipTranscript:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, 0),
         ),
         provider="multisubs",
-        provider_version="6.1.0",
+        provider_version="7.0.0",
         word_timing_complete=complete,
     )
 
@@ -847,7 +847,7 @@ def test_public_render_api_receives_clip_local_speech_and_template(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw video")
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
     calls = []
 
     def render(speech, video, output_dir, **options):
@@ -882,7 +882,7 @@ def test_public_render_api_receives_clip_local_speech_and_template(
     )
     assert "word effects suppressed" in caplog.text
     assert result.video_path.read_bytes() == b"rendered"
-    assert result.provider_version == "6.1.0"
+    assert result.provider_version == "7.0.0"
     assert result.template_resolved == "amber-word"
 
 
@@ -909,7 +909,7 @@ def test_public_builder_configures_rendering_without_template_conflicts(
     provider = sys.modules["multisubs"]
     monkeypatch.setattr(provider, "build_subtitle_config", build, raising=False)
     monkeypatch.setattr(provider, "render_transcript", render)
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
     adapter = MultisubsAdapter()
     adapter.validate_subtitle_options(
         template="yellow-pop", template_dir=None, options=options
@@ -1012,7 +1012,7 @@ def test_public_builder_failure_becomes_configuration_error(monkeypatch) -> None
 
 
 def test_missing_public_builder_requires_provider_upgrade() -> None:
-    with pytest.raises(ConfigurationError, match="requires multisubs 6.1"):
+    with pytest.raises(ConfigurationError, match="requires multisubs 7.0"):
         MultisubsAdapter().validate_subtitle_options(
             template="yellow-pop",
             template_dir=None,
@@ -1032,7 +1032,7 @@ def test_partial_segment_keeps_selected_word_text_without_outside_words() -> Non
         segments=(ClipTranscriptSegment("Olá mundo. Adeus", 0.0, 1.0, 0),),
         words=(ClipTranscriptWord("mundo.", 0.1, 0.8, None, 1, 0),),
         provider="multisubs",
-        provider_version="6.1.0",
+        provider_version="7.0.0",
         word_timing_complete=True,
     )
 
@@ -1065,7 +1065,7 @@ def test_long_asr_segment_is_submitted_as_one_timed_cue() -> None:
         segments=(ClipTranscriptSegment(" ".join(tokens), 0.0, 5.0, 0),),
         words=words,
         provider="multisubs",
-        provider_version="6.1.0",
+        provider_version="7.0.0",
         word_timing_complete=True,
     )
 
@@ -1106,7 +1106,7 @@ def test_missing_word_timing_and_language_reach_native_fallback(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
 
     def render(speech, video, output_dir, **options):
         assert speech["language"] is None
@@ -1134,7 +1134,7 @@ def test_missing_word_timing_and_language_reach_native_fallback(
 def test_provider_without_semantic_api_fails_before_subtitle_rendering(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _install_provider(monkeypatch, None, version="6.1.0")
+    _install_provider(monkeypatch, None, version="7.0.0")
     with pytest.raises(RenderingError, match="speech transcript support"):
         MultisubsAdapter().subtitle_clip(
             tmp_path / "raw.mp4",
@@ -1145,12 +1145,13 @@ def test_provider_without_semantic_api_fails_before_subtitle_rendering(
         )
 
 
+@pytest.mark.parametrize("version", ["4.3.0", "6.1.0", "6.9.0", "8.0.0"])
 def test_old_provider_fails_with_compatibility_message(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    version: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(metadata, "version", lambda _name: "4.3.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: version)
 
-    with pytest.raises(RenderingError, match="install version 6.1"):
+    with pytest.raises(RenderingError, match="install version 7.0"):
         MultisubsAdapter().subtitle_clip(
             tmp_path / "raw.mp4",
             _clip(),
@@ -1166,7 +1167,7 @@ def test_layout_failure_identifies_template_space_without_raw_provider_output(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
 
     def render(*args, **options):
         raise ValueError(
@@ -1195,7 +1196,7 @@ def test_incomplete_or_escaped_provider_output_is_rejected(
 ) -> None:
     raw_video = tmp_path / "raw.mp4"
     raw_video.write_bytes(b"raw")
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
 
     def render(speech, video, output_dir, **options):
         artifacts = _rendered_artifacts(output_dir)
@@ -1244,7 +1245,7 @@ def test_unassigned_words_fail_instead_of_disappearing() -> None:
             ClipTranscriptWord("mundo.", 0.8, 1.8, None, 1, None),
         ),
         provider="multisubs",
-        provider_version="6.1.0",
+        provider_version="7.0.0",
         word_timing_complete=True,
     )
     with pytest.raises(RenderingError, match="cannot be mapped"):
@@ -1274,7 +1275,7 @@ def test_public_speech_normalization_and_cache_preserve_missing_alignment(
         asr_backend="parakeet",
         model_name="source-model",
     )
-    _install_provider(monkeypatch, lambda *_args, **_kwargs: document, version="6.1.0")
+    _install_provider(monkeypatch, lambda *_args, **_kwargs: document, version="7.0.0")
     transcript = MultisubsAdapter().transcribe(
         tmp_path / "source.mp4",
         language=None,
@@ -1334,6 +1335,7 @@ def test_foreground_container_translates_public_layout_without_changing_style(
         margin_right=length("12", "px"),
         position_x=length("50", "%"),
         max_width=length("80", "%"),
+        max_width_inherited=False,
         anchor="bottom-center",
     )
     options = SubtitleOptions(
@@ -1362,7 +1364,7 @@ def test_foreground_container_translates_public_layout_without_changing_style(
     provider = sys.modules["multisubs"]
     monkeypatch.setattr(provider, "build_subtitle_config", build, raising=False)
     monkeypatch.setattr(provider, "render_transcript", render)
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
     MultisubsAdapter().subtitle_clip(
         raw,
         _clip(),
@@ -1393,6 +1395,60 @@ def test_foreground_container_translates_public_layout_without_changing_style(
         assert "position_x" not in translated
 
 
+@pytest.mark.parametrize("inherited_width", [False, True])
+@pytest.mark.parametrize(
+    ("anchor", "expected_x"), [(None, 323), ("middle-left", 238), ("bottom-right", 408)]
+)
+def test_partial_coordinates_keep_native_horizontal_defaults_inside_foreground(
+    inherited_width, anchor, expected_x, tmp_path, monkeypatch
+):
+    from decimal import Decimal
+
+    from multicuts.subtitles import SubtitleContainer
+
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    layout = SimpleNamespace(
+        placement_mode="explicit",
+        position="bottom-center",
+        anchor=anchor,
+        position_x=None,
+        margin_left=SimpleNamespace(value=Decimal(10), unit="%"),
+        margin_right=12,
+        max_width=SimpleNamespace(
+            value=Decimal(100 if inherited_width else 80), unit="%"
+        ),
+        max_width_inherited=inherited_width,
+    )
+    calls = []
+
+    def build(**kwargs):
+        calls.append(kwargs["overrides"])
+        return SimpleNamespace(layout=layout)
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(provider, "build_subtitle_config", build, raising=False)
+    monkeypatch.setattr(
+        provider,
+        "render_transcript",
+        lambda speech, video, output, **kwargs: _rendered_artifacts(output),
+    )
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
+    MultisubsAdapter().subtitle_clip(
+        raw,
+        _clip(),
+        template="yellow-pop",
+        template_dir=None,
+        workspace=tmp_path / "work",
+        options=SubtitleOptions(position_y="50%", anchor=anchor),
+        container=SubtitleContainer(640, 360, 218, 202),
+    )
+    assert calls[1]["position_x"] == f"{expected_x}px"
+    assert calls[1]["max_width"] == ("170px" if inherited_width else "162px")
+    assert calls[1]["position_y"] == "50%"
+    assert "max_height" not in calls[1]
+
+
 def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monkeypatch):
     from decimal import Decimal
 
@@ -1405,6 +1461,9 @@ def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monke
         anchor="bottom-center",
         position_x=SimpleNamespace(value=Decimal(100), unit="%"),
         max_width=SimpleNamespace(value=Decimal(80), unit="%"),
+        max_width_inherited=False,
+        margin_left=0,
+        margin_right=0,
     )
     provider = sys.modules["multisubs"]
     monkeypatch.setattr(
@@ -1416,7 +1475,7 @@ def test_explicit_subtitle_envelope_cannot_escape_the_foreground(tmp_path, monke
     monkeypatch.setattr(
         provider, "render_transcript", lambda *a, **k: pytest.fail("render called")
     )
-    monkeypatch.setattr(metadata, "version", lambda _name: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _name: "7.0.0")
     with pytest.raises(ConfigurationError, match="central video container"):
         MultisubsAdapter().subtitle_clip(
             raw,
@@ -1437,7 +1496,7 @@ def test_render_encoding_stays_inside_provider_boundary(
     raw = tmp_path / "raw.mp4"
     raw.write_bytes(b"video")
     provider = sys.modules["multisubs"]
-    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
     monkeypatch.setattr(provider, "VideoEncodingConfig", SimpleNamespace, raising=False)
     received = []
 
@@ -1469,7 +1528,7 @@ def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(
 ):
     from contextlib import contextmanager
 
-    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
     provider = sys.modules["multisubs"]
 
     class CancelledError(ValueError):
@@ -1509,7 +1568,7 @@ def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(
         workspace=tmp_path / "work",
     ) as artifacts:
         assert artifacts.fonts_dir == fonts and fonts.is_dir()
-        assert artifacts.provider_version == "6.1.0"
+        assert artifacts.provider_version == "7.0.0"
         assert artifacts.template_resolved == "amber-word"
         assert json.loads(artifacts.transcript_json_path.read_text()) == received[0][0]
     assert not fonts.exists()
@@ -1517,12 +1576,125 @@ def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(
     assert received[0][1]["frame_width"] == 360
 
 
+@pytest.mark.parametrize("stage", ["prepare", "render"])
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "position-x=0px cannot anchor a 692px max-width with center alignment "
+            "inside a 1080px canvas; valid position-x range is 346px to 734px",
+            (
+                "--subtitle-position-x=0px",
+                "cannot anchor a",
+                "--subtitle-max-width",
+                "346px to 734px",
+            ),
+        ),
+        (
+            "position-y=0px cannot anchor max-height inside the canvas",
+            ("--subtitle-position-y=0px", "--subtitle-max-height"),
+        ),
+        (
+            "font-weight cannot be combined with --bold or --no-bold",
+            ("--subtitle-bold true", "--subtitle-bold false"),
+        ),
+    ],
+)
+def test_provider_validation_details_survive_subtitle_preparation_and_rendering(
+    stage, message, expected, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    class ValidationError(ValueError):
+        pass
+
+    class CancelledError(ValueError):
+        pass
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
+    monkeypatch.setattr(provider, "ValidationError", ValidationError, raising=False)
+    monkeypatch.setattr(provider, "CancelledError", CancelledError, raising=False)
+
+    def reject(*args, **kwargs):
+        raise ValidationError(message)
+
+    @contextmanager
+    def prepare(*args, **kwargs):
+        reject()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    monkeypatch.setattr(provider, "render_transcript", reject)
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    adapter = MultisubsAdapter()
+    with pytest.raises(ConfigurationError) as error:
+        if stage == "prepare":
+            with adapter.prepare_clip_subtitles(
+                _clip(),
+                frame_width=1080,
+                frame_height=1920,
+                template="yellow-pop",
+                template_dir=None,
+                workspace=tmp_path / "work",
+            ):
+                pytest.fail("Invalid geometry must not yield prepared artifacts")
+        else:
+            adapter.subtitle_clip(
+                raw,
+                _clip(),
+                template="yellow-pop",
+                template_dir=None,
+                workspace=tmp_path / "work",
+            )
+    for detail in expected:
+        assert detail in str(error.value)
+    assert isinstance(error.value.__cause__, ValidationError)
+
+
+def test_unexpected_preparation_failure_keeps_private_details_out_of_message(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
+    monkeypatch.setattr(
+        provider,
+        "CancelledError",
+        type("CancelledError", (Exception,), {}),
+        raising=False,
+    )
+
+    @contextmanager
+    def prepare(*args, **kwargs):
+        raise RuntimeError("private input path; token=private-token")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    with pytest.raises(
+        RenderingError, match="Could not prepare native subtitles"
+    ) as error:
+        with MultisubsAdapter().prepare_clip_subtitles(
+            _clip(),
+            frame_width=1080,
+            frame_height=1920,
+            template="yellow-pop",
+            template_dir=None,
+            workspace=tmp_path / "work",
+        ):
+            pytest.fail("Failed preparation must not yield")
+    assert "private" not in str(error.value)
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
 def test_preparation_cancellation_is_normalized(tmp_path, monkeypatch):
     from contextlib import contextmanager
 
     from multicuts.errors import RenderingCancelledError
 
-    monkeypatch.setattr(metadata, "version", lambda _: "6.1.0")
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
     provider = sys.modules["multisubs"]
 
     class CancelledError(ValueError):

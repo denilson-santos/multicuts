@@ -250,15 +250,15 @@ def _require_provider_version() -> str:
         version = importlib.metadata.version("multisubs")
     except importlib.metadata.PackageNotFoundError as exc:
         raise RenderingError(
-            "multisubs is unavailable; install the configured multisubs 6.1 release"
+            "multisubs is unavailable; install the configured multisubs 7.0 release"
         ) from exc
     try:
         major, minor = (int(part) for part in version.split(".")[:2])
     except (ValueError, TypeError) as exc:
         raise RenderingError(f"Unsupported multisubs version: {version}") from exc
-    if major != 6 or minor < 1:
+    if major != 7 or minor < 0:
         raise RenderingError(
-            f"Unsupported multisubs {version}; install version 6.1+ (<7)"
+            f"Unsupported multisubs {version}; install version 7.0+ (<8)"
         )
     try:
         provider = importlib.import_module("multisubs")
@@ -266,12 +266,12 @@ def _require_provider_version() -> str:
     except Exception as exc:
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 6.1 release"
+            "install the configured multisubs 7.0 release"
         ) from exc
     if not callable(speech_api):
         raise RenderingError(
             "multisubs speech transcript support is unavailable; "
-            "install the configured multisubs 6.1 release"
+            "install the configured multisubs 7.0 release"
         )
     return version
 
@@ -361,6 +361,30 @@ def _subtitle_progress(message: str) -> None:
         logger.warning("%s", message)
 
 
+def _subtitle_configuration_message(error: Exception) -> str:
+    """Translate provider validation details into multicuts option names."""
+
+    def subtitle_flag(match: re.Match[str]) -> str:
+        field = match[2]
+        inverted = field in ("disable-cue-animations", "disable-word-animations")
+        if inverted:
+            field = field.removeprefix("disable-")
+        flag = "--subtitle-" + field
+        if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
+            enabled = bool(match[1]) if inverted else not match[1]
+            flag += " true" if enabled else " false"
+        return flag
+
+    message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(error))
+    # Geometry errors also refer to option names without leading dashes.
+    message = re.sub(
+        r"(?<![\w-])(position-x|position-y|max-width|max-height)\b",
+        lambda match: "--subtitle-" + match[1],
+        message,
+    )
+    return f"Invalid subtitle configuration: {message}"
+
+
 def _build_subtitle_config(
     template: str | None,
     template_dir: Path | None,
@@ -371,12 +395,12 @@ def _build_subtitle_config(
         provider = importlib.import_module("multisubs")
     except ImportError as exc:
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 6.1+; check its installation"
+            "Subtitle presentation requires multisubs 7.0+; check its installation"
         ) from exc
     builder = getattr(provider, "build_subtitle_config", None)
     if not callable(builder):
         raise ConfigurationError(
-            "Subtitle presentation requires multisubs 6.1+; update its installation"
+            "Subtitle presentation requires multisubs 7.0+; update its installation"
         )
     try:
         overrides = options.overrides()
@@ -396,30 +420,49 @@ def _build_subtitle_config(
         if layout is None:
             raise ConfigurationError("Multisubs must expose its public subtitle layout")
 
-        def pixels(length: object) -> Decimal:
+        def pixels(length: object, width: int = container.width) -> Decimal:
             if type(length) is int:
                 return Decimal(length)
             value, unit = getattr(length, "value", None), getattr(length, "unit", None)
             if not isinstance(value, Decimal) or unit not in ("%", "px"):
                 raise ConfigurationError("Unsupported multisubs layout length")
-            return value * container.width / 100 if unit == "%" else value
+            return value * width / 100 if unit == "%" else value
 
         overrides = overrides.copy()
         # Translate the horizontal reference; multisubs still owns wrapping,
         # typography, vertical placement, and every animation.
         if getattr(layout.placement_mode, "value", layout.placement_mode) == "explicit":
-            x = int(
-                pixels(layout.position_x).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            anchor_value = layout.anchor or layout.position
+            anchor = getattr(anchor_value, "value", anchor_value).split("-")[-1]
+            margin_left = int(
+                pixels(layout.margin_left).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            )
+            margin_right = int(
+                pixels(layout.margin_right).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            )
+            width_base = (
+                container.width - margin_left - margin_right
+                if layout.max_width_inherited
+                else container.width
             )
             width = int(
-                pixels(layout.max_width).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+                pixels(layout.max_width, width_base).quantize(
+                    Decimal(1), rounding=ROUND_HALF_UP
+                )
             )
-            anchor = getattr(layout.anchor, "value", layout.anchor).split("-")[-1]
             fraction = {
                 "left": Decimal(0),
                 "center": Decimal("0.5"),
                 "right": Decimal(1),
             }[anchor]
+            # Partial coordinates inherit the native point inside local margins.
+            x = (
+                pixels(layout.position_x)
+                if layout.position_x is not None
+                else Decimal(margin_left)
+                + fraction * (container.width - margin_left - margin_right)
+            )
+            x = int(x.quantize(Decimal(1), rounding=ROUND_HALF_UP))
             left = Decimal(x) - fraction * width
             if width <= 0 or left < 0 or left + width > container.width:
                 raise ConfigurationError(
@@ -440,23 +483,10 @@ def _build_subtitle_config(
     except ConfigurationError:
         raise
     except provider.MultisubsError as exc:
-
-        def subtitle_flag(match: re.Match[str]) -> str:
-            field = match[2]
-            inverted = field in ("disable-cue-animations", "disable-word-animations")
-            if inverted:
-                field = field.removeprefix("disable-")
-            flag = "--subtitle-" + field
-            if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
-                enabled = bool(match[1]) if inverted else not match[1]
-                flag += " true" if enabled else " false"
-            return flag
-
-        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(exc))
-        raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
+        raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
     except Exception as exc:
         raise ConfigurationError(
-            "Could not prepare subtitle settings; check the multisubs 6.1+ installation"
+            "Could not prepare subtitle settings; check the multisubs 7.0+ installation"
         ) from exc
 
 
@@ -530,6 +560,8 @@ def _render_subtitles(
     except Exception as exc:
         if isinstance(exc, getattr(provider, "CancelledError", ())):
             raise RenderingCancelledError("Subtitle rendering was cancelled") from exc
+        if isinstance(exc, getattr(provider, "ValidationError", ())):
+            raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
         if any(
             term in str(exc).lower()
             for term in ("max-width", "max-height", "layout envelope")
@@ -607,7 +639,7 @@ class MultisubsAdapter:
             or not issubclass(cancelled, Exception)
         ):
             raise RenderingError(
-                "Subtitle preparation requires the public multisubs 6.1 API"
+                "Subtitle preparation requires the public multisubs 7.0 API"
             )
         options = options or SubtitleOptions()
         root = workspace.expanduser().resolve(strict=False)
@@ -694,9 +726,11 @@ class MultisubsAdapter:
         except provider.CancelledError as exc:
             raise RenderingCancelledError("Subtitle preparation was cancelled") from exc
         except Exception as exc:
+            if isinstance(exc, getattr(provider, "ValidationError", ())):
+                raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
             raise RenderingError(
                 "Could not prepare native subtitles; check timing, geometry, "
-                "template, fonts, and the multisubs 6.1 installation"
+                "template, fonts, and the multisubs 7.0 installation"
             ) from exc
 
     def subtitle_clip(
@@ -760,7 +794,7 @@ class MultisubsAdapter:
         except Exception as exc:
             raise TranscriptionError(
                 "multisubs public semantic transcription API is unavailable; "
-                "install the configured multisubs 6.1 release with "
+                "install the configured multisubs 7.0 release with "
                 "transcribe_speech support"
             ) from exc
         if not callable(transcribe):

@@ -97,6 +97,13 @@ environment names are not aliases.
 
 Subtitle presentation settings available in multisubs are exposed individually
 through `--subtitle-*` flags and matching `SUBTITLE_*` environment variables.
+With multisubs 7.0, any X, Y, or anchor override enables custom placement;
+omitted coordinates and dimensions inherit the selected template. Custom
+placement rejects explicit position/margin overrides. Height percentages always
+use full render height and vertical margins preserve line capacity; invalid
+envelopes fail instead of shrinking. Side margins still affect native width.
+For blurred foreground containers, preserve inherited width rounding and native
+anchor defaults when translating partial coordinates into the final canvas.
 Each scoped option uses one environment variable, with shell-like grouped
 `[SCOPE=]VALUE` tokens. Parse quoting literally without execution or variable
 expansion. Remove generated class/variant environment names. Empty variables
@@ -248,6 +255,12 @@ For Faster-Whisper on Linux/WSL, installed NVIDIA CUDA 12/cuDNN 9 libraries are 
 `--context TEXT` optionally describes the video's subject and scope for the current source invocation. This option is CLI-only. Leading/trailing whitespace is removed; omitting the flag or passing empty or whitespace-only text means no additional video context. Record the applied text under `analysis.editorial_context` in the manifest and `viral_potential.editorial_context` in clip metadata, using null when absent. Logs may report that video context is enabled but must not print its contents.
 
 Normal CLI output reports only `multicuts` progress and errors, including stages, cache reuse, candidate/block and clip counters, selection results, elapsed time, and output locations. Immediately after each validated candidate review, report its editorial approval or rejection, score, and reviewed interval before starting the next review, including when the judgment is cached. Immediately after each rendered variant's video and metadata are saved, report its clip counter, variant name, output path, and elapsed preparation/rendering/publication time, excluding time waiting to be scheduled. Retain the separate cut summary after all its variants succeed. Dependency logging, direct terminal writes, and progress bars are suppressed during processing. `--verbose` enables application debug details and allows dependency output. Progress/errors use stderr and the final run summary uses stdout. Suppression is scoped to the synchronous pipeline and must restore terminal streams and logging filters after success, failure, or interruption.
+
+Normalize public multisubs subtitle validation failures during preparation or
+staged rendering into configuration errors (exit 2), preserving actionable
+geometry details and valid coordinate ranges with multicuts option names.
+Unexpected provider failures retain generic rendering errors (exit 6); do not
+expose their internal exception details. Cancellation behavior remains unchanged.
 
 ## Cache and reruns
 

@@ -125,9 +125,14 @@ The project uses **PyTorch 2.8.0**, **torchaudio 2.8.0**, and **torchvision 0.23
 python -m pip install --editable .
 ```
 
-This installs the pinned `multisubs[whisperx]` **6.1.0** release wheel, including public subtitle preparation, cooperative cancellation, and concurrent rendering support. The default ASR configuration is **WhisperX + `turbo`**.
+This installs the pinned `multisubs[whisperx]` **7.0.0** release wheel, including public subtitle preparation, cooperative cancellation, and concurrent rendering support. The default ASR configuration is **WhisperX + `turbo`**.
 
-Multisubs 6.1 exposes `transcribe_speech()` for reusable ASR output and
+Multisubs 7.0 supports independent custom coordinate overrides and stable
+vertical line capacity. The bundled `anton-impact`, `bangers-comic`,
+`press-start-arcade`, `quantico-tech`, and `russo-punch` templates are available
+through `--subtitle-template`, alongside the existing templates.
+
+Multisubs 7.0 exposes `transcribe_speech()` for reusable ASR output and
 `prepare_subtitles()` for single-encode composition and `render_transcript()`
 for staged subtitles. Multicuts uses these public APIs, with one
 source transcription and native subtitle layout for each final clip geometry.
@@ -190,7 +195,7 @@ For other platforms, see the [Faster-Whisper GPU requirements](https://github.co
 **Dependencies:** PyTorch and NeMo ASR. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Parakeet extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v6.1.0/multisubs-6.1.0-py3-none-any.whl#sha256=9d94980215b4d762158e2239113acdcb33478b8160a3158b6eb57e82601c4c3c'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v7.0.0/multisubs-7.0.0-py3-none-any.whl#sha256=6ca104661b6d4e73e906a8bcedd1f5e78dabc6d049e3e2785e0689370577aa62'
 python -m pip install "multisubs[parakeet] @ $multicuts_multisubs_wheel"
 ```
 
@@ -211,7 +216,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 **Dependencies:** PyTorch, Transformers, Accelerate, and the provider's audio/text packages. Reuse the CPU or CUDA PyTorch build from the shared setup, then install the Qwen extra using the same pinned provider wheel:
 
 ```bash
-multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v6.1.0/multisubs-6.1.0-py3-none-any.whl#sha256=9d94980215b4d762158e2239113acdcb33478b8160a3158b6eb57e82601c4c3c'
+multicuts_multisubs_wheel='https://github.com/denilson-santos/multisubs/releases/download/v7.0.0/multisubs-7.0.0-py3-none-any.whl#sha256=6ca104661b6d4e73e906a8bcedd1f5e78dabc6d049e3e2785e0689370577aa62'
 python -m pip install "multisubs[qwen] @ $multicuts_multisubs_wheel"
 ```
 
@@ -226,7 +231,7 @@ multicuts video.mp4 --output-dir out --lang pt \
 
 Changing `--asr-backend` selects the engine; it does not install extras or change the `turbo` default. **Pass a compatible model explicitly for Parakeet and Qwen.** Installed extras remain available across backend changes; pip may adjust shared dependency versions when adding an extra. Model files may be downloaded on first use.
 
-`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#-installation) for provider hardware requirements.
+`multisubs` selects CUDA when the chosen runtime reports an available GPU and otherwise selects CPU. A visible GPU with missing or incompatible libraries can still fail during inference; `multicuts` does not retry failed CUDA transcription on CPU. See the [multisubs installation guide](https://github.com/denilson-santos/multisubs/blob/v7.0.0/README.md#-installation) for provider hardware requirements.
 
 ### 2. Choose an AI backend
 
@@ -730,7 +735,7 @@ does not run ASR again.
 Lengths accept `%` or `px`; percentages resolve against the subtitle container
 or the corresponding font/layout metric.
 See [presentation options](#subtitle-positioning)
-and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#subtitle-configuration-reference)
+and the [multisubs configuration reference](https://github.com/denilson-santos/multisubs/blob/v7.0.0/README.md#subtitle-configuration-reference)
 for units, valid values, and combinations.
 
 <details>
@@ -872,17 +877,32 @@ Only explicitly supplied settings override the selected template.
 | `--subtitle-margin-top [SCOPE=]VALUE...` | Top-position margin as a percentage of render height or pixels; an explicit value is rejected for middle and bottom positions. |
 | `--subtitle-margin-bottom [SCOPE=]VALUE...` | Bottom-position margin as a percentage of render height or pixels; an explicit value is rejected for top and middle positions. |
 | `--subtitle-max-width [SCOPE=]VALUE...` | Maximum subtitle line width. Native percentages use the width after horizontal margins; explicit percentages use container width. |
-| `--subtitle-max-height [SCOPE=]VALUE...` | Maximum subtitle box height. Native percentages use the height after the active margin; explicit percentages use the render height. |
+| `--subtitle-max-height [SCOPE=]VALUE...` | Maximum subtitle box height. Percentages always use the full render height, independently of vertical margins. |
 | `--subtitle-position-x [SCOPE=]VALUE...` | Horizontal anchor coordinate from the left edge of the subtitle container. |
 | `--subtitle-position-y [SCOPE=]VALUE...` | Vertical anchor coordinate from the top edge of the subtitle container. |
-| `--subtitle-anchor [SCOPE=]VALUE...` | Required subtitle-box anchor for custom coordinates. |
+| `--subtitle-anchor [SCOPE=]VALUE...` | Optional subtitle-box anchor; omission inherits the template position. Supplying it alone enables custom placement. |
 
 Only top positions accept `--subtitle-margin-top`; only bottom positions accept
-`--subtitle-margin-bottom`. Middle positions accept neither. To use exact
-coordinates, supply `--subtitle-position-x`, `--subtitle-position-y`,
-`--subtitle-anchor`, `--subtitle-max-width`, and `--subtitle-max-height`
-together, without position or margin overrides. The envelope must fit the final
-video; geometry-dependent limits are checked during rendering.
+`--subtitle-margin-bottom`. Middle positions accept neither. Vertical margins
+move the block without changing its maximum height or line capacity; side
+margins still affect available width and wrapping. An envelope that no longer
+fits is rejected instead of silently reducing its height.
+
+Any of `--subtitle-position-x`, `--subtitle-position-y`, or `--subtitle-anchor`
+enables custom placement. Each may be supplied independently: omitted
+coordinates use the effective anchor's native point inside template margins,
+and omitted maximum dimensions inherit the template's limits. For example,
+`--subtitle-position-y all:vertical=80%` moves vertical subtitles while preserving
+their inherited dimensions. Explicit custom width uses the subtitle container's
+full width; inherited width preserves the template's side-margin budget and
+pixel rounding. Custom coordinates cannot accompany explicit position or margin
+overrides. The complete envelope must fit the final video/container;
+geometry-dependent limits are checked during rendering.
+
+When multisubs rejects a resolved subtitle configuration, multicuts reports the
+provider's reason and any valid coordinate ranges using `--subtitle-*` names
+with configuration exit code `2`. Unexpected preparation/rendering failures
+retain the generic rendering error and exit code `6`.
 
 #### Subtitle typography
 
@@ -961,7 +981,7 @@ suppression. A scope alone means `true`; these presentation switches preserve
 normal field inheritance and do not select captioned/rendered outputs. Enabling
 them does not add an effect to a phase configured as `none`. Word effects still depend on
 observed alignment; missing alignment uses the normal provider fallback.
-See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v6.1.0/README.md#cue-and-word-effects)
+See the [multisubs animation reference](https://github.com/denilson-santos/multisubs/blob/v7.0.0/README.md#cue-and-word-effects)
 for the types accepted by each track and phase.
 
 ```bash

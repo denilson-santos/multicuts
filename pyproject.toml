@@ -11,7 +11,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "typer>=0.27.3,<0.28",
     "yt-dlp>=2025.1,<2027",
-    "multisubs[whisperx] @ https://github.com/denilson-santos/multisubs/releases/download/v6.1.0/multisubs-6.1.0-py3-none-any.whl#sha256=9d94980215b4d762158e2239113acdcb33478b8160a3158b6eb57e82601c4c3c",
+    "multisubs[whisperx] @ https://github.com/denilson-santos/multisubs/releases/download/v7.0.0/multisubs-7.0.0-py3-none-any.whl#sha256=6ca104661b6d4e73e906a8bcedd1f5e78dabc6d049e3e2785e0689370577aa62",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
