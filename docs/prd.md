@@ -97,6 +97,13 @@ environment names are not aliases.
 
 Subtitle presentation settings available in multisubs are exposed individually
 through `--subtitle-*` flags and matching `SUBTITLE_*` environment variables.
+With multisubs 7.0, any X, Y, or anchor override enables custom placement;
+omitted coordinates and dimensions inherit the selected template. Custom
+placement rejects explicit position/margin overrides. Height percentages always
+use full render height and vertical margins preserve line capacity; invalid
+envelopes fail instead of shrinking. Side margins still affect native width.
+For blurred foreground containers, preserve inherited width rounding and native
+anchor defaults when translating partial coordinates into the final canvas.
 Each scoped option uses one environment variable, with shell-like grouped
 `[SCOPE=]VALUE` tokens. Parse quoting literally without execution or variable
 expansion. Remove generated class/variant environment names. Empty variables
