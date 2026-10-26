@@ -1263,17 +1263,17 @@ variants and remain disabled by default.
 
 The package version has one source of truth: `[project].version` in
 `pyproject.toml`. Releases use stable [SemVer 2.0.0](https://semver.org/)
-versions in `MAJOR.MINOR.PATCH` form. The documented CLI, exit codes, and
-published output formats are the compatibility contract. At `1.0.0` and later,
-increase MAJOR for incompatible changes, MINOR for compatible additions, and
-PATCH for compatible fixes. During initial `0.y.z` development, increase MINOR
-for features or incompatible changes and PATCH for compatible fixes.
+versions in `MAJOR.MINOR.PATCH` form. Starting with `1.0.0`, the documented CLI,
+exit codes, and published output formats are the stable compatibility contract.
+Increase MAJOR for incompatible changes, MINOR for backward-compatible
+additions, and PATCH for backward-compatible fixes. Reset MINOR and PATCH to
+zero when increasing MAJOR, and reset PATCH to zero when increasing MINOR.
 
 `0.0.0` is a development placeholder and cannot be tagged as a
 release. Choose each release version manually in a dedicated release PR after
 reviewing changes since the previous `vMAJOR.MINOR.PATCH` tag. Update
 `pyproject.toml` in that PR; ordinary feature PRs do not bump the package
-version. Released versions and tags are immutable. The initial workflow uses
+version. Released versions and tags are immutable. The release workflow uses
 stable SemVer versions without prerelease or build suffixes, which also keeps
 the package metadata compatible with [Python's version rules](https://packaging.python.org/en/latest/specifications/version-specifiers/).
 
