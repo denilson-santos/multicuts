@@ -899,6 +899,11 @@ pixel rounding. Custom coordinates cannot accompany explicit position or margin
 overrides. The complete envelope must fit the final video/container;
 geometry-dependent limits are checked during rendering.
 
+When multisubs rejects a resolved subtitle configuration, multicuts reports the
+provider's reason and any valid coordinate ranges using `--subtitle-*` names
+with configuration exit code `2`. Unexpected preparation/rendering failures
+retain the generic rendering error and exit code `6`.
+
 #### Subtitle typography
 
 Only explicitly supplied settings override the selected template.

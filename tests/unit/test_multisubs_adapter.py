@@ -1576,6 +1576,119 @@ def test_prepared_subtitles_keep_fonts_alive_and_normalize_owned_paths(
     assert received[0][1]["frame_width"] == 360
 
 
+@pytest.mark.parametrize("stage", ["prepare", "render"])
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "position-x=0px cannot anchor a 692px max-width with center alignment "
+            "inside a 1080px canvas; valid position-x range is 346px to 734px",
+            (
+                "--subtitle-position-x=0px",
+                "cannot anchor a",
+                "--subtitle-max-width",
+                "346px to 734px",
+            ),
+        ),
+        (
+            "position-y=0px cannot anchor max-height inside the canvas",
+            ("--subtitle-position-y=0px", "--subtitle-max-height"),
+        ),
+        (
+            "font-weight cannot be combined with --bold or --no-bold",
+            ("--subtitle-bold true", "--subtitle-bold false"),
+        ),
+    ],
+)
+def test_provider_validation_details_survive_subtitle_preparation_and_rendering(
+    stage, message, expected, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    class ValidationError(ValueError):
+        pass
+
+    class CancelledError(ValueError):
+        pass
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
+    monkeypatch.setattr(provider, "ValidationError", ValidationError, raising=False)
+    monkeypatch.setattr(provider, "CancelledError", CancelledError, raising=False)
+
+    def reject(*args, **kwargs):
+        raise ValidationError(message)
+
+    @contextmanager
+    def prepare(*args, **kwargs):
+        reject()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    monkeypatch.setattr(provider, "render_transcript", reject)
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw")
+    adapter = MultisubsAdapter()
+    with pytest.raises(ConfigurationError) as error:
+        if stage == "prepare":
+            with adapter.prepare_clip_subtitles(
+                _clip(),
+                frame_width=1080,
+                frame_height=1920,
+                template="yellow-pop",
+                template_dir=None,
+                workspace=tmp_path / "work",
+            ):
+                pytest.fail("Invalid geometry must not yield prepared artifacts")
+        else:
+            adapter.subtitle_clip(
+                raw,
+                _clip(),
+                template="yellow-pop",
+                template_dir=None,
+                workspace=tmp_path / "work",
+            )
+    for detail in expected:
+        assert detail in str(error.value)
+    assert isinstance(error.value.__cause__, ValidationError)
+
+
+def test_unexpected_preparation_failure_keeps_private_details_out_of_message(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    provider = sys.modules["multisubs"]
+    monkeypatch.setattr(metadata, "version", lambda _: "7.0.0")
+    monkeypatch.setattr(
+        provider,
+        "CancelledError",
+        type("CancelledError", (Exception,), {}),
+        raising=False,
+    )
+
+    @contextmanager
+    def prepare(*args, **kwargs):
+        raise RuntimeError("private input path; token=private-token")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(provider, "prepare_subtitles", prepare, raising=False)
+    with pytest.raises(
+        RenderingError, match="Could not prepare native subtitles"
+    ) as error:
+        with MultisubsAdapter().prepare_clip_subtitles(
+            _clip(),
+            frame_width=1080,
+            frame_height=1920,
+            template="yellow-pop",
+            template_dir=None,
+            workspace=tmp_path / "work",
+        ):
+            pytest.fail("Failed preparation must not yield")
+    assert "private" not in str(error.value)
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
 def test_preparation_cancellation_is_normalized(tmp_path, monkeypatch):
     from contextlib import contextmanager
 

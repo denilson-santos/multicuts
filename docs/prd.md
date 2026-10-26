@@ -256,6 +256,12 @@ For Faster-Whisper on Linux/WSL, installed NVIDIA CUDA 12/cuDNN 9 libraries are 
 
 Normal CLI output reports only `multicuts` progress and errors, including stages, cache reuse, candidate/block and clip counters, selection results, elapsed time, and output locations. Immediately after each validated candidate review, report its editorial approval or rejection, score, and reviewed interval before starting the next review, including when the judgment is cached. Immediately after each rendered variant's video and metadata are saved, report its clip counter, variant name, output path, and elapsed preparation/rendering/publication time, excluding time waiting to be scheduled. Retain the separate cut summary after all its variants succeed. Dependency logging, direct terminal writes, and progress bars are suppressed during processing. `--verbose` enables application debug details and allows dependency output. Progress/errors use stderr and the final run summary uses stdout. Suppression is scoped to the synchronous pipeline and must restore terminal streams and logging filters after success, failure, or interruption.
 
+Normalize public multisubs subtitle validation failures during preparation or
+staged rendering into configuration errors (exit 2), preserving actionable
+geometry details and valid coordinate ranges with multicuts option names.
+Unexpected provider failures retain generic rendering errors (exit 6); do not
+expose their internal exception details. Cancellation behavior remains unchanged.
+
 ## Cache and reruns
 
 Only two reusable caches are part of the active pipeline:

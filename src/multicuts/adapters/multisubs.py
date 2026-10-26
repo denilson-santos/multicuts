@@ -361,6 +361,30 @@ def _subtitle_progress(message: str) -> None:
         logger.warning("%s", message)
 
 
+def _subtitle_configuration_message(error: Exception) -> str:
+    """Translate provider validation details into multicuts option names."""
+
+    def subtitle_flag(match: re.Match[str]) -> str:
+        field = match[2]
+        inverted = field in ("disable-cue-animations", "disable-word-animations")
+        if inverted:
+            field = field.removeprefix("disable-")
+        flag = "--subtitle-" + field
+        if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
+            enabled = bool(match[1]) if inverted else not match[1]
+            flag += " true" if enabled else " false"
+        return flag
+
+    message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(error))
+    # Geometry errors also refer to option names without leading dashes.
+    message = re.sub(
+        r"(?<![\w-])(position-x|position-y|max-width|max-height)\b",
+        lambda match: "--subtitle-" + match[1],
+        message,
+    )
+    return f"Invalid subtitle configuration: {message}"
+
+
 def _build_subtitle_config(
     template: str | None,
     template_dir: Path | None,
@@ -459,20 +483,7 @@ def _build_subtitle_config(
     except ConfigurationError:
         raise
     except provider.MultisubsError as exc:
-
-        def subtitle_flag(match: re.Match[str]) -> str:
-            field = match[2]
-            inverted = field in ("disable-cue-animations", "disable-word-animations")
-            if inverted:
-                field = field.removeprefix("disable-")
-            flag = "--subtitle-" + field
-            if field.replace("-", "_") in SUBTITLE_BOOLEAN_FIELDS:
-                enabled = bool(match[1]) if inverted else not match[1]
-                flag += " true" if enabled else " false"
-            return flag
-
-        message = re.sub(r"--(no-)?([a-z][a-z0-9-]*)", subtitle_flag, str(exc))
-        raise ConfigurationError(f"Invalid subtitle configuration: {message}") from exc
+        raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
     except Exception as exc:
         raise ConfigurationError(
             "Could not prepare subtitle settings; check the multisubs 7.0+ installation"
@@ -549,6 +560,8 @@ def _render_subtitles(
     except Exception as exc:
         if isinstance(exc, getattr(provider, "CancelledError", ())):
             raise RenderingCancelledError("Subtitle rendering was cancelled") from exc
+        if isinstance(exc, getattr(provider, "ValidationError", ())):
+            raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
         if any(
             term in str(exc).lower()
             for term in ("max-width", "max-height", "layout envelope")
@@ -713,6 +726,8 @@ class MultisubsAdapter:
         except provider.CancelledError as exc:
             raise RenderingCancelledError("Subtitle preparation was cancelled") from exc
         except Exception as exc:
+            if isinstance(exc, getattr(provider, "ValidationError", ())):
+                raise ConfigurationError(_subtitle_configuration_message(exc)) from exc
             raise RenderingError(
                 "Could not prepare native subtitles; check timing, geometry, "
                 "template, fonts, and the multisubs 7.0 installation"

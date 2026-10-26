@@ -10,6 +10,9 @@ from types import ModuleType
 import pytest
 
 from multicuts.adapters.multisubs import MultisubsAdapter
+from multicuts.cli import main
+from multicuts.models import Transcript, TranscriptSegment
+from multicuts.render import clip_transcript
 from multicuts.subtitles import SubtitleOptions
 
 
@@ -269,6 +272,63 @@ def test_public_builder_preserves_custom_template_fields(tmp_path: Path) -> None
     )
     assert configured.layout.margin_bottom.original == "15%"
     assert configured.style.typography.font_size.original == "4.5%"
+
+
+def test_invalid_coordinates_report_provider_geometry_details_through_cli(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _installed_provider()
+    monkeypatch.chdir(tmp_path)
+    local = clip_transcript(
+        Transcript(
+            None,
+            "en",
+            1.0,
+            "Hello.",
+            (TranscriptSegment("Hello.", 0.0, 1.0),),
+            (),
+            "multisubs",
+            "7.0.0",
+        ),
+        0.0,
+        1.0,
+    )
+
+    def pipeline(config):
+        output = config.for_output("short", "vertical")
+        with MultisubsAdapter().prepare_clip_subtitles(
+            local,
+            frame_width=1080,
+            frame_height=1920,
+            template=output.subtitle_template,
+            template_dir=output.subtitle_template_dir,
+            options=output.subtitle_options,
+            workspace=tmp_path / "subtitles",
+        ):
+            pytest.fail("Invalid coordinates must not reach rendering")
+
+    code = main(
+        [
+            "source.mp4",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--clip-full",
+            "--render=short:vertical",
+            "--subtitles=short",
+            "--subtitle-position-y=all:vertical=20%",
+            "--subtitle-position-x=all:vertical=0%",
+        ],
+        pipeline=pipeline,
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "Invalid configuration" in error
+    assert "--subtitle-position-x=0px" in error
+    assert "cannot anchor a 692px --subtitle-max-width" in error
+    assert "346px to 734px" in error
+    assert "Rendering failed" not in error
+    assert "Could not prepare native subtitles" not in error
+    assert not (tmp_path / "out").exists()
 
 
 def test_public_speech_interchange_preserves_optional_alignment_and_language() -> None:
