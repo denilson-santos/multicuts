@@ -1,6 +1,6 @@
 ---
 name: deliver-feature
-description: Apply the repository delivery workflow when implementing or finalizing a code change. Use GitHub Flow and Conventional Commits, create validated local commits, and require explicit user approval before pushing or opening a pull request. Do not use for read-only analysis, diagnosis, review, or status requests.
+description: Apply the repository delivery workflow when implementing or finalizing a code change, or preparing and publishing a release. Use GitHub Flow and Conventional Commits, create validated local commits, and require explicit user approval before pushing or opening a pull request. Do not use for read-only analysis, diagnosis, review, or status requests.
 ---
 
 # Deliver Feature
@@ -65,12 +65,16 @@ the version in a release PR when required and run the repository's version and
 build checks. Ordinary feature PRs do not bump the version unless the project
 policy calls for it.
 
-Include the proposed version, tag, and intended target commit in the delivery
-package. When publishing a GitHub Release, draft its description in a temporary
-Markdown file at release time using the format below. Compare changes with the
-previous released tag when one exists; for the first release, summarize the
-shipped baseline. Use the project's changelog, merged changes, and verified
-behavior as evidence.
+Plan requests to publish a new version or release tag as a complete delivery,
+including the GitHub Release.
+Include the proposed version, tag, intended target commit, release title,
+reviewed notes, assets, and publication method in the delivery package and its
+publication approval. Reuse authorization already given in the session.
+
+Draft the release description in a temporary Markdown file using the format
+below. Compare changes with the previous released tag when one exists; for the
+first release, summarize the shipped baseline. Use the project's changelog,
+merged changes, and verified behavior as evidence.
 
 Write for people choosing whether and how to upgrade. Lead with the main
 user-visible outcome, group changes by purpose, and explain their effects
@@ -78,8 +82,9 @@ instead of listing commits or pull requests. Include exact migration steps,
 new prerequisites or defaults, material security actions, and known issues or
 workarounds when relevant. Omit internal maintenance and claims that are not
 verified. Replace every placeholder, remove empty optional sections, and set
-the release title separately. Do not commit per-version notes unless the project
-requests them.
+the release title separately. Use only the version tag as the title, such as
+`v1.0.1`, without the project name. Do not commit per-version notes unless the
+project requests them.
 
 ```markdown
 <In one to three sentences, say what this release is, who benefits, and its main
@@ -116,12 +121,47 @@ Keep `Upgrade notes` and state explicitly when no migration is required. Remove
 `Highlights`, `Fixes and improvements`, `Security`, or `Known issues` when they
 have no entries.
 
+### Publication and deployment history
+
 Create the tag only after the repository's required merge and verification
-gates pass. After any tag checks pass, publish the GitHub Release for the
-existing remote tag using the completed temporary notes file. Confirm that the
-remote tag targets the intended commit before publication. Obtain explicit
-authorization for tag creation and release publication unless already given in
-the session. Never move or reuse a released tag.
+gates pass. Confirm that the remote tag targets the intended commit and matches
+the package version. Never move or reuse a released tag.
+
+Inspect the current automation: uploading workflow artifacts does not publish a
+GitHub Release. Prefer publication by an existing tag-triggered Actions job
+after verification succeeds. If that automation is absent, use the authorized
+CLI/API publication path and report that it was performed by the agent. Change
+workflows only when that implementation is within the requested scope.
+
+When implementing release automation:
+
+- Publish only for approved release tags, after the verification job succeeds;
+  ordinary PR and main runs remain verification runs.
+- Define how reviewed notes reach the publication job, such as an existing
+  draft release or an explicit workflow input. Local temporary files are not
+  available to Actions. Missing notes must stop publication rather than fall
+  back to unreviewed generated notes.
+- Reuse the exact validated packages. Stage the reviewed notes, wheel, sdist,
+  `SHA256SUMS`, and build report in a draft, verify the assets, then publish it.
+- Use `GITHUB_TOKEN` with `contents: write` scoped to the publication job;
+  verification jobs retain read-only permissions.
+- Associate only the publication job with the `github-releases` environment and
+  the release URL. Keep CI and build/verification jobs out of deployment history.
+- On a retry, inspect the existing release first. Continue an incomplete draft
+  or verify an already published release; do not duplicate releases or replace
+  published assets. Report conflicts for review.
+
+After tag verification, publish the GitHub Release for the existing remote tag
+with the reviewed notes and validated assets. When Actions owns publication,
+wait for its result instead of publishing again through the CLI. Obtain explicit
+authorization for tag creation and release publication unless already given;
+approval to push a tag that triggers publication must cover both operations.
+
+When a GitHub Release is in scope, complete delivery only after verifying its
+published title, notes, assets/checksums, release status, and tag target. For
+automated publication, also verify the publication job and deployment result.
+Report a published tag without its expected release as incomplete, with the
+remaining step or failure.
 
 ## Prepare the delivery package
 
