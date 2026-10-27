@@ -1,11 +1,19 @@
 ---
 name: deliver-feature
-description: Apply the repository delivery workflow when implementing or finalizing a code change, or preparing and publishing a release. Use GitHub Flow and Conventional Commits, create validated local commits, and require explicit user approval before pushing or opening a pull request. Do not use for read-only analysis, diagnosis, review, or status requests.
+description: Apply GitHub Flow when implementing or finalizing repository changes. Create validated local Conventional Commits, prepare pull requests, and require explicit user approval before pushing or opening a pull request. Do not use for read-only tasks or standalone release and deployment operations.
 ---
 
 # Deliver Feature
 
 Deliver related repository changes through a short-lived branch and a reviewable pull request, using coherent commits that keep different features separate. Preserve the user's existing work and distinguish local implementation from approval to publish the delivery.
+
+## Scope and project contract
+
+This skill owns the repository workflow: branches, validation, commits, pull requests, review status, and post-merge cleanup. Establish the requested completion milestone, such as validated local commits or a published pull request, and report whether it has been reached. Reuse authorization already given in the session for the same actions and scope.
+
+Derive applicable checks, build commands, compatibility requirements, and pull request templates from the repository's active instructions, documentation, scripts, and workflows. Select validation appropriate to the change; do not prescribe a toolchain based on project type.
+
+Versioning, packaging, release publication, and deployment procedures belong to the project. When the task includes these operations, follow its documented contract and existing automation; use this skill for any repository changes they require. A request to implement or review a change does not authorize a release or deployment.
 
 ## Start the change
 
@@ -20,7 +28,7 @@ Before editing repository files:
 
 Name new branches `<type>/<issue-id>-<slug>`, omitting the issue ID when unavailable. Use lowercase kebab-case. Choose the narrowest applicable type, normally `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, or `chore`.
 
-## Continue before publication
+## Continue before pull request publication
 
 When the user requests another feature while delivery approval is pending, continue implementation without treating the new request as approval to push or open a pull request. For related features on an unpublished branch, reuse it and rename it with `git branch -m` when its name no longer describes the combined scope. Preserve logical commit boundaries within and between features. Use a separate branch/worktree for independent features.
 
@@ -66,11 +74,12 @@ Once requested changes are committed, the branch is synchronized, and validation
 - validation commands and their results, including any failures or commands that could not run;
 - existing local commits with their identifiers and exact Conventional Commit messages;
 - proposed pull request title, body, base branch, and draft or ready-for-review state;
+- automatic effects of the proposed push, pull request, or authorized merge, such as preview or production deployments, when applicable;
 - known risks, limitations, or follow-up work when relevant.
 
 Use Conventional Commits 1.0.0 for each commit. Keep scopes optional and repository-specific. Mark breaking changes with `!` and explain them in the commit body or footer. Prefer a Conventional Commit title for the pull request so squash merges preserve the convention.
 
-Use this exact Markdown structure for every pull request body:
+Use the repository's pull request template when present. Otherwise, use this default Markdown structure:
 
 ```markdown
 ## Summary
@@ -99,13 +108,13 @@ Use this exact Markdown structure for every pull request body:
 - None.
 ```
 
-Keep all five headings in this order. Replace the instructional placeholders and remove unused example bullets, but do not remove a section. Keep the summary to one or two short paragraphs. Describe reviewable behavior and impact under `Changes` instead of listing files or commits. Under `Validation`, list materially relevant automated and manual checks with their results, and give a reason for each relevant check that was not run. Under `Compatibility and rollout`, state `- None.` when the change has no compatibility, migration, configuration, data, or deployment impact. Under `Risks and follow-ups`, state `- None.` when no known issues remain. Put issue links, screenshots, breaking-change details, rollout notes, and other context inside the closest matching section rather than adding ad hoc headings. Focus on the final implementation, without conversational history or abandoned approaches.
+For the default template, keep all five headings in this order. Replace the instructional placeholders and remove unused example bullets, but do not remove a section. Keep the summary to one or two short paragraphs. Describe reviewable behavior and impact under `Changes` instead of listing files or commits. Under `Validation`, list materially relevant automated and manual checks with their results, and give a reason for each relevant check that was not run. Under `Compatibility and rollout`, state `- None.` when the change has no compatibility, migration, configuration, data, or deployment impact. Under `Risks and follow-ups`, state `- None.` when no known issues remain. Put issue links, screenshots, breaking-change details, rollout notes, and other context inside the closest matching section rather than adding ad hoc headings. Focus on the final implementation, without conversational history or abandoned approaches.
 
 Create the pull request using the exact title and body shown in the approved delivery package. Preserve Markdown with a body file or an equivalent structured tool argument rather than assembling multiline prose through fragile shell quoting.
 
-Ask one explicit confirmation covering publication of the displayed commits, the push target, and the pull request. Local commits do not require this confirmation. Do not treat approval of implementation or additional features as publication approval.
+Unless already authorized for the displayed scope, ask one explicit confirmation covering publication of the displayed commits, the push target, the pull request, and any automatic deployment effects. Local commits do not require this confirmation. Do not treat approval of implementation or additional features as publication approval.
 
-## Publish only after approval
+## Publish the pull request after approval
 
 After the user approves the displayed delivery package:
 
@@ -113,9 +122,10 @@ After the user approves the displayed delivery package:
 2. Push the branch to the approved remote and set its upstream.
 3. Check whether a pull request already exists before creating one, especially after a failed or uncertain retry.
 4. Open the pull request with the approved title, body, base branch, and review state.
-5. Return the commit identifiers, validation summary, and pull request link.
+5. Check mergeability and CI for the exact published head. Wait for applicable checks when feasible and report passed, failed, pending, or unavailable results accurately. Recheck after any change to the head; earlier successful checks do not validate new commits.
+6. Return the commit identifiers, validation summary, pull request link, and current review and CI status. Distinguish a published pull request from a merged change or a deployed product.
 
-Request approval again if the content, commit plan, remote, base branch, or pull request state changes materially. Report failures without inventing a successful result or creating duplicate pull requests. Never merge the pull request without separate explicit authorization.
+Request approval again if the content, commit plan, remote, base branch, pull request state, or automatic deployment effects change materially. Report failures without inventing a successful result or creating duplicate pull requests. Never merge the pull request without separate explicit authorization; an authorized merge must satisfy the repository's required reviews, checks, and base synchronization policy.
 
 ## Clean up after merge
 
@@ -136,140 +146,3 @@ After explicit confirmation:
 5. Confirm the final working-tree state and report any remaining local branches and why they were retained.
 
 Do not delete branches with unmerged work or unverified status. Cleanup confirmation authorizes only the exact local branches listed, not other branches or remote deletion.
-
-## Releases
-
-For release work, read the target repository's version source, release policy,
-tag convention, and verification gates. Choose the next version from changes
-since the previous release, following the repository's SemVer policy and declared
-compatibility contract. Update the version in a release PR when required and run
-the repository's version and build checks. Ordinary feature PRs do not bump the
-version unless the project policy calls for it.
-
-Plan requests to publish a new version or release tag as a complete delivery,
-including the GitHub Release.
-Include the proposed version, tag, intended target commit, release title,
-reviewed notes, assets, and publication method in the delivery package and its
-publication approval. Reuse authorization already given in the session.
-
-Draft the release description in a temporary Markdown file using the format
-below. Compare changes with the previous released tag when one exists; for the
-first release, summarize the shipped baseline. Use the project's changelog,
-merged changes, and verified behavior as evidence.
-
-Write for people choosing whether and how to upgrade. Lead with the main
-user-visible outcome, group changes by purpose, and explain their effects
-instead of listing commits or pull requests. Include exact migration steps,
-new prerequisites or defaults, material security actions, and known issues or
-workarounds when relevant. Omit internal maintenance and claims that are not
-verified. Replace every placeholder, remove empty optional sections, and set
-the release title separately. Use only the version tag as the title, such as
-`v1.0.1`, without the project name. Do not commit per-version notes unless the
-project requests them.
-
-```markdown
-<In one to three sentences, say what this release is, who benefits, and its main
-outcome. Mention preview or development status when relevant.>
-
-## Highlights
-
-- **<Feature or area>:** <What users can do now and how it helps them. Add a
-  documentation link when useful.>
-
-## Fixes and improvements
-
-- **<Area>:** <The user-visible problem addressed and the result.>
-
-## Upgrade notes
-
-- **Breaking changes:** <Who is affected and the exact migration steps.>
-- **Requirements or configuration:** <New prerequisites, required settings, or
-  changed defaults.>
-- If no action or compatibility change is required, replace these bullets with:
-  `No migration steps are required.`
-
-## Security
-
-- **<Advisory or affected component>:** <Affected versions and the action users
-  should take. Link the advisory or fix; omit exploit details.>
-
-## Known issues
-
-- **<Issue>:** <User impact and a known workaround or status.>
-```
-
-Keep `Upgrade notes` and state explicitly when no migration is required. Remove
-`Highlights`, `Fixes and improvements`, `Security`, or `Known issues` when they
-have no entries.
-
-### Publication and deployment history
-
-Inspect the current automation: uploading workflow artifacts does not publish a
-GitHub Release. Prefer publication by an existing tag-triggered Actions job
-after verification succeeds. If that automation is absent, use the authorized
-CLI/API publication path and report that it was performed by the agent. Change
-workflows only when that implementation is within the requested scope.
-
-When implementing release automation:
-
-- Publish only for approved release tags, gated on successful verification of
-  that tag and commit, preferably through `needs` dependencies in one workflow.
-  Ordinary PR and main runs remain verification runs. Evidence uploads under
-  `if: always()` are useful after failures and must not be treated as proof of a
-  successful build.
-- Define how reviewed notes reach the publication job, such as an existing
-  draft release or an explicit workflow input. Local temporary files are not
-  available to Actions. Missing notes must stop publication rather than fall
-  back to unreviewed generated notes.
-- Download artifacts from the successful producer run for the exact commit,
-  not merely the latest artifact with a matching name. Check the build report's
-  commit, matching hashes, and passed installation smoke checks before staging
-  the validated wheel, sdist, `SHA256SUMS`, and report with the reviewed notes
-  in a draft. Verify the assets, then publish it.
-- Use `GITHUB_TOKEN` with `contents: write` scoped to the publication job;
-  verification jobs retain read-only permissions.
-- Do not rely on tag pushes or release events created with `GITHUB_TOKEN` to
-  start another workflow. Keep dependent jobs together or use an explicit
-  dispatch with the approved tag and repeat its validation. See
-  [GitHub's token event behavior](https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs).
-- Scope publication concurrency to the release tag and keep active publication
-  runs from being canceled by newer runs. Cancel obsolete PR validation runs
-  separately when appropriate.
-- Associate only the publication job with the `github-releases` environment and
-  the release URL. Keep CI and build/verification jobs out of deployment history.
-- On a retry, inspect the existing release first. Continue an incomplete draft
-  or verify an already published release; do not duplicate releases or replace
-  published assets. Support rerunning the approved tag's publication without
-  moving or recreating the tag. Report conflicts for review.
-
-Before pushing the tag, prepare the reviewed notes and confirm how the chosen
-publisher will receive them. Obtain explicit authorization for tag creation and
-release publication unless already given; approval to push a tag that triggers
-publication must cover both operations.
-
-For this repository, `CD` (`.github/workflows/cd.yml`) owns publication. After
-approval, create a draft for the approved tag with its version-only title,
-reviewed notes, and intended commit before pushing the annotated tag. Use
-`gh release create <tag> --draft --target <commit> --title <tag> --notes-file
-<file>`. Keep the draft unpublished and let the dependent Actions publication
-job upload and verify the assets. PRs and main pushes verify without publishing.
-
-Create the tag only after the repository's required merge and verification
-gates pass. Confirm that the remote tag targets the intended commit and matches
-the package version. Never move or reuse a released tag.
-
-After tag verification, publish the GitHub Release for the existing remote tag
-with the reviewed notes and validated assets. When Actions owns publication,
-wait for its result instead of publishing again through the CLI.
-
-If `CD` fails, inspect the failed step and existing draft before retrying. Rerun
-the failed job, or dispatch `CD` from `main` with the existing approved `tag` to
-repeat verification and publication. Dispatch applies to tags containing the CD
-implementation. Resolve conflicts through review; do not bypass verification,
-replace published assets, or move the tag to retry.
-
-When a GitHub Release is in scope, complete delivery only after verifying its
-published title, notes, assets/checksums, release status, and tag target. For
-automated publication, also verify the publication job and deployment result.
-Report a published tag without its expected release as incomplete, with the
-remaining step or failure.
