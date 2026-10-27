@@ -1,0 +1,144 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing approved release tag to verify and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Release verification (Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      commit: ${{ steps.target.outputs.commit }}
+      tag: ${{ steps.target.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Verify version and resolve the release target
+        id: target
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          tag=""
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            tag="$REQUESTED_TAG"
+            test -n "$tag"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+          commit=$(git rev-parse HEAD)
+          if [ -n "$tag" ]; then
+            python scripts/verify_version.py --tag "$tag"
+            test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit"
+            git merge-base --is-ancestor "$commit" origin/main
+          else
+            python scripts/verify_version.py
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Record verification inputs
+        run: |
+          mkdir -p release-evidence
+          git rev-parse HEAD > release-evidence/commit.txt
+          python -VV > release-evidence/python.txt
+
+      - name: Compare controlled builds and smoke-test installed distributions
+        run: python scripts/verify_release_builds.py --work-dir "${{ runner.temp }}/release-builds"
+
+      - name: Prepare verified publication assets
+        env:
+          SOURCE_COMMIT: ${{ steps.target.outputs.commit }}
+        run: |
+          python scripts/publish_release.py prepare \
+            --build-dir "$RUNNER_TEMP/release-builds" \
+            --output-dir "$RUNNER_TEMP/release-assets" \
+            --commit "$SOURCE_COMMIT"
+
+      - name: Transfer verified assets to the publication job
+        if: steps.target.outputs.tag != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ steps.target.outputs.commit }}
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-python-3.10-${{ steps.target.outputs.commit || github.sha }}
+          path: |
+            release-evidence/
+            ${{ runner.temp }}/release-builds/release-builds.json
+            ${{ runner.temp }}/release-builds/build-constraints.txt
+            ${{ runner.temp }}/release-builds/build-*/dist/*
+            ${{ runner.temp }}/release-builds/build-*/raw/*
+
+  publish:
+    name: Publish GitHub Release
+    needs: verify
+    if: needs.verify.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    environment:
+      name: github-releases
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.verify.outputs.tag }}
+    steps:
+      - name: Check out the verified commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.verify.outputs.commit }}
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Download assets from this verified run
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets-${{ needs.verify.outputs.commit }}
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Publish the reviewed draft or verify the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          python scripts/publish_release.py publish \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --commit "$SOURCE_COMMIT" \
+            --assets-dir "$RUNNER_TEMP/release-assets"

@@ -1280,9 +1280,47 @@ the package metadata compatible with [Python's version rules](https://packaging.
 Run `python scripts/verify_version.py` to check the declared version and
 `python scripts/verify_version.py --tag vMAJOR.MINOR.PATCH` in a release PR to
 check the proposed tag. After the release PR merges and verification on `main`
-passes, tag the merged commit as `vMAJOR.MINOR.PATCH`. A tag push runs release
-verification again; CI checks that the tag matches the package version and that
-its commit belongs to `main`. Tagging does not publish the package to a registry.
+passes, prepare the reviewed release draft and tag the merged commit as
+`vMAJOR.MINOR.PATCH`. The `CD` workflow (`.github/workflows/cd.yml`) verifies the
+tag against the package version and requires its commit to belong to `main`.
+After successful verification, it publishes the prepared GitHub Release with
+the validated distributions. This does not publish the package to a registry.
+
+### GitHub Release publication
+
+Before pushing an approved release tag, create a draft with the reviewed notes,
+the intended commit, and the version tag as its title. Include an `## Upgrade
+notes` section, stating when no migration is needed. For example, with
+`release_tag`, `release_commit`, and `release_notes` set to the approved values:
+
+```bash
+gh release create "$release_tag" --draft --target "$release_commit" \
+  --title "$release_tag" --notes-file "$release_notes"
+git tag -a "$release_tag" "$release_commit" -m "$release_tag"
+git push origin "refs/tags/$release_tag"
+```
+
+The draft supplies the reviewed notes to Actions. The `CD` verification job
+builds twice, checks matching hashes, smoke-tests the installed distributions,
+and transfers the verified assets to the publication job in the same run.
+The publisher checks the remote tag and draft, uploads the wheel, normalized
+sdist, `release-builds.json`, and `SHA256SUMS`, downloads and verifies them, then
+publishes the draft. Missing notes or conflicting assets stop publication.
+
+Only the publication job has `contents: write` and uses the `github-releases`
+environment, so it appears in deployment history with the release URL. It uses
+the automatic `GITHUB_TOKEN`; no personal token is required. Pull requests and
+pushes to `main` perform verification without publishing a release or recording
+a deployment.
+
+If publication fails, inspect the failed step, fix the draft when necessary,
+and rerun the failed job. To repeat verification and publication for an existing
+approved tag, dispatch `CD` from `main` with its `tag` input. This path applies
+to tags containing the CD implementation. A retry completes compatible draft
+assets or verifies an already published bundle without replacing it. A partial
+upload that conflicts with the new build requires review; do not move the tag
+or overwrite published assets. Actions owns publication once the tag is pushed;
+wait for its result instead of publishing a second time through the CLI.
 
 ### Repeatable release verification
 
@@ -1323,8 +1361,8 @@ On pull requests, CI runs Ruff and Pyright once on Python 3.10, hermetic
 recovery/acceptance tests on **all four supported Python versions**, and the
 separate provisioned provider/media checks. Pull-request checks run against
 GitHub's merge candidate. After a merge, a push to `main` compares controlled
-builds and smoke-tests the installed wheel and sdist on Python 3.10. It uploads
-`release-python-3.10-<commit>` with the JSON report, constraints,
+builds and smoke-tests the installed wheel and sdist on Python 3.10 in `CD`.
+It uploads `release-python-3.10-<commit>` with the JSON report, constraints,
 distributions, and interpreter record for the final `main` commit. The
 provisioned pull-request job uploads `release-provisioned-<commit>` with its
 provider, media, and build evidence.

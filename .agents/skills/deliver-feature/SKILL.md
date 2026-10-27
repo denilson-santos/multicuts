@@ -247,6 +247,13 @@ publisher will receive them. Obtain explicit authorization for tag creation and
 release publication unless already given; approval to push a tag that triggers
 publication must cover both operations.
 
+For this repository, `CD` (`.github/workflows/cd.yml`) owns publication. After
+approval, create a draft for the approved tag with its version-only title,
+reviewed notes, and intended commit before pushing the annotated tag. Use
+`gh release create <tag> --draft --target <commit> --title <tag> --notes-file
+<file>`. Keep the draft unpublished and let the dependent Actions publication
+job upload and verify the assets. PRs and main pushes verify without publishing.
+
 Create the tag only after the repository's required merge and verification
 gates pass. Confirm that the remote tag targets the intended commit and matches
 the package version. Never move or reuse a released tag.
@@ -254,6 +261,12 @@ the package version. Never move or reuse a released tag.
 After tag verification, publish the GitHub Release for the existing remote tag
 with the reviewed notes and validated assets. When Actions owns publication,
 wait for its result instead of publishing again through the CLI.
+
+If `CD` fails, inspect the failed step and existing draft before retrying. Rerun
+the failed job, or dispatch `CD` from `main` with the existing approved `tag` to
+repeat verification and publication. Dispatch applies to tags containing the CD
+implementation. Resolve conflicts through review; do not bypass verification,
+replace published assets, or move the tag to retry.
 
 When a GitHub Release is in scope, complete delivery only after verifying its
 published title, notes, assets/checksums, release status, and tag target. For
