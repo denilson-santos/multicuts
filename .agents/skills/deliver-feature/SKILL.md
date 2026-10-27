@@ -212,21 +212,35 @@ workflows only when that implementation is within the requested scope.
 
 When implementing release automation:
 
-- Publish only for approved release tags, after the verification job succeeds;
-  ordinary PR and main runs remain verification runs.
+- Publish only for approved release tags, gated on successful verification of
+  that tag and commit, preferably through `needs` dependencies in one workflow.
+  Ordinary PR and main runs remain verification runs. Evidence uploads under
+  `if: always()` are useful after failures and must not be treated as proof of a
+  successful build.
 - Define how reviewed notes reach the publication job, such as an existing
   draft release or an explicit workflow input. Local temporary files are not
   available to Actions. Missing notes must stop publication rather than fall
   back to unreviewed generated notes.
-- Reuse the exact validated packages. Stage the reviewed notes, wheel, sdist,
-  `SHA256SUMS`, and build report in a draft, verify the assets, then publish it.
+- Download artifacts from the successful producer run for the exact commit,
+  not merely the latest artifact with a matching name. Check the build report's
+  commit, matching hashes, and passed installation smoke checks before staging
+  the validated wheel, sdist, `SHA256SUMS`, and report with the reviewed notes
+  in a draft. Verify the assets, then publish it.
 - Use `GITHUB_TOKEN` with `contents: write` scoped to the publication job;
   verification jobs retain read-only permissions.
+- Do not rely on tag pushes or release events created with `GITHUB_TOKEN` to
+  start another workflow. Keep dependent jobs together or use an explicit
+  dispatch with the approved tag and repeat its validation. See
+  [GitHub's token event behavior](https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs).
+- Scope publication concurrency to the release tag and keep active publication
+  runs from being canceled by newer runs. Cancel obsolete PR validation runs
+  separately when appropriate.
 - Associate only the publication job with the `github-releases` environment and
   the release URL. Keep CI and build/verification jobs out of deployment history.
 - On a retry, inspect the existing release first. Continue an incomplete draft
   or verify an already published release; do not duplicate releases or replace
-  published assets. Report conflicts for review.
+  published assets. Support rerunning the approved tag's publication without
+  moving or recreating the tag. Report conflicts for review.
 
 Before pushing the tag, prepare the reviewed notes and confirm how the chosen
 publisher will receive them. Obtain explicit authorization for tag creation and
