@@ -56,113 +56,6 @@ After another pull request merges, refresh the base and reassess overlap, depend
 
 When repository-level enforcement is requested, recommend required CI checks and an up-to-date base before merging. Treat changes to GitHub protection rules as separate configuration work requiring explicit authorization.
 
-## Releases
-
-For release work, read the target repository's version source, release policy,
-tag convention, and verification gates. Choose the next version from changes
-since the previous release, applying SemVer when the repository uses it. Update
-the version in a release PR when required and run the repository's version and
-build checks. Ordinary feature PRs do not bump the version unless the project
-policy calls for it.
-
-Plan requests to publish a new version or release tag as a complete delivery,
-including the GitHub Release.
-Include the proposed version, tag, intended target commit, release title,
-reviewed notes, assets, and publication method in the delivery package and its
-publication approval. Reuse authorization already given in the session.
-
-Draft the release description in a temporary Markdown file using the format
-below. Compare changes with the previous released tag when one exists; for the
-first release, summarize the shipped baseline. Use the project's changelog,
-merged changes, and verified behavior as evidence.
-
-Write for people choosing whether and how to upgrade. Lead with the main
-user-visible outcome, group changes by purpose, and explain their effects
-instead of listing commits or pull requests. Include exact migration steps,
-new prerequisites or defaults, material security actions, and known issues or
-workarounds when relevant. Omit internal maintenance and claims that are not
-verified. Replace every placeholder, remove empty optional sections, and set
-the release title separately. Use only the version tag as the title, such as
-`v1.0.1`, without the project name. Do not commit per-version notes unless the
-project requests them.
-
-```markdown
-<In one to three sentences, say what this release is, who benefits, and its main
-outcome. Mention preview or development status when relevant.>
-
-## Highlights
-
-- **<Feature or area>:** <What users can do now and how it helps them. Add a
-  documentation link when useful.>
-
-## Fixes and improvements
-
-- **<Area>:** <The user-visible problem addressed and the result.>
-
-## Upgrade notes
-
-- **Breaking changes:** <Who is affected and the exact migration steps.>
-- **Requirements or configuration:** <New prerequisites, required settings, or
-  changed defaults.>
-- If no action or compatibility change is required, replace these bullets with:
-  `No migration steps are required.`
-
-## Security
-
-- **<Advisory or affected component>:** <Affected versions and the action users
-  should take. Link the advisory or fix; omit exploit details.>
-
-## Known issues
-
-- **<Issue>:** <User impact and a known workaround or status.>
-```
-
-Keep `Upgrade notes` and state explicitly when no migration is required. Remove
-`Highlights`, `Fixes and improvements`, `Security`, or `Known issues` when they
-have no entries.
-
-### Publication and deployment history
-
-Create the tag only after the repository's required merge and verification
-gates pass. Confirm that the remote tag targets the intended commit and matches
-the package version. Never move or reuse a released tag.
-
-Inspect the current automation: uploading workflow artifacts does not publish a
-GitHub Release. Prefer publication by an existing tag-triggered Actions job
-after verification succeeds. If that automation is absent, use the authorized
-CLI/API publication path and report that it was performed by the agent. Change
-workflows only when that implementation is within the requested scope.
-
-When implementing release automation:
-
-- Publish only for approved release tags, after the verification job succeeds;
-  ordinary PR and main runs remain verification runs.
-- Define how reviewed notes reach the publication job, such as an existing
-  draft release or an explicit workflow input. Local temporary files are not
-  available to Actions. Missing notes must stop publication rather than fall
-  back to unreviewed generated notes.
-- Reuse the exact validated packages. Stage the reviewed notes, wheel, sdist,
-  `SHA256SUMS`, and build report in a draft, verify the assets, then publish it.
-- Use `GITHUB_TOKEN` with `contents: write` scoped to the publication job;
-  verification jobs retain read-only permissions.
-- Associate only the publication job with the `github-releases` environment and
-  the release URL. Keep CI and build/verification jobs out of deployment history.
-- On a retry, inspect the existing release first. Continue an incomplete draft
-  or verify an already published release; do not duplicate releases or replace
-  published assets. Report conflicts for review.
-
-After tag verification, publish the GitHub Release for the existing remote tag
-with the reviewed notes and validated assets. When Actions owns publication,
-wait for its result instead of publishing again through the CLI. Obtain explicit
-authorization for tag creation and release publication unless already given;
-approval to push a tag that triggers publication must cover both operations.
-
-When a GitHub Release is in scope, complete delivery only after verifying its
-published title, notes, assets/checksums, release status, and tag target. For
-automated publication, also verify the publication job and deployment result.
-Report a published tag without its expected release as incomplete, with the
-remaining step or failure.
-
 ## Prepare the delivery package
 
 Once requested changes are committed, the branch is synchronized, and validation is complete, inspect the complete diff from the base to the branch head and present:
@@ -228,7 +121,9 @@ Request approval again if the content, commit plan, remote, base branch, or pull
 
 When the user reports that a pull request was merged, first confirm through GitHub that its state is `MERGED`, record its exact head branch and commit, base branch, and repository default branch, and check that the working tree is clean. If any check fails, stop and explain the problem.
 
-Before asking for cleanup, refresh the remote-tracking refs and inspect all local branches, their pull request status, and `git worktree list`. Include other obsolete local branches when their tips are ancestors of the remote base (`git merge-base --is-ancestor <branch> <remote>/<base>`). A local-only branch without a pull request can qualify: a previous push is unnecessary when all its commits are already on the base. Exclude the base and default branches, branches checked out in another worktree, and branches with open or closed-unmerged pull requests. Retain and report branches whose eligibility cannot be confirmed.
+Before asking for cleanup, refresh the remote-tracking refs and inspect all local branches, their pull request status, and `git worktree list`. Include other obsolete local branches when their tips are ancestors of the remote base (`git merge-base --is-ancestor <branch> <remote>/<base>`). A local-only branch without a pull request can qualify: a previous push is unnecessary when all its commits are already on the base.
+
+Exclude the base and default branches, branches checked out in another worktree, branches with open pull requests, and branches with unmerged commits. A closed-unmerged pull request does not by itself disqualify a branch whose recorded tip is already an ancestor of the base, such as a superseded branch integrated through another pull request. Verify that integration before including it in the approval list. Retain and report branches whose eligibility cannot be confirmed.
 
 Present the exact cleanup list, including the merged pull request's head and any qualifying additional local branches, record their current tips, and ask for one explicit confirmation covering that list. Explain any retained branches. The merge report alone is not approval to clean up.
 
@@ -241,3 +136,113 @@ After explicit confirmation:
 5. Confirm the final working-tree state and report any remaining local branches and why they were retained.
 
 Do not delete branches with unmerged work or unverified status. Cleanup confirmation authorizes only the exact local branches listed, not other branches or remote deletion.
+
+## Releases
+
+For release work, read the target repository's version source, release policy,
+tag convention, and verification gates. Choose the next version from changes
+since the previous release, following the repository's SemVer policy and declared
+compatibility contract. Update the version in a release PR when required and run
+the repository's version and build checks. Ordinary feature PRs do not bump the
+version unless the project policy calls for it.
+
+Plan requests to publish a new version or release tag as a complete delivery,
+including the GitHub Release.
+Include the proposed version, tag, intended target commit, release title,
+reviewed notes, assets, and publication method in the delivery package and its
+publication approval. Reuse authorization already given in the session.
+
+Draft the release description in a temporary Markdown file using the format
+below. Compare changes with the previous released tag when one exists; for the
+first release, summarize the shipped baseline. Use the project's changelog,
+merged changes, and verified behavior as evidence.
+
+Write for people choosing whether and how to upgrade. Lead with the main
+user-visible outcome, group changes by purpose, and explain their effects
+instead of listing commits or pull requests. Include exact migration steps,
+new prerequisites or defaults, material security actions, and known issues or
+workarounds when relevant. Omit internal maintenance and claims that are not
+verified. Replace every placeholder, remove empty optional sections, and set
+the release title separately. Use only the version tag as the title, such as
+`v1.0.1`, without the project name. Do not commit per-version notes unless the
+project requests them.
+
+```markdown
+<In one to three sentences, say what this release is, who benefits, and its main
+outcome. Mention preview or development status when relevant.>
+
+## Highlights
+
+- **<Feature or area>:** <What users can do now and how it helps them. Add a
+  documentation link when useful.>
+
+## Fixes and improvements
+
+- **<Area>:** <The user-visible problem addressed and the result.>
+
+## Upgrade notes
+
+- **Breaking changes:** <Who is affected and the exact migration steps.>
+- **Requirements or configuration:** <New prerequisites, required settings, or
+  changed defaults.>
+- If no action or compatibility change is required, replace these bullets with:
+  `No migration steps are required.`
+
+## Security
+
+- **<Advisory or affected component>:** <Affected versions and the action users
+  should take. Link the advisory or fix; omit exploit details.>
+
+## Known issues
+
+- **<Issue>:** <User impact and a known workaround or status.>
+```
+
+Keep `Upgrade notes` and state explicitly when no migration is required. Remove
+`Highlights`, `Fixes and improvements`, `Security`, or `Known issues` when they
+have no entries.
+
+### Publication and deployment history
+
+Inspect the current automation: uploading workflow artifacts does not publish a
+GitHub Release. Prefer publication by an existing tag-triggered Actions job
+after verification succeeds. If that automation is absent, use the authorized
+CLI/API publication path and report that it was performed by the agent. Change
+workflows only when that implementation is within the requested scope.
+
+When implementing release automation:
+
+- Publish only for approved release tags, after the verification job succeeds;
+  ordinary PR and main runs remain verification runs.
+- Define how reviewed notes reach the publication job, such as an existing
+  draft release or an explicit workflow input. Local temporary files are not
+  available to Actions. Missing notes must stop publication rather than fall
+  back to unreviewed generated notes.
+- Reuse the exact validated packages. Stage the reviewed notes, wheel, sdist,
+  `SHA256SUMS`, and build report in a draft, verify the assets, then publish it.
+- Use `GITHUB_TOKEN` with `contents: write` scoped to the publication job;
+  verification jobs retain read-only permissions.
+- Associate only the publication job with the `github-releases` environment and
+  the release URL. Keep CI and build/verification jobs out of deployment history.
+- On a retry, inspect the existing release first. Continue an incomplete draft
+  or verify an already published release; do not duplicate releases or replace
+  published assets. Report conflicts for review.
+
+Before pushing the tag, prepare the reviewed notes and confirm how the chosen
+publisher will receive them. Obtain explicit authorization for tag creation and
+release publication unless already given; approval to push a tag that triggers
+publication must cover both operations.
+
+Create the tag only after the repository's required merge and verification
+gates pass. Confirm that the remote tag targets the intended commit and matches
+the package version. Never move or reuse a released tag.
+
+After tag verification, publish the GitHub Release for the existing remote tag
+with the reviewed notes and validated assets. When Actions owns publication,
+wait for its result instead of publishing again through the CLI.
+
+When a GitHub Release is in scope, complete delivery only after verifying its
+published title, notes, assets/checksums, release status, and tag target. For
+automated publication, also verify the publication job and deployment result.
+Report a published tag without its expected release as incomplete, with the
+remaining step or failure.
