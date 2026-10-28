@@ -19,7 +19,7 @@ Use this map to decide whether a document is necessary:
 | `README.md` | high-level project purpose, user-facing CLI examples, current project scope |
 | `docs/prd.md` | product behavior, requirements, acceptance criteria, scoring semantics, MVP scope |
 | `docs/architecture.md` | module boundaries, data flow, adapters, artifacts/cache, integration architecture |
-| `docs/conventions.md` | code style, Python practices, tests, typing, FFmpeg/yt-dlp/`multisubs` conventions |
+| `docs/conventions.md` | code style, Python practices, tests, typing, FFmpeg/yt-dlp/`multisubs` conventions; package versioning and release procedures in section 25 |
 
 ### Context-loading rules
 
@@ -27,7 +27,7 @@ Use this map to decide whether a document is necessary:
 - Search headings/keywords first when possible; read the narrow relevant section instead of the whole document.
 - Do not copy large documentation sections into working context unless the task genuinely requires them.
 - Do not read `docs/prd.md` for a formatting-only change.
-- Do not read `docs/conventions.md` when changing prose only.
+- Do not read `docs/conventions.md` for prose-only changes unrelated to its engineering or release procedures.
 - Do not read `docs/architecture.md` for a trivial isolated bug unless the fix may change a module boundary or data flow.
 - If the task changes product behavior, read the relevant PRD requirement before implementing it.
 - If the task changes architecture or external integration boundaries, read the relevant architecture section.

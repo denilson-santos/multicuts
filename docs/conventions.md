@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-These conventions define how `multicuts` code should be written and tested.
+These conventions define how `multicuts` code should be written, tested, and released.
 
 The goal is consistent, clean, maintainable Python without turning a small CLI into a framework.
 
@@ -652,3 +652,164 @@ A change is ready when applicable:
 - `ruff check .` passes;
 - `pyright` passes;
 - relevant pytest tests pass.
+
+## 25. Package versioning and releases
+
+Run the following commands from the repository root.
+
+### Package versioning
+
+The package version has one source of truth: `[project].version` in
+`pyproject.toml`. Releases use stable [SemVer 2.0.0](https://semver.org/)
+versions in `MAJOR.MINOR.PATCH` form. Starting with `1.0.0`, the documented CLI,
+exit codes, and published output formats are the stable compatibility contract.
+Increase MAJOR for incompatible changes, MINOR for backward-compatible
+additions, and PATCH for backward-compatible fixes. Reset MINOR and PATCH to
+zero when increasing MAJOR, and reset PATCH to zero when increasing MINOR.
+
+`0.0.0` is a development placeholder and cannot be tagged as a
+release. Choose each release version manually in a dedicated release PR after
+reviewing changes since the previous `vMAJOR.MINOR.PATCH` tag. Update
+`pyproject.toml` in that PR; ordinary feature PRs do not bump the package
+version. Released versions and tags are immutable. The release workflow uses
+stable SemVer versions without prerelease or build suffixes, which also keeps
+the package metadata compatible with [Python's version rules](https://packaging.python.org/en/latest/specifications/version-specifiers/).
+
+Run `python scripts/verify_version.py` to check the declared version and
+`python scripts/verify_version.py --tag vMAJOR.MINOR.PATCH` in a release PR to
+check the proposed tag. After the release PR merges and verification on `main`
+passes, prepare the reviewed release draft and tag the merged commit as
+`vMAJOR.MINOR.PATCH`. The `CD` workflow (`.github/workflows/cd.yml`) verifies the
+tag against the package version and requires its commit to belong to `main`.
+After successful verification, it publishes the prepared GitHub Release with
+the validated distributions. This does not publish the package to a registry.
+
+### GitHub Release publication
+
+Before pushing an approved release tag, create a draft with the reviewed notes,
+the intended commit, and the version tag as its title. Include an `## Upgrade
+notes` section, stating when no migration is needed. For example, with
+`release_tag`, `release_commit`, and `release_notes` set to the approved values:
+
+```bash
+gh release create "$release_tag" --draft --target "$release_commit" \
+  --title "$release_tag" --notes-file "$release_notes"
+git tag -a "$release_tag" "$release_commit" -m "$release_tag"
+git push origin "refs/tags/$release_tag"
+```
+
+The draft supplies the reviewed notes to Actions. The `CD` verification job
+builds twice, checks matching hashes, smoke-tests the installed distributions,
+and transfers the verified assets to the publication job in the same run.
+The publisher checks the remote tag and draft, uploads the wheel, normalized
+sdist, `release-builds.json`, and `SHA256SUMS`, downloads and verifies them, then
+publishes the draft. Missing notes or conflicting assets stop publication.
+
+Only the publication job has `contents: write` and uses the `github-releases`
+environment, so it appears in deployment history with the release URL. It uses
+the automatic `GITHUB_TOKEN`; no personal token is required. Pull requests and
+pushes to `main` perform verification without publishing a release or recording
+a deployment.
+
+If publication fails, inspect the failed step, fix the draft when necessary,
+and rerun the failed job. To repeat verification and publication for an existing
+approved tag, dispatch `CD` from `main` with its `tag` input. This path applies
+to tags containing the CD implementation. A retry completes compatible draft
+assets or verifies an already published bundle without replacing it. A partial
+upload that conflicts with the new build requires review; do not move the tag
+or overwrite published assets. Actions owns publication once the tag is pushed;
+wait for its result instead of publishing a second time through the CLI.
+
+### Repeatable release verification
+
+Start from a clean checkout of the candidate commit, with Git and a supported
+Python interpreter (3.10–3.13). Run the [quality checks](#21-test-commands)
+and `python -m build`, then:
+
+```bash
+release_work="$(mktemp -d "${TMPDIR:-/tmp}/multicuts-release-check.XXXXXX")"
+python scripts/verify_release_builds.py --work-dir "$release_work"
+cat "$release_work/release-builds.json"
+```
+
+The verifier exports **committed HEAD**, excluding all working-tree edits and
+ignored files. It builds twice in separate source directories with the exact
+build-tool versions in `scripts/verify_release_builds.py`, no build isolation,
+`SOURCE_DATE_EPOCH` set to the commit timestamp, UTC, and a fixed Python hash seed.
+It creates its own build environment; network/package-index access is needed
+to provision tools and smoke-test environments. The default pytest suite still
+requires no network, model downloads, or credentials.
+
+Setuptools 80.9.0 produces varying sdist directory/generated-file timestamps
+and a wall-clock gzip header. The controlled recipe therefore normalizes tar
+member order, timestamps, owner metadata, and the gzip header before comparing
+SHA-256 hashes. It preserves member names, permissions, and payload bytes.
+Wheels are compared unmodified. Both raw and normalized archives are retained
+under `build-{1,2}/{raw,dist}/`; inspect these if comparison fails. This promises
+repeatability for identical source and the recorded interpreter/toolchain and
+platform, not across arbitrary toolchains or ASR/media outputs.
+
+`release-builds.json` records the source commit, dirty-worktree indicator,
+interpreter, platform/zlib, build versions, verifier hashes, both sets of
+artifact hashes, and installed smoke results/package versions. The smoke
+checks consume the compared wheel and normalized sdist, plus a wheel rebuilt
+from that sdist, in three isolated environments. A failed comparison or smoke
+check exits nonzero. Retain this report with the archives and test results.
+
+On pull requests, CI runs Ruff and Pyright once on Python 3.10, hermetic
+recovery/acceptance tests on **all four supported Python versions**, and the
+separate provisioned provider/media checks. Pull-request checks run against
+GitHub's merge candidate. After a merge, a push to `main` compares controlled
+builds and smoke-tests the installed wheel and sdist on Python 3.10 in `CD`.
+It uploads `release-python-3.10-<commit>` with the JSON report, constraints,
+distributions, and interpreter record for the final `main` commit. The
+provisioned pull-request job uploads `release-provisioned-<commit>` with its
+provider, media, and build evidence.
+
+For the separate provisioned checks, ensure FFmpeg/ffprobe with libass and
+libx264 are available on PATH, then make the following environment from the
+compared wheel. Installation resolves the complete runtime dependency set,
+including the official `multisubs`
+WhisperX extra, and can require substantial downloads/disk space:
+
+```bash
+unset PYTHONPATH
+python -m venv "$release_work/provisioned"
+provisioned_python="$release_work/provisioned/bin/python"
+"$provisioned_python" -m pip install "$release_work"/build-1/dist/*.whl "pytest>=8,<9"
+"$provisioned_python" -m pip check
+"$provisioned_python" -VV
+"$provisioned_python" -m pip freeze --all > "$release_work/provider-packages.txt"
+"$provisioned_python" -c 'import multisubs; print(multisubs.__version__)'
+"$provisioned_python" -c 'import multicuts; from pathlib import Path; assert not Path(multicuts.__file__).resolve().is_relative_to(Path.cwd().resolve())'
+ffmpeg -version > "$release_work/ffmpeg.txt"
+ffprobe -version > "$release_work/ffprobe.txt"
+ffmpeg -filters > "$release_work/ffmpeg-filters.txt"
+grep -q ' subtitles ' "$release_work/ffmpeg-filters.txt"
+fixture=src/multicuts/data/test-horizontal.mp4
+if [ ! -f "$fixture" ]; then
+  mkdir -p src/multicuts/data
+  ffmpeg -hide_banner -loglevel error -nostdin \
+    -f lavfi -i color=c=black:s=1920x1080:r=25:d=3 \
+    -f lavfi -i sine=frequency=440:sample_rate=48000 \
+    -t 3 -c:v mpeg4 -q:v 5 -c:a aac -shortest "$fixture"
+fi
+"$provisioned_python" -m pytest -ra \
+  tests/contract/test_multisubs_public_api.py \
+  tests/integration/test_media_probe.py \
+  tests/integration/test_multisubs_timed_cue_integration.py \
+  tests/integration/test_render_ffmpeg.py \
+  tests/integration/test_multisubs_contract.py \
+  tests/integration/test_youtube_live.py \
+  --junitxml="$release_work/provisioned.xml"
+```
+
+The CI provisioned job performs these checks independently and uploads
+`release-provisioned-<commit>` evidence. Required provider/media checks must
+pass; missing tools/providers are blockers. Optional real transcription is
+skipped unless `MULTICUTS_MULTISUBS_CONTRACT_VIDEO` names a short local video
+(and optionally `MULTICUTS_MULTISUBS_CONTRACT_MODEL` chooses the model).
+The live YouTube check requires `MULTICUTS_YOUTUBE_TEST_URL`. Without these
+inputs, JUnit and `-ra` record two skips; no live ASR or YouTube
+validation is claimed. Publication and registry credentials remain separate
+decisions.
