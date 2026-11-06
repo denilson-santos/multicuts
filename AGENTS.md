@@ -290,5 +290,5 @@ Do not expand the task beyond what is required to satisfy it correctly.
 
 ## 17. Git delivery workflow
 
-- for every repository-changing implementation task, follow the `deliver-feature` skill before editing files;
+- for every repository-changing implementation task, follow the `github-flow` skill before editing files;
 - read-only analysis, diagnosis, review, and status requests do not use this workflow.
