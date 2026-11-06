@@ -106,15 +106,41 @@ Present one delivery summary containing:
 - Proposed pull request title, body, and draft or ready state.
 - Known risks, compatibility changes, and automatic deployment effects.
 
-Use the repository's pull request template. Otherwise, include:
+Use the repository's pull request template. Otherwise, use this format:
 
-- `Summary`: the problem and resulting behavior.
-- `Validation`: relevant checks, results, and reasons for checks not run.
-- `Compatibility and rollout`: include when applicable.
-- `Risks and follow-ups`: include when applicable.
+```markdown
+## Summary
 
-Describe the final implementation. Keep the description proportional to
-the change. Prefer a Conventional Commit pull request title.
+<Explain the problem and resulting behavior. Link the related issue when relevant.>
+
+## Changes
+
+- <Describe a meaningful change and its impact.>
+
+## Validation
+
+- `<command or manual check>` — <actual result>.
+- Not run: `<relevant check>` — <reason>.
+
+## Compatibility and rollout
+
+<Describe breaking changes, migrations, configuration changes, or rollout steps.>
+
+## Risks and follow-ups
+
+<Describe known limitations or remaining work. Link tracking issues when available.>
+```
+
+Replace placeholders and remove unused example bullets. Keep `Summary`
+and `Validation`. Omit `Changes` when it repeats a short summary, and omit
+`Compatibility and rollout` or `Risks and follow-ups` when not applicable.
+
+Keep the summary to one or two short paragraphs and the description
+proportional to the change. Describe the final behavior and impact rather
+than listing files, commits, or conversational history. Include a brief
+before/after example or screenshots when they help review the change.
+Report actual validation results and explain relevant checks not run.
+Prefer a concise Conventional Commit title describing the final change.
 
 If publication is not already authorized for this scope, ask one
 confirmation covering the commits, push target, pull request, and
