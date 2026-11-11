@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from multicuts.errors import AcquisitionError
 from multicuts.local_source import acquire_local_source
-from multicuts.models import AcquiredSource, TimeRange
+from multicuts.models import AcquiredSource, LiveCapture, TimeRange
 
 _SUPPORTED_YOUTUBE_HOSTS = frozenset(
     {
@@ -28,7 +28,12 @@ class SourceProvider(Protocol):
     """The narrow boundary implemented by remote source providers."""
 
     def acquire(
-        self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+        self,
+        source: str,
+        workspace: Path,
+        *,
+        time_range: TimeRange | None = None,
+        live_capture: LiveCapture | None = None,
     ) -> AcquiredSource:
         """Acquire one source into the caller-controlled workspace."""
         ...
@@ -36,7 +41,13 @@ class SourceProvider(Protocol):
 
 class SourceAcquirer(Protocol):
     def __call__(
-        self, source: str, workspace: Path, /, *, time_range: TimeRange | None = None
+        self,
+        source: str,
+        workspace: Path,
+        /,
+        *,
+        time_range: TimeRange | None = None,
+        live_capture: LiveCapture | None = None,
     ) -> AcquiredSource: ...
 
 
@@ -152,11 +163,14 @@ def acquire_source(
     *,
     youtube_provider: SourceProvider | None = None,
     time_range: TimeRange | None = None,
+    live_capture: LiveCapture | None = None,
 ) -> AcquiredSource:
     """Route one source to local acquisition or the YouTube adapter."""
     if not isinstance(workspace, Path):
         raise AcquisitionError("Acquisition workspace must be a Path")
     if isinstance(source, Path):
+        if live_capture is not None:
+            raise AcquisitionError("Live capture requires a YouTube URL")
         return acquire_local_source(source, workspace)
     if not isinstance(source, str):
         raise AcquisitionError("Source must be a path or URL string")
@@ -167,6 +181,10 @@ def acquire_source(
         provider = (
             youtube_provider if youtube_provider is not None else YoutubeAdapter()
         )
+        if live_capture is not None:
+            return provider.acquire(
+                source, workspace, time_range=time_range, live_capture=live_capture
+            )
         return provider.acquire(source, workspace, time_range=time_range)
 
     try:
@@ -183,4 +201,6 @@ def acquire_source(
         raise AcquisitionError(
             "Unsupported source URL; provide a supported YouTube URL"
         )
+    if live_capture is not None:
+        raise AcquisitionError("Live capture requires a YouTube URL")
     return acquire_local_source(source, workspace)

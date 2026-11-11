@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
+from typing import Literal
+
+LiveCapture = float | Literal["until-end"]
 
 
 def _validate_interval(
@@ -64,6 +67,40 @@ class TimeRange:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveAcquisition:
+    """Observed source bounds, without claiming a live's final duration."""
+
+    observed_at: str
+    available_until: float
+    end_confirmed: bool = False
+    capture: LiveCapture | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.observed_at, str) or not self.observed_at.strip():
+            raise ValueError("live observation time must be present")
+        if (
+            isinstance(self.available_until, bool)
+            or not isinstance(self.available_until, (int, float))
+            or not isfinite(self.available_until)
+            or self.available_until <= 0
+        ):
+            raise ValueError("live bounds must be finite positive seconds")
+        if not isinstance(self.end_confirmed, bool):
+            raise ValueError("live closure confirmation must be a boolean")
+        if (
+            self.capture is not None
+            and self.capture != "until-end"
+            and (
+                isinstance(self.capture, bool)
+                or not isinstance(self.capture, (int, float))
+                or not isfinite(self.capture)
+                or self.capture <= 0
+            )
+        ):
+            raise ValueError("live capture must be until-end or positive seconds")
+
+
+@dataclass(frozen=True, slots=True)
 class AcquiredSource:
     """A source available locally with identity and safe origin metadata.
 
@@ -80,6 +117,7 @@ class AcquiredSource:
     original_url: str | None = None
     acquired_range: TimeRange | None = None
     original_duration: float | None = None
+    live: LiveAcquisition | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.local_path, Path):
@@ -102,20 +140,42 @@ class AcquiredSource:
             self.provider_id is None or self.title is None or self.original_url is None
         ):
             raise ValueError("YouTube sources require ID, title, and original URL")
-        if (self.acquired_range is None) != (self.original_duration is None):
+        if self.live is not None and (
+            not isinstance(self.live, LiveAcquisition)
+            or self.source_kind != "youtube"
+            or self.acquired_range is None
+            or self.original_duration is not None
+        ):
+            raise ValueError(
+                "live sources require a YouTube interval and unknown final duration"
+            )
+        if self.live is None and (self.acquired_range is None) != (
+            self.original_duration is None
+        ):
             raise ValueError(
                 "partial sources require both a range and original duration"
             )
         if self.acquired_range is not None:
             if not isinstance(self.acquired_range, TimeRange):
                 raise ValueError("acquired range must be a time range")
-            if (
+            if self.live is None and (
                 isinstance(self.original_duration, bool)
                 or not isinstance(self.original_duration, (int, float))
                 or not isfinite(self.original_duration)
                 or self.original_duration < self.acquired_range.end
             ):
                 raise ValueError("acquired range must be within the original duration")
+            if (
+                self.live is not None
+                and self.acquired_range.end > self.live.available_until + 0.25
+            ):
+                raise ValueError("acquired range exceeds observed live bounds")
+
+    def timeline_duration(self, media_duration: float) -> float:
+        """Return the known source timeline extent used for bounds and ASR."""
+        if self.live is not None:
+            return self.live.available_until
+        return self.original_duration or media_duration
 
     @property
     def timeline_offset(self) -> float:

@@ -27,7 +27,7 @@ from multicuts.errors import (
     ScoringError,
     TranscriptionError,
 )
-from multicuts.models import TimeRange
+from multicuts.models import LiveCapture, TimeRange
 from multicuts.output_config import (
     SCOPE_SHORTHAND_FIELDS,
     collect_output_values,
@@ -188,6 +188,14 @@ def _time_range(value: tuple[str, str] | None, option: str) -> TimeRange | None:
             f"{option} requires ordered START END within the source; "
             "use nonnegative seconds, MM:SS, or HH:MM:SS (decimals allowed)"
         ) from exc
+
+
+def _live_capture(value: str | None) -> LiveCapture | None:
+    if value is None or value == "until-end":
+        return value
+    interval = _time_range(("0", value), "--live-capture")
+    assert interval is not None
+    return interval.end
 
 
 def _value(option: object | None, name: str, default: object) -> object:
@@ -638,6 +646,17 @@ def run_command(
             rich_help_panel="Clip selection",
         ),
     ] = False,
+    live_capture: Annotated[
+        str | None,
+        typer.Option(
+            "--live-capture",
+            metavar="DURATION|until-end",
+            help="Record a YouTube live from the current point for a duration "
+            "(seconds or HH:MM:SS) or until it ends. Selection remains automatic "
+            "unless --clip-full is set. Default: unset.",
+            rich_help_panel="Source acquisition",
+        ),
+    ] = None,
     llm_backend: Annotated[
         str | None,
         typer.Option(
@@ -806,6 +825,7 @@ def run_command(
         search_range=_time_range(search_range, "--search-range"),
         clip_range=_time_range(clip_range, "--clip-range"),
         full_video=clip_full,
+        live_capture=_live_capture(live_capture),
         overlap_threshold=_float(overlap_threshold, "OVERLAP_THRESHOLD", 0.60),
         language=lang,
         transcription_model=str(_value(asr_model, "ASR_MODEL", "turbo")),

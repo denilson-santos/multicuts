@@ -107,7 +107,7 @@ def prepare_source_range(
 ) -> tuple[AcquiredSource, MediaInfo]:
     """Copy a shared range source, retaining keyframe padding and its real offset."""
     validate_media_for_transcription(media)
-    original_duration = source.original_duration or media.duration
+    original_duration = source.timeline_duration(media.duration)
     if interval.end > original_duration:
         raise MediaError("Requested interval exceeds source media duration")
     check_media_tools()
@@ -169,12 +169,115 @@ def prepare_source_range(
                 local_path=output,
                 fingerprint="sha256-v1:" + sha256(identity.encode("utf-8")).hexdigest(),
                 acquired_range=acquired_range,
-                original_duration=original_duration,
+                original_duration=None
+                if source.live is not None
+                else original_duration,
             )
             os.link(normalized, output)
         return prepared_source, prepared_media
     except OSError as exc:
         raise MediaError("Could not prepare the source interval") from exc
+
+
+def packet_intervals(path: Path) -> tuple[TimeRange, ...]:
+    """Inspect actual presentation coverage and reject gaps in live media."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_packets",
+                "-show_entries",
+                "packet=stream_index,pts_time,duration_time",
+                "-of",
+                "compact=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        raise MediaError("Could not inspect live media packets") from exc
+    if result.returncode:
+        raise MediaError("ffprobe could not inspect live media packets")
+    streams: dict[int, list[tuple[float, float]]] = {}
+    try:
+        for line in result.stdout.splitlines():
+            fields = dict(item.split("=", 1) for item in line.split("|") if "=" in item)
+            if "stream_index" not in fields:
+                continue
+            start = float(fields["pts_time"])
+            duration = float(fields["duration_time"])
+            if (
+                not isfinite(start)
+                or not isfinite(duration)
+                or start < 0
+                or duration <= 0
+            ):
+                raise ValueError("Invalid packet time")
+            streams.setdefault(int(fields["stream_index"]), []).append(
+                (start, start + duration)
+            )
+        intervals = []
+        for index in sorted(streams):
+            ordered = sorted(streams[index])
+            start, end = ordered[0]
+            for following, packet_end in ordered[1:]:
+                if following - end > 0.15:
+                    raise MediaError("Live source has a gap in its media timestamps")
+                end = max(end, packet_end)
+            intervals.append(TimeRange(start, end))
+        if not intervals:
+            raise ValueError("No timed packets")
+        return tuple(intervals)
+    except (KeyError, ValueError, OverflowError) as exc:
+        raise MediaError("Live source lacks valid packet timestamps") from exc
+
+
+def mux_live_streams(
+    video: Path, audio: Path, output: Path, *, stop: float | None = None
+) -> None:
+    """Join live source streams while preserving their original timestamps."""
+    if output.exists():
+        raise MediaError("Live acquisition output already exists")
+    try:
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-n",
+            "-copyts",
+            "-i",
+            str(video),
+            "-i",
+            str(audio),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c",
+            "copy",
+            "-avoid_negative_ts",
+            "disabled",
+        ]
+        if stop is not None:
+            command += ["-to", f"{stop:.6f}"]
+        command.append(str(output))
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise MediaError("Could not join live source streams") from exc
+    if result.returncode:
+        raise MediaError("FFmpeg could not join live source streams")
 
 
 def ffmpeg_format_major() -> int:

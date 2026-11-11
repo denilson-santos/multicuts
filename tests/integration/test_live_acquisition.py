@@ -1,0 +1,210 @@
+"""Real FFmpeg acquisition/rendering with a controlled live HTTP provider."""
+
+import json
+import shutil
+import subprocess
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
+
+import multicuts.adapters.youtube as youtube
+import multicuts.adapters.youtube_live as live
+from multicuts.app_config import AppConfig
+from multicuts.media import inspect_media_path
+from multicuts.models import TimeRange
+from multicuts.pipeline import run_pipeline
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module")
+def fragments(tmp_path_factory):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg and ffprobe are required")
+    root = tmp_path_factory.mktemp("live-fragments")
+    source = root / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=320x180:r=15:d=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=12",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-g",
+            "30",
+            "-c:a",
+            "aac",
+            str(source),
+        ],
+        check=True,
+    )
+    for fmt, stream in (("v", "0:v:0"), ("a", "0:a:0")):
+        fragmented = root / f"{fmt}.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(source),
+                "-map",
+                stream,
+                "-c",
+                "copy",
+                "-movflags",
+                "+frag_keyframe+empty_moov+default_base_moof",
+                "-frag_duration",
+                "2000000",
+                str(fragmented),
+            ],
+            check=True,
+        )
+        # Reuse one initialization box and the original global fragment clocks,
+        # as YouTube does. Independent MP4 encodes reset each fragment's clock.
+        content = fragmented.read_bytes()
+        initialization = b""
+        fragment = b""
+        offset = sequence = 0
+        while offset < len(content):
+            size = int.from_bytes(content[offset : offset + 4], "big")
+            assert size >= 8
+            kind = content[offset + 4 : offset + 8]
+            box = content[offset : offset + size]
+            if kind in {b"ftyp", b"moov"}:
+                initialization += box
+            elif kind == b"moof":
+                fragment = box
+            elif kind == b"mdat":
+                (root / f"{fmt}-{sequence}.mp4").write_bytes(
+                    initialization + fragment + box
+                )
+                sequence += 1
+            offset += size
+        assert sequence >= 6
+    return root
+
+
+@pytest.mark.parametrize("mode", ["snapshot", "range", "until-end", "duration"])
+def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
+    clock = [0.0]
+    observed = []
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    def head():
+        if mode == "until-end" or mode == "duration":
+            return 2 if clock[0] < 5 else 3 if clock[0] < 10 else 5
+        return 5
+
+    class Downloader:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, source, download=True):
+            assert download is False
+            ended = mode == "until-end" and clock[0] >= 20
+            return {
+                "id": "abc123",
+                "title": "Live fixture",
+                "duration": None,
+                "is_live": not ended,
+                "live_status": "post_live" if ended else "is_live",
+                "requested_formats": [
+                    {
+                        "format_id": "v",
+                        "url": "https://media.googlevideo.com/v",
+                        "target_duration": 2,
+                        "protocol": "http_dash_segments_generator",
+                        "vcodec": "avc1",
+                        "acodec": "none",
+                    },
+                    {
+                        "format_id": "a",
+                        "url": "https://media.googlevideo.com/a",
+                        "target_duration": 2,
+                        "protocol": "http_dash_segments_generator",
+                        "vcodec": "none",
+                        "acodec": "mp4a",
+                    },
+                ],
+            }
+
+        def prepare_filename(self, info):
+            return info["filepath"]
+
+    def open_media(request, timeout):
+        parsed = urlsplit(request.full_url)
+        query = parse_qs(parsed.query)
+        seq = int(query["sq"][0]) if "sq" in query else None
+        observed.append((parsed.path, seq))
+
+        class Response:
+            headers = {"X-Head-Seqnum": str(head())}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self, maximum):
+                return (fragments / f"{parsed.path.strip('/')}-{seq}.mp4").read_bytes()
+
+        return Response()
+
+    monkeypatch.setattr(youtube, "YoutubeDL", Downloader)
+    monkeypatch.setattr(live, "urlopen", open_media)
+    monkeypatch.setattr(live, "sleep", sleep)
+    monkeypatch.setattr(live, "monotonic", lambda: clock[0])
+    config = AppConfig(
+        "https://youtu.be/abc123",
+        tmp_path / "out",
+        full_video=mode != "range",
+        clip_range=TimeRange(7, 9) if mode == "range" else None,
+        live_capture="until-end"
+        if mode == "until-end"
+        else 3.0
+        if mode == "duration"
+        else None,
+        subtitles_enabled=False,
+        render="primary",
+        horizontal_width=320,
+        horizontal_height=180,
+    )
+    result = run_pipeline(config)
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["source"]["original_duration"] is None
+    assert manifest["source"]["live"]["end_confirmed"] is (mode == "until-end")
+    actual = manifest["source"]["acquired_range"]
+    assert manifest["clip_range"] == actual
+    assert (
+        actual["start"] > 3.0
+        if mode in {"range", "until-end", "duration"}
+        else actual["start"] < 0.1
+    )
+    output = inspect_media_path(result.clip_paths[0])
+    assert abs(output.duration - (actual["end"] - actual["start"])) < 0.2
+    assert output.has_audio
+    assert manifest["transcription"] is None
+    if mode == "duration":
+        assert abs(output.duration - 3.0) < 0.15
+    assert all(seq is None or seq <= 5 for _, seq in observed)

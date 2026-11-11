@@ -8,6 +8,7 @@ from multicuts.models import (
     AcquiredSource,
     ClipTranscriptSegment,
     ClipTranscriptWord,
+    LiveAcquisition,
     MediaInfo,
     TimeRange,
     Transcript,
@@ -48,6 +49,42 @@ def test_acquired_source_model_rejects_remote_metadata_on_local_source() -> None
             "sha256-v1:abc123",
             title="Should not be fabricated",
         )
+
+
+def test_live_interval_keeps_unknown_original_duration() -> None:
+    source = AcquiredSource(
+        Path("captured.mp4"),
+        "live",
+        "youtube",
+        "abc123",
+        "Live",
+        "https://youtu.be/abc123",
+        TimeRange(100, 120),
+        live=LiveAcquisition("2026-11-11T01:00:00+00:00", 120, True, "until-end"),
+    )
+    assert source.original_duration is None
+    assert source.timeline_duration(20) == 120
+    assert source.timeline_offset == 100
+
+
+def test_live_interval_cannot_exceed_observed_bounds() -> None:
+    with pytest.raises(ValueError, match="observed"):
+        AcquiredSource(
+            Path("captured.mp4"),
+            "live",
+            "youtube",
+            "abc123",
+            "Live",
+            "https://youtu.be/abc123",
+            TimeRange(100, 120),
+            live=LiveAcquisition("2026-11-11T01:00:00+00:00", 110),
+        )
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf"), "10"])
+def test_live_observed_extent_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match="finite positive"):
+        LiveAcquisition("2026-11-11T01:00:00+00:00", value)
 
 
 @pytest.mark.parametrize("duration", [None, 119, float("nan"), True])

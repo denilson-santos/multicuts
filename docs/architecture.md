@@ -43,7 +43,8 @@ compatible cached full-source transcript, then an exact interval cache; YouTube
 range requests cache the acquired interval. AI cache keys continue to include
 their scoped prompt evidence.
 
-The source boundary accepts an optional `TimeRange`. The YouTube adapter uses
+The source boundary accepts an optional `TimeRange` or live capture request.
+For completed sources, the YouTube adapter uses
 yt-dlp's public `download_ranges` callback with `force_keyframes_at_cuts=False`
 and FFmpeg output options that preserve source timestamps. FFmpeg/ffprobe are
 checked before partial acquisition. The callback validates a completed video and
@@ -51,6 +52,33 @@ its original duration before transfer; section metadata must match the requested
 range. The adapter normalizes the copied media through `media.prepare_source_range`.
 There is no full-download or lossy-encoding fallback. Remote formats can require
 headers and neighboring fragments.
+
+Ongoing YouTube lives use `adapters/youtube_live.py`. The YouTube adapter first
+inspects source metadata and resolves H.264/AAC fragmented MP4 streams using
+yt-dlp's public extraction interface. The live module handles provider sequence
+headers, signed media URLs, bounded HTTP retries, and source timestamp searches.
+It does not import yt-dlp private modules. Direct fragment delivery is an
+additional YouTube integration contract, independent of yt-dlp release stability.
+Packet inspection and stream-copy muxing remain in `media.py`.
+
+The initial complete audio/video edge bounds snapshot and historical range
+requests. Range searches inspect actual packet times rather than multiplying
+the requested time by a nominal fragment duration. `AppConfig.live_capture`
+instead starts near the current edge, following new fragments until a duration
+limit or provider-confirmed closure. An ended state and four stable complete
+head observations establish the final capture extent. Refreshed metadata may
+renew signed URLs while retaining the selected format identities. Failure leaves
+only private acquisition files, and a final source is published after timestamp
+coverage and continuity validation.
+
+`AcquiredSource.live` holds project-owned `LiveAcquisition` provenance, including
+the observation time, available source extent, capture request, and confirmation
+of closure. Its `original_duration` remains null. `timeline_duration()` supplies
+the known source extent for bounds and ASR restoration. `acquired_range` always
+records the actual interval, including captures that start well into the live.
+Full-clip rendering consumes that acquired range as one cut. Manifest schema 6
+publishes live provenance separately from the final duration of a completed
+source.
 
 `media.prepare_source_range` copies local range streams with FFmpeg and retains
 source timestamps during extraction. It probes the actual leading keyframe/audio
@@ -66,7 +94,8 @@ source is used by all final renderers, including runs without captions, and by
 ASR except for exact local custom cuts described below.
 
 `AcquiredSource` carries the actual acquired interval and original duration for
-both local and YouTube ranges. The interval can include neighboring keyframe or
+completed local and YouTube ranges. Live ranges carry observed bounds instead.
+The interval can include neighboring keyframe or
 codec packet data. `MediaInfo` describes the prepared file and includes container
 start time and audio codec delay for media-boundary normalization. The pipeline
 checks coverage/duration and records the real source offset. Requested search

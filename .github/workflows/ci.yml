@@ -207,6 +207,7 @@ jobs:
             tests/integration/test_multisubs_timed_cue_integration.py \
             tests/integration/test_multisubs_contract.py \
             tests/integration/test_youtube_live.py \
+            tests/integration/test_live_acquisition.py \
             -ra --junitxml=release-evidence/contracts.xml
           "$PROVISIONED_VENV/bin/python" -m pytest \
             tests/integration/test_render_ffmpeg.py \

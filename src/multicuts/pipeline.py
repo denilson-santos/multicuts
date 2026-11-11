@@ -212,7 +212,7 @@ def _transcribe(
     cache_sources = (
         (original_source, source) if original_source is not None else (source,)
     )
-    source_duration = source.original_duration or media.duration
+    source_duration = source.timeline_duration(media.duration)
     for cache_source in cache_sources:
         shared, key = transcript_paths(
             config.output_dir,
@@ -500,11 +500,23 @@ def run_pipeline(
         )
         logger.info("[1/6] Acquiring source and checking media")
         requested_range = config.clip_range or config.search_range
-        source = acquire(
-            config.source, work / "acquisition", time_range=requested_range
-        )
+        if config.live_capture is None:
+            source = acquire(
+                config.source, work / "acquisition", time_range=requested_range
+            )
+        else:
+            source = acquire(
+                config.source,
+                work / "acquisition",
+                time_range=requested_range,
+                live_capture=config.live_capture,
+            )
         source_name = source.title or source.local_path.stem
-        if requested_range is None and source.acquired_range is not None:
+        if (
+            requested_range is None
+            and source.acquired_range is not None
+            and source.live is None
+        ):
             raise AcquisitionError("Unexpected partial source acquisition")
         if (source.source_kind == "youtube" and requested_range is not None) and (
             source.acquired_range is None
@@ -521,11 +533,7 @@ def run_pipeline(
             if source.source_kind == "local" and requested_range is not None
             else None
         )
-        source_duration = (
-            source.original_duration
-            if source.original_duration is not None
-            else media.duration
-        )
+        source_duration = source.timeline_duration(media.duration)
         if source.acquired_range is not None:
             if not isclose(
                 media.duration,
@@ -547,9 +555,13 @@ def run_pipeline(
             and config.search_range.end > source_duration
         ):
             raise ConfigurationError("--search-range exceeds source media duration")
-        direct_range = (
-            TimeRange(0.0, source_duration) if config.full_video else config.clip_range
-        )
+        direct_range = config.clip_range
+        if config.full_video:
+            direct_range = (
+                source.acquired_range
+                if source.live is not None
+                else TimeRange(0.0, source_duration)
+            )
         if direct_range is not None and direct_range.end > source_duration:
             raise ConfigurationError("--clip-range exceeds source media duration")
         if source.source_kind == "youtube" and requested_range is not None:
@@ -1171,7 +1183,7 @@ def run_pipeline(
                 )
             )
         manifest = {
-            "schema_version": 5,
+            "schema_version": 6,
             "report": "report.md",
             "title_generation": title_generation,
             "selection_mode": config.selection_mode,
@@ -1192,7 +1204,10 @@ def run_pipeline(
                 "kind": source.source_kind,
                 "fingerprint": source.fingerprint,
                 "youtube_id": source.provider_id,
-                "original_duration": source_duration,
+                "original_duration": None
+                if source.live is not None
+                else source_duration,
+                "live": asdict(source.live) if source.live is not None else None,
                 "acquired_duration": media.duration,
                 "acquired_range": {
                     "start": source.acquired_range.start,
