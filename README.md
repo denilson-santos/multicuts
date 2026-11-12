@@ -397,11 +397,14 @@ Unavailable history and future interval ends fail explicitly.
 
 Use `--live-capture` to record from the current live point before processing.
 It accepts a positive duration in seconds, `MM:SS`, or `HH:MM:SS`, or `until-end`.
-The start follows a complete fragment near the live edge. A duration limit ends
-on a media packet boundary. A live that ends earlier produces the complete
-available capture. `until-end` waits for the provider to report closure and
-downloads the final fragments before completing. Network failures are acquisition
-errors after bounded retries; interrupted acquisitions are not resumable.
+The start aligns complete audio/video fragments near the live edge by source
+time. A duration limit ends on a media packet boundary. A live that ends earlier
+produces the complete available capture, ending where both audio and video have
+coverage. `until-end` waits for the provider to report closure and downloads the
+final fragments before completing. An advertised final fragment that remains
+unavailable after bounded retries causes an acquisition error. Network failures
+are acquisition errors after bounded retries; interrupted acquisitions are not
+resumable.
 This option is CLI-only, requires an ongoing YouTube live, and combines
 with either automatic selection or `--clip-full`. It is mutually exclusive with
 `--clip-range` and `--search-range`, which request a source acquisition interval.

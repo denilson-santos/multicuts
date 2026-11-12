@@ -3,6 +3,8 @@
 import json
 import shutil
 import subprocess
+from email.message import Message
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -10,7 +12,8 @@ import pytest
 import multicuts.adapters.youtube as youtube
 import multicuts.adapters.youtube_live as live
 from multicuts.app_config import AppConfig
-from multicuts.media import inspect_media_path
+from multicuts.errors import AcquisitionError
+from multicuts.media import inspect_media_path, packet_intervals
 from multicuts.models import TimeRange
 from multicuts.pipeline import run_pipeline
 
@@ -96,17 +99,42 @@ def fragments(tmp_path_factory):
     return root
 
 
-@pytest.mark.parametrize("mode", ["snapshot", "range", "until-end", "duration"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "snapshot",
+        "range",
+        "until-end",
+        "duration",
+        "video-ahead",
+        "audio-ahead",
+        "short-video-tail",
+        "short-audio-tail",
+        "missing-final-head",
+    ],
+)
 def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
     clock = [0.0]
     observed = []
+    capturing = mode not in {"snapshot", "range"}
+    duration_capture = mode in {"duration", "video-ahead", "audio-ahead"}
 
     def sleep(seconds):
         clock[0] += seconds
+        assert clock[0] <= 120, "capture did not terminate after provider closure"
 
-    def head():
-        if mode == "until-end" or mode == "duration":
-            return 2 if clock[0] < 5 else 3 if clock[0] < 10 else 5
+    def head(fmt):
+        if capturing:
+            sequence = 2 if clock[0] < 5 else 3 if clock[0] < 10 else 5
+            if mode == "video-ahead" and fmt == "v":
+                sequence = min(sequence + 1, 5)
+            if mode == "audio-ahead" and fmt == "a":
+                sequence = min(sequence + 1, 5)
+            if (mode == "short-video-tail" and fmt == "v") or (
+                mode == "short-audio-tail" and fmt == "a"
+            ):
+                sequence = min(sequence, 4)
+            return sequence
         return 5
 
     class Downloader:
@@ -121,7 +149,7 @@ def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
 
         def extract_info(self, source, download=True):
             assert download is False
-            ended = mode == "until-end" and clock[0] >= 20
+            ended = capturing and not duration_capture and clock[0] >= 20
             return {
                 "id": "abc123",
                 "title": "Live fixture",
@@ -156,9 +184,11 @@ def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
         query = parse_qs(parsed.query)
         seq = int(query["sq"][0]) if "sq" in query else None
         observed.append((parsed.path, seq))
+        if mode == "missing-final-head" and seq == 5:
+            raise HTTPError(request.full_url, 404, "missing", Message(), None)
 
         class Response:
-            headers = {"X-Head-Seqnum": str(head())}
+            headers = {"X-Head-Seqnum": str(head(parsed.path.strip("/")))}
 
             def __enter__(self):
                 return self
@@ -180,31 +210,42 @@ def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
         tmp_path / "out",
         full_video=mode != "range",
         clip_range=TimeRange(7, 9) if mode == "range" else None,
-        live_capture="until-end"
-        if mode == "until-end"
-        else 3.0
-        if mode == "duration"
-        else None,
+        live_capture=3.0 if duration_capture else "until-end" if capturing else None,
         subtitles_enabled=False,
         render="primary",
         horizontal_width=320,
         horizontal_height=180,
     )
+    if mode == "missing-final-head":
+        with pytest.raises(AcquisitionError, match="final.*unavailable"):
+            run_pipeline(config)
+        assert not list(config.output_dir.rglob("live-source.mp4"))
+        assert not list(config.output_dir.rglob("manifest.json"))
+        return
     result = run_pipeline(config)
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["source"]["original_duration"] is None
-    assert manifest["source"]["live"]["end_confirmed"] is (mode == "until-end")
+    assert manifest["source"]["live"]["end_confirmed"] is (
+        capturing and not duration_capture
+    )
     actual = manifest["source"]["acquired_range"]
     assert manifest["clip_range"] == actual
     assert (
-        actual["start"] > 3.0
-        if mode in {"range", "until-end", "duration"}
-        else actual["start"] < 0.1
+        actual["start"] > 3.0 if mode == "range" or capturing else actual["start"] < 0.1
     )
     output = inspect_media_path(result.clip_paths[0])
     assert abs(output.duration - (actual["end"] - actual["start"])) < 0.2
     assert output.has_audio
     assert manifest["transcription"] is None
-    if mode == "duration":
+    if duration_capture:
         assert abs(output.duration - 3.0) < 0.15
+    if mode in {"short-video-tail", "short-audio-tail"}:
+        assert 9.9 < actual["end"] < 10.1
+    intervals = packet_intervals(result.clip_paths[0])
+    assert len(intervals) == 2
+    assert (
+        max(interval.end for interval in intervals)
+        - min(interval.end for interval in intervals)
+        < 0.15
+    )
     assert all(seq is None or seq <= 5 for _, seq in observed)

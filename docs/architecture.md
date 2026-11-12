@@ -65,11 +65,18 @@ The initial complete audio/video edge bounds snapshot and historical range
 requests. Range searches inspect actual packet times rather than multiplying
 the requested time by a nominal fragment duration. `AppConfig.live_capture`
 instead starts near the current edge, following new fragments until a duration
-limit or provider-confirmed closure. An ended state and four stable complete
-head observations establish the final capture extent. Refreshed metadata may
+limit or provider-confirmed closure. It aligns the initial fragments by source
+time with packet tolerances, since independently observed audio/video heads can
+differ. Inspected payloads are consumed when written, and older payloads and
+timestamp bounds are evicted as acquisition advances. An ended state and four
+stable complete head observations establish the final capture extent. After
+closure, four polls without progress toward an unavailable final fragment fail
+acquisition rather than waiting indefinitely. Refreshed metadata may
 renew signed URLs while retaining the selected format identities. Failure leaves
 only private acquisition files, and a final source is published after timestamp
-coverage and continuity validation.
+coverage and continuity validation. Captures are muxed through the shared
+audio/video end, and both output streams must cover that end within packet
+tolerance before publication.
 
 `AcquiredSource.live` holds project-owned `LiveAcquisition` provenance, including
 the observation time, available source extent, capture request, and confirmation

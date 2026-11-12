@@ -235,10 +235,15 @@ details stay inside the source adapter and are verified by integration tests.
 `--live-capture DURATION|until-end` is a CLI-only acquisition option for ongoing
 YouTube lives. It records from a complete fragment near the live edge, then runs
 automatic selection unless `--clip-full` requests one cut containing the capture.
+Align the initial audio/video fragments by source time with packet tolerances,
+even when their independently observed sequence numbers differ.
 Accept positive seconds, `MM:SS`, or `HH:MM:SS`. Duration limits retain packet
 precision. If the transmission ends first, keep its complete available capture.
 `until-end` requires provider-confirmed closure and a stable final sequence for
 both audio and video. Temporary network silence cannot establish closure.
+After closure, fail if an advertised final fragment remains unavailable through
+four polls without download progress. Limit the captured output to the shared
+complete audio/video end, retaining packet precision.
 Validate continuity and final coverage before publishing the acquired source.
 Reject combinations with `--clip-range` or `--search-range`, which specify the
 acquisition interval separately. Transcribe the acquired source once when needed.

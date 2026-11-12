@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _POLL_SECONDS = 5.0
 _REFRESH_SECONDS = 20.0
 _FRAGMENT_LIMIT = 32 * 1024 * 1024
+_FINAL_HEAD_RETRIES = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +164,9 @@ def acquire_live(
                 data_cache[key] = content
             return bounds_cache[key]
 
-        def locate(index: int, timestamp: float) -> int:
+        def locate(
+            index: int, timestamp: float, *, start_tolerance: float = 0.0
+        ) -> int:
             low, high = 0, heads[index]
             while low < high:
                 middle = (low + high + 1) // 2
@@ -176,12 +179,15 @@ def acquire_live(
                     # Every selected fragment is still required below.
                     low = middle
                     continue
-                if start <= timestamp:
+                if start <= timestamp + start_tolerance:
                     low = middle
                 else:
                     high = middle - 1
             interval = bounds(index, low)
-            if interval.start > timestamp + 0.001 or interval.end < timestamp - 0.001:
+            if (
+                interval.start > timestamp + max(0.001, start_tolerance)
+                or interval.end < timestamp - 0.001
+            ):
                 raise AcquisitionError(
                     "YouTube live history does not cover the requested timestamp"
                 )
@@ -219,7 +225,10 @@ def acquire_live(
             stops = [locate(i, requested.end) for i in range(2)]
             target_end = requested.end
         else:
-            starts = list(heads)
+            # Audio/video head requests can race, and corresponding fragments
+            # can start a few packets apart despite sharing a source interval.
+            common_start = min(bounds(i, seq).start for i, seq in enumerate(heads))
+            starts = [locate(i, common_start, start_tolerance=0.15) for i in range(2)]
             stops = list(heads)
             target_end = (
                 None
@@ -240,6 +249,7 @@ def acquire_live(
         last_progress = 0.0
         prior_heads: list[int] | None = None
         stable_end_checks = 0
+        incomplete_end_checks = 0
         ended = False
         with (
             (work / "video.mp4").open("wb") as video,
@@ -247,9 +257,12 @@ def acquire_live(
         ):
             outputs = (video, audio)
             while True:
+                previous_sequences = tuple(next_sequence)
                 for index, stop in enumerate(stops):
                     for sequence in range(next_sequence[index], stop + 1):
                         try:
+                            if sequence == stop:
+                                bounds(index, sequence)
                             outputs[index].write(data(index, sequence))
                         except HTTPError as exc:
                             if (
@@ -262,6 +275,14 @@ def acquire_live(
                                 f"YouTube live fragment {sequence} is unavailable"
                             ) from None
                         next_sequence[index] = sequence + 1
+                # Only the latest written bounds are needed by following polls.
+                # Payloads inspected before writing are consumed by data().
+                for key in tuple(bounds_cache):
+                    if key[1] < next_sequence[key[0]] - 1:
+                        del bounds_cache[key]
+                for key in tuple(data_cache):
+                    if key[1] < next_sequence[key[0]]:
+                        del data_cache[key]
                 complete = all(next_sequence[i] > stops[i] for i in range(2))
                 if capture is None:
                     break
@@ -285,6 +306,19 @@ def acquire_live(
                             )
                         streams[:] = updated.streams
                     last_refresh = monotonic()
+                if ended and not complete:
+                    incomplete_end_checks = (
+                        incomplete_end_checks + 1
+                        if tuple(next_sequence) == previous_sequences
+                        else 0
+                    )
+                    if incomplete_end_checks >= _FINAL_HEAD_RETRIES:
+                        raise AcquisitionError(
+                            "YouTube live final fragment remains unavailable "
+                            "after closure"
+                        )
+                else:
+                    incomplete_end_checks = 0
                 stable_end_checks = (
                     stable_end_checks + 1
                     if ended and complete and stops == prior_heads
@@ -305,11 +339,14 @@ def acquire_live(
         if any(next_sequence[i] <= starts[i] for i in range(2)):
             raise AcquisitionError("YouTube live capture has no complete media")
         muxed = work / "source.mp4"
+        mux_stop = None
+        if time_range is None:
+            mux_stop = available if target_end is None else min(available, target_end)
         mux_live_streams(
             work / "video.mp4",
             work / "audio.mp4",
             muxed,
-            stop=target_end if time_range is None else None,
+            stop=mux_stop,
         )
         intervals = packet_intervals(muxed)
         if len(intervals) != 2:
@@ -325,9 +362,13 @@ def acquire_live(
             raise AcquisitionError(
                 "YouTube live media does not cover the requested start"
             )
-        if time_range is not None and any(
-            interval.end < time_range.end - 0.001 for interval in intervals
-        ):
+        expected_end = (
+            time_range.end
+            if time_range is not None
+            else max(actual.end, mux_stop or actual.end)
+        )
+        end_tolerance = 0.001 if time_range is not None else 0.15
+        if any(interval.end < expected_end - end_tolerance for interval in intervals):
             raise AcquisitionError(
                 "YouTube live media does not cover the requested end"
             )
