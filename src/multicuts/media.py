@@ -5,8 +5,11 @@ import os
 import re
 import subprocess
 import tempfile
-from dataclasses import replace
+from collections.abc import Generator
+from contextlib import closing
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
+from heapq import heappop, heappush
 from math import ceil, isclose, isfinite
 from pathlib import Path
 
@@ -179,69 +182,130 @@ def prepare_source_range(
         raise MediaError("Could not prepare the source interval") from exc
 
 
-def packet_intervals(path: Path) -> tuple[TimeRange, ...]:
-    """Inspect actual presentation coverage and reject gaps in live media."""
+@dataclass(slots=True)
+class _PacketCoverage:
+    pending: list[tuple[float, float]] = field(default_factory=list)
+    start: float | None = None
+    end: float = 0.0
+    previous_start: float = -1.0
+
+    def add(self, start: float, duration: float) -> None:
+        heappush(self.pending, (start, start + duration))
+        # B-frames arrive in decode order. Bound the lookahead instead of
+        # retaining every packet until the recording has been inspected.
+        if len(self.pending) > 64:
+            self._advance()
+
+    def _advance(self) -> None:
+        start, end = heappop(self.pending)
+        if start < self.previous_start:
+            raise MediaError("Live source exceeds supported packet reordering")
+        if self.start is None:
+            self.start = start
+        elif start - self.end > 0.15:
+            raise MediaError("Live source has a gap in its media timestamps")
+        self.previous_start = start
+        self.end = max(self.end, end)
+
+    def interval(self) -> TimeRange:
+        while self.pending:
+            self._advance()
+        assert self.start is not None
+        return TimeRange(self.start, self.end)
+
+
+def _packet_data(
+    path: Path, *, stream: str | None = None
+) -> Generator[tuple[int, float, float], None, None]:
+    """Yield packet clocks, closing ffprobe even when the caller stops early."""
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_packets",
+        "-show_entries",
+        "packet=stream_index,pts_time,duration_time",
+        "-of",
+        "compact=p=0",
+    ]
+    if stream is not None:
+        command += ["-select_streams", stream]
+    command.append(str(path))
     try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_packets",
-                "-show_entries",
-                "packet=stream_index,pts_time,duration_time",
-                "-of",
-                "compact=p=0",
-                str(path),
-            ],
-            capture_output=True,
+        with subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
-        )
+        ) as probe:
+            try:
+                assert probe.stdout is not None
+                for line in probe.stdout:
+                    fields = dict(
+                        item.split("=", 1)
+                        for item in line.strip().split("|")
+                        if "=" in item
+                    )
+                    if "stream_index" not in fields:
+                        continue
+                    index = int(fields["stream_index"])
+                    start = float(fields["pts_time"])
+                    duration = float(fields["duration_time"])
+                    if (
+                        index < 0
+                        or not isfinite(start)
+                        or not isfinite(duration)
+                        or not isfinite(start + duration)
+                        or start < 0
+                        or duration <= 0
+                    ):
+                        raise ValueError("Invalid packet time")
+                    yield index, start, duration
+                if probe.wait():
+                    raise MediaError("ffprobe could not inspect live media packets")
+            finally:
+                if probe.poll() is None:
+                    probe.kill()
+                    probe.wait()
     except OSError as exc:
         raise MediaError("Could not inspect live media packets") from exc
-    if result.returncode:
-        raise MediaError("ffprobe could not inspect live media packets")
-    streams: dict[int, list[tuple[float, float]]] = {}
-    try:
-        for line in result.stdout.splitlines():
-            fields = dict(item.split("=", 1) for item in line.split("|") if "=" in item)
-            if "stream_index" not in fields:
-                continue
-            start = float(fields["pts_time"])
-            duration = float(fields["duration_time"])
-            if (
-                not isfinite(start)
-                or not isfinite(duration)
-                or start < 0
-                or duration <= 0
-            ):
-                raise ValueError("Invalid packet time")
-            streams.setdefault(int(fields["stream_index"]), []).append(
-                (start, start + duration)
-            )
-        intervals = []
-        for index in sorted(streams):
-            ordered = sorted(streams[index])
-            start, end = ordered[0]
-            for following, packet_end in ordered[1:]:
-                if following - end > 0.15:
-                    raise MediaError("Live source has a gap in its media timestamps")
-                end = max(end, packet_end)
-            intervals.append(TimeRange(start, end))
-        if not intervals:
-            raise ValueError("No timed packets")
-        return tuple(intervals)
     except (KeyError, ValueError, OverflowError) as exc:
         raise MediaError("Live source lacks valid packet timestamps") from exc
 
 
+def packet_intervals(path: Path) -> tuple[TimeRange, ...]:
+    """Inspect presentation coverage with bounded per-stream reorder buffers."""
+    streams: dict[int, _PacketCoverage] = {}
+    with closing(_packet_data(path)) as packets:
+        for index, start, duration in packets:
+            if index not in streams:
+                streams[index] = _PacketCoverage()
+            streams[index].add(start, duration)
+    if not streams:
+        raise MediaError("Live source lacks valid packet timestamps")
+    return tuple(streams[index].interval() for index in sorted(streams))
+
+
+def _live_video_endpoint(path: Path, stop: float) -> tuple[int, float]:
+    count = 0
+    end: float | None = None
+    with closing(_packet_data(path, stream="v:0")) as packets:
+        for _, start, duration in packets:
+            if start >= stop:
+                break
+            count += 1
+            end = max(end or 0.0, start + duration)
+    if end is None:
+        raise MediaError("Live capture limit precedes its first video packet")
+    return count, end
+
+
 def mux_live_streams(
     video: Path, audio: Path, output: Path, *, stop: float | None = None
-) -> None:
-    """Join live source streams while preserving their original timestamps."""
+) -> float | None:
+    """Join streams at a decodable packet endpoint, preserving source clocks."""
     if output.exists():
         raise MediaError("Live acquisition output already exists")
     try:
@@ -266,8 +330,17 @@ def mux_live_streams(
             "-avoid_negative_ts",
             "disabled",
         ]
+        endpoint = None
         if stop is not None:
-            command += ["-to", f"{stop:.6f}"]
+            count, endpoint = _live_video_endpoint(video, stop)
+            # Keep a decode-order prefix: dropping a future reference frame but
+            # retaining earlier B-frames can silently corrupt the final images.
+            command += [
+                "-bsf:v",
+                f"noise=drop='gte(n,{count})'",
+                "-bsf:a",
+                f"noise=drop='gte(pts*tb,{endpoint:.6f})'",
+            ]
         command.append(str(output))
         result = subprocess.run(
             command,
@@ -278,6 +351,7 @@ def mux_live_streams(
         raise MediaError("Could not join live source streams") from exc
     if result.returncode:
         raise MediaError("FFmpeg could not join live source streams")
+    return endpoint
 
 
 def ffmpeg_format_major() -> int:

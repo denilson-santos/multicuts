@@ -400,9 +400,11 @@ and future interval ends fail explicitly.
 Use `--live-capture` to record from the current live point before processing.
 It accepts a positive duration in seconds, `MM:SS`, or `HH:MM:SS`, or `until-end`.
 The start aligns complete audio/video fragments near the live edge by source
-time. A duration limit ends on a media packet boundary. A live that ends earlier
-produces the complete available capture, ending where both audio and video have
-coverage. `until-end` waits for the provider to report closure and downloads the
+time. A duration limit rounds to a decodable video packet boundary; B-frame
+dependencies can move the effective endpoint recorded in the acquired bounds.
+Audio follows that same endpoint. A live that ends earlier produces the complete
+available capture, ending where both audio and video have coverage. `until-end`
+waits for the provider to report closure and downloads the
 final fragments before completing. An advertised final fragment that remains
 unavailable after bounded retries causes an acquisition error. Network failures
 are acquisition errors after bounded retries; interrupted acquisitions are not

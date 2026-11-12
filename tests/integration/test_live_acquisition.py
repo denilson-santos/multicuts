@@ -13,15 +13,15 @@ import multicuts.adapters.youtube as youtube
 import multicuts.adapters.youtube_live as live
 from multicuts.app_config import AppConfig
 from multicuts.errors import AcquisitionError
-from multicuts.media import inspect_media_path, packet_intervals
+from multicuts.media import inspect_media_path, mux_live_streams, packet_intervals
 from multicuts.models import TimeRange
 from multicuts.pipeline import run_pipeline
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(scope="module")
-def fragments(tmp_path_factory):
+@pytest.fixture(scope="module", params=["ultrafast", "medium"])
+def fragments(tmp_path_factory, request):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("FFmpeg and ffprobe are required")
     root = tmp_path_factory.mktemp("live-fragments")
@@ -43,7 +43,7 @@ def fragments(tmp_path_factory):
             "-c:v",
             "libx264",
             "-preset",
-            "ultrafast",
+            request.param,
             "-g",
             "30",
             "-c:a",
@@ -148,7 +148,60 @@ def test_live_historical_range_preserves_shared_audio_video_coverage(
         - min(interval.end for interval in intervals)
         < 0.15
     )
-    assert result.interval.start == pytest.approx(2, abs=0.03)
+    assert result.interval.start <= 4
+    assert all(interval.end >= 8 - 0.001 for interval in intervals)
+    if packet_intervals(fragments / "v-0.mp4")[0].start == 0:
+        assert result.interval.start == pytest.approx(2, abs=0.03)
+
+
+@pytest.mark.parametrize("stop", [4.89, 5.15, 7.010667, 7.25])
+def test_live_cut_preserves_an_uncorrupted_decoded_prefix(fragments, stop, tmp_path):
+    paths = []
+    for fmt in ("v", "a"):
+        path = tmp_path / f"{fmt}.mp4"
+        path.write_bytes(
+            b"".join((fragments / f"{fmt}-{i}.mp4").read_bytes() for i in (2, 3))
+        )
+        paths.append(path)
+
+    def decoded_frames(path):
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-f",
+                "framemd5",
+                "pipe:1",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        assert result.stderr == b""
+        return [
+            row.rsplit(",", 1)[-1].strip()
+            for row in result.stdout.decode().splitlines()
+            if not row.startswith("#")
+        ]
+
+    output = tmp_path / "capture.mp4"
+    endpoint = mux_live_streams(paths[0], paths[1], output, stop=stop)
+    original = decoded_frames(paths[0])
+    actual = decoded_frames(output)
+    assert actual and actual == original[: len(actual)]
+    assert endpoint is not None and endpoint <= stop + 1 / 15 + 0.001
+    intervals = packet_intervals(output)
+    assert intervals[0].end == pytest.approx(endpoint, abs=0.001)
+    assert (
+        max(interval.end for interval in intervals)
+        - min(interval.end for interval in intervals)
+        < 0.15
+    )
 
 
 @pytest.mark.parametrize(
@@ -292,7 +345,13 @@ def test_live_source_through_pipeline(mode, fragments, tmp_path, monkeypatch):
     if duration_capture:
         assert abs(output.duration - 3.0) < 0.15
     if mode in {"short-video-tail", "short-audio-tail"}:
-        assert 9.9 < actual["end"] < 10.1
+        shared_end = min(
+            packet_intervals(
+                fragments / f"{fmt}-{4 if mode == f'short-{kind}-tail' else 5}.mp4"
+            )[0].end
+            for fmt, kind in (("v", "video"), ("a", "audio"))
+        )
+        assert abs(actual["end"] - shared_end) < 0.15
     intervals = packet_intervals(result.clip_paths[0])
     assert len(intervals) == 2
     assert (

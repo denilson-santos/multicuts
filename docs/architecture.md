@@ -60,6 +60,9 @@ headers, signed media URLs, bounded HTTP retries, and source timestamp searches.
 It does not import yt-dlp private modules. Direct fragment delivery is an
 additional YouTube integration contract, independent of yt-dlp release stability.
 Packet inspection and stream-copy muxing remain in `media.py`.
+Packet inspection streams ffprobe output and retains at most 64 pending
+presentation packets per stream; larger reordering fails explicitly. Probe
+processes are closed on completion, failure, and early iterator termination.
 
 The initial complete audio/video edge bounds snapshot and historical range
 requests. Range searches inspect actual packet times rather than multiplying
@@ -79,6 +82,13 @@ common source start: independent fragment lookups must not retain a whole extra
 fragment from only one track. All live acquisitions are muxed through the shared
 audio/video end. Both output streams must cover the actual acquired interval
 within packet tolerance before publication, including neighboring range padding.
+The initial zero-time lookup accepts encoder priming within the same 0.15-second
+packet tolerance. Finite muxing selects a decode-order video prefix before the
+first packet beyond the requested presentation limit, then bounds audio by that
+prefix's actual presentation endpoint. [Packet filters](https://ffmpeg.org/ffmpeg-bitstream-filters.html#noise) retain encoded data and
+source clocks. This avoids both DTS-based `-to` overshoot and corrupt B-frames
+whose future reference packets would otherwise be discarded. The selected
+endpoint is returned for coverage validation and actual-range provenance.
 
 `AcquiredSource.live` holds project-owned `LiveAcquisition` provenance, including
 the observation time, available source extent, capture request, and confirmation

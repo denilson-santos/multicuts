@@ -240,8 +240,12 @@ YouTube lives. It records from a complete fragment near the live edge, then runs
 automatic selection unless `--clip-full` requests one cut containing the capture.
 Align the initial audio/video fragments by source time with packet tolerances,
 even when their independently observed sequence numbers differ.
-Accept positive seconds, `MM:SS`, or `HH:MM:SS`. Duration limits retain packet
-precision. If the transmission ends first, keep its complete available capture.
+Accept positive seconds, `MM:SS`, or `HH:MM:SS`. Duration limits round to a
+decodable presentation-packet boundary. B-frame dependencies can move the
+effective endpoint; retain the actual acquired bounds and match audio to that
+endpoint without reencoding. If the transmission ends first, keep its complete
+available capture. Initial encoder priming within the 0.15-second packet
+tolerance does not count as missing live history.
 `until-end` requires provider-confirmed closure and a stable final sequence for
 both audio and video. Temporary network silence cannot establish closure.
 After closure, fail if an advertised final fragment remains unavailable through

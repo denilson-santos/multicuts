@@ -139,6 +139,24 @@ def test_snapshot_stops_at_observed_edge(transport, tmp_path):
     assert "video:21" not in result.path.read_text()
 
 
+@pytest.mark.parametrize("priming", [0.01, 0.133333, 0.15])
+def test_snapshot_accepts_initial_encoder_priming(priming, transport, tmp_path):
+    transport.timestamp_offsets = {"video": priming}
+    result = live.acquire_live(
+        state(), tmp_path, time_range=None, capture=None, refresh=state
+    )
+    assert result.interval == TimeRange(0, 42)
+
+
+def test_snapshot_rejects_beginning_beyond_packet_tolerance(transport, tmp_path):
+    transport.timestamp_offsets = {"video": 0.2}
+    with pytest.raises(AcquisitionError, match="history does not cover"):
+        live.acquire_live(
+            state(), tmp_path, time_range=None, capture=None, refresh=state
+        )
+    assert not (tmp_path / "live-source.mp4").exists()
+
+
 def test_past_range_keeps_source_offset_and_only_selected_media(transport, tmp_path):
     result = live.acquire_live(
         state(), tmp_path, time_range=TimeRange(12, 17), capture=None, refresh=state

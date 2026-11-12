@@ -212,7 +212,11 @@ def acquire_live(
             requested = time_range or TimeRange(0.0, available)
             starts = []
             for index in range(2):
-                sequence = locate(index, requested.start)
+                sequence = locate(
+                    index,
+                    requested.start,
+                    start_tolerance=0.15 if requested.start == 0 else 0.0,
+                )
                 if sequence > 0 and requested.start > 0:
                     try:
                         bounds(index, sequence - 1)
@@ -350,12 +354,14 @@ def acquire_live(
         mux_stop = min(bounds(i, seq - 1).end for i, seq in enumerate(next_sequence))
         if time_range is None and target_end is not None:
             mux_stop = min(mux_stop, target_end)
-        mux_live_streams(
+        selected_end = mux_live_streams(
             work / "video.mp4",
             work / "audio.mp4",
             muxed,
             stop=mux_stop,
         )
+        if selected_end is not None:
+            mux_stop = selected_end
         intervals = packet_intervals(muxed)
         if len(intervals) != 2:
             raise AcquisitionError("YouTube live acquisition lacks audio or video")
