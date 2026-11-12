@@ -222,6 +222,14 @@ def acquire_live(
                     else:
                         sequence -= 1
                 starts.append(sequence)
+            # Independent padding can select an extra audio/video fragment at
+            # a boundary. Retain a common start so players need no long lead-in.
+            common_start = max(bounds(i, seq).start for i, seq in enumerate(starts))
+            alignment_tolerance = min(0.15, max(0.0, requested.start - common_start))
+            starts = [
+                locate(i, common_start, start_tolerance=alignment_tolerance)
+                for i in range(2)
+            ]
             stops = [locate(i, requested.end) for i in range(2)]
             target_end = requested.end
         else:
@@ -339,9 +347,9 @@ def acquire_live(
         if any(next_sequence[i] <= starts[i] for i in range(2)):
             raise AcquisitionError("YouTube live capture has no complete media")
         muxed = work / "source.mp4"
-        mux_stop = None
-        if time_range is None:
-            mux_stop = available if target_end is None else min(available, target_end)
+        mux_stop = min(bounds(i, seq - 1).end for i, seq in enumerate(next_sequence))
+        if time_range is None and target_end is not None:
+            mux_stop = min(mux_stop, target_end)
         mux_live_streams(
             work / "video.mp4",
             work / "audio.mp4",
@@ -355,20 +363,24 @@ def acquire_live(
             min(interval.start for interval in intervals),
             max(interval.end for interval in intervals),
         )
-        if any(
-            interval.start > (time_range.start if time_range else actual.start) + 0.15
-            for interval in intervals
-        ):
+        expected_start = (
+            min(time_range.start, actual.start)
+            if time_range is not None
+            else actual.start
+        )
+        if any(interval.start > expected_start + 0.15 for interval in intervals):
             raise AcquisitionError(
                 "YouTube live media does not cover the requested start"
             )
         expected_end = (
-            time_range.end
-            if time_range is not None
-            else max(actual.end, mux_stop or actual.end)
+            time_range.end if time_range is not None else max(actual.end, mux_stop)
         )
         end_tolerance = 0.001 if time_range is not None else 0.15
-        if any(interval.end < expected_end - end_tolerance for interval in intervals):
+        if any(
+            interval.end < expected_end - end_tolerance
+            or interval.end < actual.end - 0.15
+            for interval in intervals
+        ):
             raise AcquisitionError(
                 "YouTube live media does not cover the requested end"
             )

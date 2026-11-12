@@ -227,8 +227,11 @@ YouTube and `--clip-full` acquire the full completed video. An ongoing live
 defaults to a finite acquisition from its beginning through the last complete
 audio/video point observed at startup. `--clip-range` and `--search-range` accept
 already transmitted absolute source intervals. Missing history, media gaps,
-unsupported live formats, and future interval ends fail explicitly. Live
-acquisition resolves H.264/AAC MP4 formats through yt-dlp and requests numbered
+unsupported live formats, and future interval ends fail explicitly. Live range
+padding must start at a common audio/video point and end within shared
+coverage, with packet tolerances. Never publish a padded interval containing a
+whole extra fragment from only one track. Live acquisition resolves H.264/AAC
+MP4 formats through yt-dlp and requests numbered
 fragments directly from the returned YouTube media URLs. Provider delivery
 details stay inside the source adapter and are verified by integration tests.
 

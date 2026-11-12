@@ -99,6 +99,58 @@ def fragments(tmp_path_factory):
     return root
 
 
+def test_live_historical_range_preserves_shared_audio_video_coverage(
+    fragments, tmp_path, monkeypatch
+):
+    streams = (
+        live.LiveStream("v", "https://media.googlevideo.com/v", 2),
+        live.LiveStream("a", "https://media.googlevideo.com/a", 2),
+    )
+
+    def open_media(request, timeout):
+        parsed = urlsplit(request.full_url)
+        query = parse_qs(parsed.query)
+        sequence = int(query["sq"][0]) if "sq" in query else None
+
+        class Response:
+            headers = {"X-Head-Seqnum": "5"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self, maximum):
+                path = fragments / f"{parsed.path.strip('/')}-{sequence}.mp4"
+                return path.read_bytes()
+
+        return Response()
+
+    monkeypatch.setattr(live, "urlopen", open_media)
+    state = live.LiveState("is_live", streams)
+    result = live.acquire_live(
+        state,
+        tmp_path,
+        time_range=TimeRange(4, 8),
+        capture=None,
+        refresh=lambda: state,
+    )
+    intervals = packet_intervals(result.path)
+    assert len(intervals) == 2
+    assert (
+        max(interval.start for interval in intervals)
+        - min(interval.start for interval in intervals)
+        < 0.15
+    )
+    assert (
+        max(interval.end for interval in intervals)
+        - min(interval.end for interval in intervals)
+        < 0.15
+    )
+    assert result.interval.start == pytest.approx(2, abs=0.03)
+
+
 @pytest.mark.parametrize(
     "mode",
     [

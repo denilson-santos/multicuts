@@ -74,9 +74,11 @@ closure, four polls without progress toward an unavailable final fragment fail
 acquisition rather than waiting indefinitely. Refreshed metadata may
 renew signed URLs while retaining the selected format identities. Failure leaves
 only private acquisition files, and a final source is published after timestamp
-coverage and continuity validation. Captures are muxed through the shared
-audio/video end, and both output streams must cover that end within packet
-tolerance before publication.
+coverage and continuity validation. Historical range padding is aligned to a
+common source start: independent fragment lookups must not retain a whole extra
+fragment from only one track. All live acquisitions are muxed through the shared
+audio/video end. Both output streams must cover the actual acquired interval
+within packet tolerance before publication, including neighboring range padding.
 
 `AcquiredSource.live` holds project-owned `LiveAcquisition` provenance, including
 the observation time, available source extent, capture request, and confirmation

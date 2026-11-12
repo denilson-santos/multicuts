@@ -148,6 +148,29 @@ def test_past_range_keeps_source_offset_and_only_selected_media(transport, tmp_p
     assert "video:9\n" not in result.path.read_text()
 
 
+@pytest.mark.parametrize("shifted", ["video", "audio"])
+def test_historical_range_aligns_padding_at_fragment_boundaries(
+    shifted, transport, tmp_path
+):
+    transport.timestamp_offsets = {shifted: 0.01}
+    result = live.acquire_live(
+        state(), tmp_path, time_range=TimeRange(4, 8), capture=None, refresh=state
+    )
+    intervals = live.packet_intervals(result.path)
+    assert (
+        max(interval.start for interval in intervals)
+        - min(interval.start for interval in intervals)
+        <= 0.15
+    )
+    assert (
+        max(interval.end for interval in intervals)
+        - min(interval.end for interval in intervals)
+        <= 0.15
+    )
+    assert result.interval.start == 2
+    assert result.interval.end == pytest.approx(8.01)
+
+
 def test_future_range_fails_without_publishing(transport, tmp_path):
     with pytest.raises(ConfigurationError, match="not been transmitted"):
         live.acquire_live(

@@ -393,7 +393,9 @@ through the last complete audio/video interval observed at startup. This end
 stays fixed while the transmission continues. The normal automatic mode uses
 the same acquisition window. Already transmitted `--clip-range` and
 `--search-range` intervals use absolute times from the beginning of the live.
-Unavailable history and future interval ends fail explicitly.
+Neighboring fragment padding is aligned between audio and video, and the acquired
+file retains their shared coverage with packet precision. Unavailable history
+and future interval ends fail explicitly.
 
 Use `--live-capture` to record from the current live point before processing.
 It accepts a positive duration in seconds, `MM:SS`, or `HH:MM:SS`, or `until-end`.
