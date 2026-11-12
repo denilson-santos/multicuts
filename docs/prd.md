@@ -216,15 +216,47 @@ YouTube ranges use yt-dlp's public download-ranges API without forced keyframe
 reencoding. For `--search-range`, warn that acquisition/transcription can include
 padding, report requested/acquired bounds, and state that discovery stays inside
 the requested search range. Validate FFmpeg/ffprobe before partial acquisition
-and reject live, unfinished, unknown-duration, or out-of-source intervals before
-downloading.
+and reject unfinished archives, unknown-duration completed sources, and
+out-of-source intervals before downloading. Ongoing lives use the observed
+audio/video extent rather than a final source duration.
 Validate provider section metadata and copied media coverage before ASR; never
 silently fall back to full download or lossy encoding. Media headers and
 neighboring fragments may also be transferred. Preserve original source times
 in AI input and artifacts while rendering from file-local times. Unrestricted
-YouTube and `--clip-full` still acquire the full video.
+YouTube and `--clip-full` acquire the full completed video. An ongoing live
+defaults to a finite acquisition from its beginning through the last complete
+audio/video point observed at startup. `--clip-range` and `--search-range` accept
+already transmitted absolute source intervals. Missing history, media gaps,
+unsupported live formats, and future interval ends fail explicitly. Live range
+padding must start at a common audio/video point and end within shared
+coverage, with packet tolerances. Never publish a padded interval containing a
+whole extra fragment from only one track. Live acquisition resolves H.264/AAC
+MP4 formats through yt-dlp and requests numbered
+fragments directly from the returned YouTube media URLs. Provider delivery
+details stay inside the source adapter and are verified by integration tests.
 
-Manifest schema 5 records `selection_mode` (`automatic`, `custom`, `full_video`)
+`--live-capture DURATION|until-end` is a CLI-only acquisition option for ongoing
+YouTube lives. It records from a complete fragment near the live edge, then runs
+automatic selection unless `--clip-full` requests one cut containing the capture.
+Align the initial audio/video fragments by source time with packet tolerances,
+even when their independently observed sequence numbers differ.
+Accept positive seconds, `MM:SS`, or `HH:MM:SS`. Duration limits round to a
+decodable presentation-packet boundary. B-frame dependencies can move the
+effective endpoint; retain the actual acquired bounds and match audio to that
+endpoint without reencoding. If the transmission ends first, keep its complete
+available capture. Initial encoder priming within the 0.15-second packet
+tolerance does not count as missing live history.
+`until-end` requires provider-confirmed closure and a stable final sequence for
+both audio and video. Temporary network silence cannot establish closure.
+After closure, fail if an advertised final fragment remains unavailable through
+four polls without download progress. Limit the captured output to the shared
+complete audio/video end, retaining packet precision.
+Validate continuity and final coverage before publishing the acquired source.
+Reject combinations with `--clip-range` or `--search-range`, which specify the
+acquisition interval separately. Transcribe the acquired source once when needed.
+Preserve live source offsets in analysis, rendered clip bounds, and subtitles.
+
+Manifest schema 6 records `selection_mode` (`automatic`, `custom`, `full_video`)
 and the effective direct `clip_range` (null for automatic runs).
 `requested_clip_range` records the exact custom CLI request, or null for automatic
 and full-video runs. Clip JSON bounds and clip-local subtitle timings describe

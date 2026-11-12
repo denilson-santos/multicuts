@@ -1,5 +1,6 @@
 import json
 import subprocess
+import tracemalloc
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,11 +11,134 @@ from multicuts.media import (
     check_media_tools,
     inspect_media_path,
     normalize_media_probe,
+    packet_intervals,
     prepare_source_range,
     probe_media,
     validate_media_for_transcription,
 )
 from multicuts.models import AcquiredSource, TimeRange
+
+
+@pytest.fixture
+def packet_probe(monkeypatch):
+    def provide(rows, returncode=0):
+        processes = []
+
+        def lines():
+            yield from rows()
+
+        def run(command, **kwargs):
+            return subprocess.CompletedProcess(
+                command, returncode, "".join(lines()), ""
+            )
+
+        class Probe:
+            def __init__(self, *args, **kwargs):
+                self.stdout = lines()
+                self.returncode = None
+                self.closed = self.killed = False
+                processes.append(self)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.stdout.close()
+                self.closed = True
+
+            def wait(self):
+                if self.returncode is None:
+                    self.returncode = returncode
+                return self.returncode
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+        monkeypatch.setattr("multicuts.media.subprocess.run", run)
+        monkeypatch.setattr("multicuts.media.subprocess.Popen", Probe)
+        return processes
+
+    return provide
+
+
+def test_live_packet_validation_memory_does_not_scale_with_recording_length(
+    packet_probe,
+):
+    def lines():
+        for index in range(100_000):
+            yield (f"stream_index=0|pts_time={index / 50:.6f}|duration_time=0.020000\n")
+
+    processes = packet_probe(lines)
+    tracemalloc.start()
+    try:
+        intervals = packet_intervals(Path("long-live.mp4"))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert intervals == (TimeRange(0, 2000),)
+    assert peak < 2 * 1024 * 1024
+    assert processes[0].closed
+
+
+def test_live_packet_validation_handles_presentation_reordering(packet_probe):
+    def lines():
+        for frame in (0, 3, 1, 2, 6, 4, 5):
+            yield f"stream_index=0|pts_time={frame / 100}|duration_time=0.01\n"
+        for frame in (0, 2, 4):
+            yield f"stream_index=1|pts_time={frame / 100}|duration_time=0.02\n"
+
+    packet_probe(lines)
+    intervals = packet_intervals(Path("reordered.mp4"))
+    assert [interval.start for interval in intervals] == pytest.approx([0, 0])
+    assert [interval.end for interval in intervals] == pytest.approx([0.07, 0.06])
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        "",
+        "stream_index=0|pts_time=N/A|duration_time=0.02\n",
+        "stream_index=0|pts_time=nan|duration_time=0.02\n",
+        "stream_index=0|pts_time=-1|duration_time=0.02\n",
+        "stream_index=0|pts_time=0|duration_time=0\n",
+        "stream_index=0|pts_time=0|duration_time=inf\n",
+        "stream_index=-1|pts_time=0|duration_time=0.02\n",
+        "stream_index=0|pts_time=0\n",
+    ],
+)
+def test_invalid_live_packet_data_closes_the_probe(record, packet_probe):
+    processes = packet_probe(lambda: iter([record]))
+    with pytest.raises(MediaError, match="valid packet timestamps"):
+        packet_intervals(Path("invalid.mp4"))
+    assert processes[0].closed
+    assert processes[0].killed is bool(record)
+
+
+def test_failed_packet_probe_is_not_accepted(packet_probe):
+    processes = packet_probe(
+        lambda: iter(["stream_index=0|pts_time=0|duration_time=0.02\n"]),
+        returncode=3,
+    )
+    with pytest.raises(MediaError, match="ffprobe could not inspect"):
+        packet_intervals(Path("failed.mp4"))
+    assert processes[0].closed
+
+
+def test_live_packet_validation_still_rejects_real_gaps(packet_probe):
+    packet_probe(
+        lambda: iter(
+            [
+                "stream_index=0|pts_time=0|duration_time=0.02\n",
+                "stream_index=0|pts_time=0.5|duration_time=0.02\n",
+            ]
+        )
+    )
+    with pytest.raises(MediaError, match="gap"):
+        packet_intervals(Path("gap.mp4"))
 
 
 @pytest.fixture

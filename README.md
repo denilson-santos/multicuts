@@ -388,6 +388,47 @@ multicuts ./prepared-clip.mp4 --output-dir ./cuts --clip-full --render primary
 
 This includes silence before and after speech, using the probed video duration.
 
+For an ongoing YouTube live, `--clip-full` acquires the source from its beginning
+through the last complete audio/video interval observed at startup. This end
+stays fixed while the transmission continues. The normal automatic mode uses
+the same acquisition window. Already transmitted `--clip-range` and
+`--search-range` intervals use absolute times from the beginning of the live.
+Neighboring fragment padding is aligned between audio and video, and the acquired
+file retains their shared coverage with packet precision. Unavailable history
+and future interval ends fail explicitly.
+
+Use `--live-capture` to record from the current live point before processing.
+It accepts a positive duration in seconds, `MM:SS`, or `HH:MM:SS`, or `until-end`.
+The start aligns complete audio/video fragments near the live edge by source
+time. A duration limit rounds to a decodable video packet boundary; B-frame
+dependencies can move the effective endpoint recorded in the acquired bounds.
+Audio follows that same endpoint. A live that ends earlier produces the complete
+available capture, ending where both audio and video have coverage. `until-end`
+waits for the provider to report closure and downloads the
+final fragments before completing. An advertised final fragment that remains
+unavailable after bounded retries causes an acquisition error. Network failures
+are acquisition errors after bounded retries; interrupted acquisitions are not
+resumable.
+This option is CLI-only, requires an ongoing YouTube live, and combines
+with either automatic selection or `--clip-full`. It is mutually exclusive with
+`--clip-range` and `--search-range`, which request a source acquisition interval.
+
+```bash
+# Record from now until closure, then discover clips using the configured AI.
+multicuts "YOUTUBE_URL" --output-dir ./cuts --live-capture until-end
+
+# Record 30 minutes from now and render the capture as one cut.
+multicuts "YOUTUBE_URL" --output-dir ./cuts \
+  --live-capture 00:30:00 --clip-full --render primary
+```
+
+Live acquisition uses yt-dlp-resolved H.264/AAC MP4 fragments and FFmpeg stream
+copy. Source timestamps and audio/video continuity are verified before the
+shared source is normalized for rendering and transcription. YouTube's fragment
+delivery contract can change independently of the installed yt-dlp release.
+Unsupported live formats fail before processing. Capture windows remain on the
+original live timeline in clip metadata.
+
 Both direct modes use the same framing and subtitle controls as automatic cuts.
 The cut's duration determines its class: up to 180 seconds is short; longer is
 long. That class must be enabled. Metadata has no editorial score. The generated
@@ -425,8 +466,9 @@ subtitles use that output's local timeline.
 <details>
 <summary><strong>Range acquisition, transcription, and cache details</strong></summary>
 
-Partial acquisition requires FFmpeg/ffprobe and a completed video with a known
-duration. Invalid bounds or an unexpected downloaded interval fail explicitly.
+Partial acquisition requires FFmpeg/ffprobe. Completed videos need a known
+duration, while ongoing lives use observed media bounds. Invalid bounds or an
+unexpected downloaded interval fail explicitly.
 
 **Local files:** range requests prepare a temporary source by copying the original
 streams, preserving resolution, frame rate, and audio quality. The original file
@@ -449,7 +491,8 @@ Remote headers and adjacent fragments may also be transferred. The acquired
 streams are copied without reencoding or reducing their quality, and
 transcription processes the acquired interval. Repeating an interval can reuse
 its transcript; different intervals have separate caches. Without a range,
-including `--clip-full`, the entire video is acquired.
+including `--clip-full`, the entire completed video or the fixed live snapshot
+is acquired.
 
 For YouTube `--clip-range`, the manifest records `requested_clip_range` separately
 from the effective `clip_range`. CLI time arguments and clip metadata intervals
@@ -840,6 +883,7 @@ Choose direct cuts and the overlap policy.
 | --- | --- |
 | `--clip-range START END` | Render one interval without AI analysis; local bounds are exact, YouTube bounds include acquired keyframe padding. |
 | `--clip-full` | Render the entire source as one cut without AI analysis. |
+| `--live-capture DURATION\|until-end` | Record an ongoing YouTube live from its current point, then apply automatic selection or `--clip-full`. |
 | `--overlap-threshold RATIO` | Set the overlap suppression ratio for clips of the same class. |
 
 #### Outputs
@@ -1066,7 +1110,7 @@ Run `multicuts --help` for the same option groups and their defaults in the term
 
 ## Output and reruns
 
-Manifest schema 5 and clip metadata schema 2 record `selection_mode`
+Manifest schema 6 and clip metadata schema 2 record `selection_mode`
 (`automatic`, `custom`, or `full_video`). Direct cuts have null `viral_potential`
 and `transcript_unit_ids`, a null manifest clip score, and zero proposed and
 editorially eligible counts. Their editorial AI provenance fields are null.
@@ -1076,7 +1120,10 @@ with backend, model, effort, prompt version, editorial context, and cache reuse.
 This field is null when there is no standalone title request. When ASR is
 skipped, manifest `transcription` is null and clip `transcript_text` is empty.
 Manifest source provenance includes `original_duration`, `acquired_duration`,
-and `acquired_range` (null for full-source acquisition).
+and `acquired_range` (null for completed full-source acquisition). For live
+sources, `original_duration` is null and `source.live` records the UTC observation
+time, observed `available_until`, the capture request, and `end_confirmed`.
+Observed availability is separate from the live's unknown final duration.
 Manifest `transcription.source_range` records the actual transcription interval,
 or null when a full-source transcript was used.
 
@@ -1161,7 +1208,7 @@ The score evaluates the transcript, not visual quality, audio quality, or measur
 <details>
 <summary><strong>⚙️ Advanced configuration and reasoning effort</strong></summary>
 
-Output settings take precedence in this order: **CLI flags → process environment → `.env` → JSON preset → defaults**. Other settings use CLI → process environment → `.env` → defaults. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
+Output settings take precedence in this order: **CLI flags → process environment → `.env` → JSON preset → defaults**. Other settings use CLI → process environment → `.env` → defaults. Source, `--output-dir`, `--search-range`, `--clip-range`, `--clip-full`, `--live-capture`, `--context`, `--lang`, `--verbose`, `--force-recompute`, and `--keep-intermediates` are CLI-only. See [.env.example](.env.example) for environment settings.
 
 `--asr-model` or `ASR_MODEL` selects the transcription model, with an explicit default of `turbo`. `--asr-backend` or `ASR_BACKEND` selects the transcription engine, defaulting to `whisperx`. These settings are independent of the AI analysis backend and model. Replace the former `TRANSCRIPTION_MODEL` setting with `ASR_MODEL`; the old name is no longer read.
 

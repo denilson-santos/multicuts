@@ -8,7 +8,7 @@ from math import isfinite
 from pathlib import Path
 
 from multicuts.errors import ConfigurationError
-from multicuts.models import MediaInfo, TimeRange
+from multicuts.models import LiveCapture, MediaInfo, TimeRange
 from multicuts.subtitles import SubtitleContainer, SubtitleOptions
 from multicuts.variants import (
     VARIANTS,
@@ -125,6 +125,7 @@ class AppConfig:
     subtitle_container: SubtitleContainer | None = None
     render_encoding: RenderEncoding = RenderEncoding()
     render_jobs: int = 1
+    live_capture: LiveCapture | None = None
 
     def __post_init__(self) -> None:
         if type(self.render_jobs) is not int or self.render_jobs < 1:
@@ -165,6 +166,24 @@ class AppConfig:
             )
         if not isinstance(self.source, str) or not self.source.strip():
             raise ConfigurationError("source must not be empty")
+        if self.live_capture is not None:
+            from multicuts.source import is_supported_youtube_url
+
+            if self.live_capture != "until-end" and (
+                isinstance(self.live_capture, bool)
+                or not isinstance(self.live_capture, (int, float))
+                or not isfinite(self.live_capture)
+                or self.live_capture <= 0
+            ):
+                raise ConfigurationError(
+                    "--live-capture requires until-end or a positive duration"
+                )
+            if not is_supported_youtube_url(self.source):
+                raise ConfigurationError("--live-capture requires a YouTube URL")
+            if self.clip_range is not None or self.search_range is not None:
+                raise ConfigurationError(
+                    "--live-capture cannot be combined with source range acquisition"
+                )
         use_ai = not self.direct_clip or bool(self.llm_backend or self.llm_model)
         if use_ai and self.llm_backend not in LLM_BACKENDS:
             raise ConfigurationError(

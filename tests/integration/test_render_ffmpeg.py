@@ -94,7 +94,7 @@ def test_source_orientation_matrix_encodes_valid_crop_and_blur_outputs(
     )
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work, *, time_range=None: source,
+        acquire=lambda _source, _work, *, time_range=None, live_capture=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
     )
     manifest = json.loads(result.manifest_path.read_text())
@@ -193,7 +193,7 @@ def test_grouped_cli_controls_publish_only_the_requested_variant(
     source = AcquiredSource(source_path, "sha256-v1:grouped-cli")
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work, *, time_range=None: source,
+        acquire=lambda _source, _work, *, time_range=None, live_capture=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
     )
     manifest = json.loads(result.manifest_path.read_text())
@@ -662,7 +662,7 @@ def test_pipeline_renders_different_primary_and_variant_subtitles(
     transcriber = Transcriber()
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work, *, time_range=None: source,
+        acquire=lambda _source, _work, *, time_range=None, live_capture=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
         transcriber=transcriber,
         backend=Backend(),
@@ -1053,7 +1053,7 @@ def test_blurred_custom_canvas_preserves_native_foreground_ratio(
     )
     result = run_pipeline(
         config,
-        acquire=lambda _source, _work, *, time_range=None: source,
+        acquire=lambda _source, _work, *, time_range=None, live_capture=None: source,
         probe=lambda acquired: inspect_media_path(acquired.local_path),
     )
     (video,) = result.clip_paths

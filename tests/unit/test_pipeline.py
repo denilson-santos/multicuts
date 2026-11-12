@@ -31,6 +31,7 @@ from multicuts.errors import (
 )
 from multicuts.models import (
     AcquiredSource,
+    LiveAcquisition,
     MediaInfo,
     RenderedVariant,
     TimeRange,
@@ -802,7 +803,11 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
     transcripts: list[Transcript] = []
 
     def acquire(
-        source: str, workspace: Path, *, time_range: TimeRange | None = None
+        source: str,
+        workspace: Path,
+        *,
+        time_range: TimeRange | None = None,
+        live_capture=None,
     ) -> AcquiredSource:
         assert source == "https://youtu.be/abc123"
         assert time_range is not None
@@ -985,6 +990,80 @@ def test_partial_youtube_pipeline_preserves_source_times_and_caches_local_asr(
     assert acquisition_ranges == [interval, interval, changed]
 
 
+def test_live_capture_automatic_selection_restores_timeline_and_reuses_one_asr(
+    tmp_path: Path,
+) -> None:
+    interval = TimeRange(7200, 7560)
+    source_file = tmp_path / "capture.mp4"
+    source_file.write_bytes(b"capture")
+    source = AcquiredSource(
+        source_file,
+        "live-capture-fingerprint",
+        "youtube",
+        "abc123",
+        "Captured live",
+        "https://youtu.be/abc123",
+        interval,
+        live=LiveAcquisition("2026-11-11T01:00:00+00:00", 7560, True, "until-end"),
+    )
+    acquisition_requests = []
+    rendered = []
+
+    def acquire(url, workspace, *, time_range=None, live_capture=None):
+        acquisition_requests.append((time_range, live_capture))
+        return source
+
+    def raw_renderer(source, media, clip, config, *, output, work):
+        assert source.timeline_offset == 7200
+        rendered.append((clip.proposal.start, clip.proposal.end))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"raw")
+        return (
+            output,
+            replace(media, duration=clip.proposal.end - clip.proposal.start),
+            "16:9",
+        )
+
+    def final_renderer(raw, media, transcript, clip, config, *, output, work):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(raw, output)
+        return output, (), None
+
+    config = AppConfig(
+        source.original_url or "",
+        tmp_path / "out",
+        "codex",
+        "test-model",
+        live_capture="until-end",
+        subtitles_enabled=False,
+        render="primary",
+    )
+    asr, backend = FakeTranscriber(), FakeBackend()
+    for _ in range(2):
+        result = run_pipeline(
+            config,
+            acquire=acquire,
+            probe=lambda _: _media(),
+            transcriber=asr,
+            backend=backend,
+            raw_renderer=raw_renderer,
+            final_renderer=final_renderer,
+        )
+    assert acquisition_requests == [(None, "until-end"), (None, "until-end")]
+    assert rendered == [(7200, 7320), (7200, 7560)] * 2
+    assert asr.calls == 1
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["selection_mode"] == "automatic"
+    assert manifest["clip_range"] is None
+    assert manifest["source"]["original_duration"] is None
+    assert manifest["source"]["acquired_range"] == {"start": 7200, "end": 7560}
+    assert manifest["transcription"]["cache_hit"]
+    (cached,) = (config.output_dir / ".cache" / "transcripts").glob("*.json")
+    transcript = json.loads(cached.read_text())["transcript"]
+    assert transcript["duration"] == 360
+    assert transcript["segments"][0]["start"] == 0
+
+
 @pytest.mark.parametrize("long_enabled", [False, True])
 def test_youtube_custom_cut_uses_acquired_duration_for_class_and_subtitles(
     long_enabled: bool, tmp_path: Path
@@ -1081,7 +1160,9 @@ def test_partial_youtube_rejects_whole_or_mismatched_media_before_asr(
     with pytest.raises(AcquisitionError, match="interval"):
         run_pipeline(
             config,
-            acquire=lambda _source, _work, *, time_range=None: source,
+            acquire=lambda _source, _work, *, time_range=None, live_capture=None: (
+                source
+            ),
             probe=lambda _: replace(_media(), duration=duration),
             transcriber=asr,
         )
@@ -1241,7 +1322,11 @@ def _run(
     source_info = source_media or _media()
 
     def acquire(
-        _source: str, _workspace: Path, *, time_range: TimeRange | None = None
+        _source: str,
+        _workspace: Path,
+        *,
+        time_range: TimeRange | None = None,
+        live_capture=None,
     ) -> AcquiredSource:
         return AcquiredSource(source_file, "sha256-v1:source")
 
@@ -1460,8 +1545,8 @@ def test_report_collision_preserves_existing_file_and_prevents_completed_manifes
     with pytest.raises(ArtifactError, match="Could not publish run report"):
         run_pipeline(
             config,
-            acquire=lambda _source, _work, *, time_range=None: AcquiredSource(
-                source, "sha256-v1:source"
+            acquire=lambda _source, _work, *, time_range=None, live_capture=None: (
+                AcquiredSource(source, "sha256-v1:source")
             ),
             probe=lambda _: _media(),
             raw_renderer=raw_renderer,
@@ -1505,7 +1590,7 @@ def test_rerun_reuses_transcription_and_ai_but_publishes_fresh_clips(
     assert manifest["transcription"]["backend"] == "whisperx"
     assert manifest["transcription"]["model"] == "turbo"
     assert manifest["analysis"]["ai_cache"] == {"hits": 3, "misses": 0}
-    assert manifest["schema_version"] == 5
+    assert manifest["schema_version"] == 6
     assert manifest["analysis"]["editorially_eligible"] == 2
     assert manifest["analysis"]["selected"] == 2
     assert "minimum_score" not in manifest["analysis"]

@@ -52,7 +52,12 @@ def test_local_source_routing_does_not_invoke_remote_provider(tmp_path: Path) ->
 
     class FailingProvider:
         def acquire(
-            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+            self,
+            source: str,
+            workspace: Path,
+            *,
+            time_range: TimeRange | None = None,
+            live_capture=None,
         ) -> AcquiredSource:
             del source, workspace
             raise AssertionError("remote provider must not run for local paths")
@@ -82,7 +87,12 @@ def test_youtube_source_routing_uses_provider_boundary(tmp_path: Path) -> None:
 
     class FakeProvider:
         def acquire(
-            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+            self,
+            source: str,
+            workspace: Path,
+            *,
+            time_range: TimeRange | None = None,
+            live_capture=None,
         ) -> AcquiredSource:
             calls.append((source, workspace))
             return expected
@@ -108,7 +118,12 @@ def test_youtube_routing_forwards_the_requested_interval(tmp_path: Path) -> None
 
     class Provider:
         def acquire(
-            self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+            self,
+            source: str,
+            workspace: Path,
+            *,
+            time_range: TimeRange | None = None,
+            live_capture=None,
         ) -> AcquiredSource:
             assert time_range == interval
             return AcquiredSource(

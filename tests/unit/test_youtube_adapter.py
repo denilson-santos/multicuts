@@ -39,6 +39,8 @@ class FakeYoutubeDL:
             "duration": 360.0,
             **self.payload,
         }
+        if not download:
+            return info
         ranges = self.options.get("download_ranges")
         if callable(ranges):
             sections = ranges(info, self)
@@ -85,7 +87,7 @@ def test_adapter_downloads_one_source_into_controlled_workspace(tmp_path: Path) 
     acquired = YoutubeAdapter().acquire(url, tmp_path / "downloads")
 
     workspace = (tmp_path / "downloads").resolve()
-    downloader = FakeYoutubeDL.instances[0]
+    downloader = FakeYoutubeDL.instances[-1]
     assert acquired.local_path.is_relative_to(workspace)
     assert acquired.local_path.is_file()
     assert acquired.source_kind == "youtube"
@@ -114,8 +116,8 @@ def test_adapter_requests_one_exact_interval_and_preserves_original_identity(
     assert acquired.original_duration == 360.0
     assert acquired.timeline_offset == 100.25
     assert acquired.provider_id == "abc123"
-    assert FakeYoutubeDL.instances[0].options["force_keyframes_at_cuts"] is False
-    assert FakeYoutubeDL.instances[0].options["external_downloader_args"] == {
+    assert FakeYoutubeDL.instances[-1].options["force_keyframes_at_cuts"] is False
+    assert FakeYoutubeDL.instances[-1].options["external_downloader_args"] == {
         "ffmpeg_o": ["-copyts", "-start_at_zero", "-avoid_negative_ts", "disabled"]
     }
 
@@ -142,7 +144,6 @@ def test_partial_fingerprint_separates_ranges_even_with_identical_media(
         {"duration": float("nan")},
         {"duration": 0},
         {"duration": True},
-        {"is_live": True},
         {"live_status": "post_live"},
     ],
 )
@@ -163,6 +164,21 @@ def test_partial_download_rejects_out_of_source_bounds_before_media(
     with pytest.raises(ConfigurationError, match="exceeds source"):
         YoutubeAdapter().acquire(
             "https://youtu.be/abc123", tmp_path, time_range=TimeRange(10, 361)
+        )
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_live_without_supported_formats_fails_before_media(tmp_path: Path) -> None:
+    FakeYoutubeDL.payload = {"is_live": True, "duration": None}
+    with pytest.raises(AcquisitionError, match="separate H.264"):
+        YoutubeAdapter().acquire("https://youtu.be/abc123", tmp_path)
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_live_capture_rejects_completed_video(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="ongoing"):
+        YoutubeAdapter().acquire(
+            "https://youtu.be/abc123", tmp_path, live_capture="until-end"
         )
     assert not list(tmp_path.glob("*.mp4"))
 

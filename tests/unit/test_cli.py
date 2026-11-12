@@ -31,6 +31,44 @@ def _args() -> list[str]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("until-end", "until-end"), ("30", 30.0), ("00:30:00", 1800.0)],
+)
+def test_live_capture_is_independent_from_full_clip_selection(value, expected):
+    args = _args()
+    args[0] = "https://youtu.be/abc123"
+    config = parse_run_config([*args, "--live-capture", value])
+    assert config.live_capture == expected
+    assert config.selection_mode == "automatic"
+    direct = parse_run_config([*args, "--live-capture", value, "--clip-full"])
+    assert direct.live_capture == expected
+    assert direct.selection_mode == "full_video"
+
+
+@pytest.mark.parametrize(
+    "value", ["0", "-1", "nan", "inf", "00:00:00", "00:70:00", "forever"]
+)
+def test_live_capture_rejects_invalid_duration(value):
+    args = _args()
+    args[0] = "https://youtu.be/abc123"
+    with pytest.raises(ConfigurationError):
+        parse_run_config([*args, "--live-capture", value])
+
+
+def test_live_capture_rejects_local_source():
+    with pytest.raises(ConfigurationError, match="YouTube"):
+        parse_run_config([*_args(), "--live-capture", "until-end"])
+
+
+@pytest.mark.parametrize("option", ["--clip-range", "--search-range"])
+def test_live_capture_rejects_separate_acquisition_interval(option):
+    args = _args()
+    args[0] = "https://youtu.be/abc123"
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        parse_run_config([*args, "--live-capture", "until-end", option, "0", "10"])
+
+
 @pytest.mark.parametrize("configured_in", ["cli", "process", "dotenv", "json"])
 @pytest.mark.parametrize("reason", ["primary", "captions"])
 @pytest.mark.parametrize(

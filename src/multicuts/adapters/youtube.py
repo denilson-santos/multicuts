@@ -2,14 +2,16 @@
 
 import json
 import re
+from dataclasses import replace
 from hashlib import sha256
 from math import isclose, isfinite
 from pathlib import Path
 from typing import Protocol, cast
 
+from multicuts.adapters.youtube_live import LiveState, LiveStream, acquire_live
 from multicuts.errors import AcquisitionError, ConfigurationError, MediaError
 from multicuts.media import check_media_tools, inspect_media_path, prepare_source_range
-from multicuts.models import AcquiredSource, TimeRange
+from multicuts.models import AcquiredSource, LiveCapture, TimeRange
 from multicuts.source import parse_youtube_url
 
 try:
@@ -327,11 +329,52 @@ def _normalize_result(
         raise AcquisitionError("YouTube source metadata is invalid") from exc
 
 
+def _live_state(info: dict[str, object]) -> LiveState:
+    status = "is_live" if info.get("is_live") else str(info.get("live_status", ""))
+    if status != "is_live":
+        return LiveState(status, ())
+    selected = info.get("requested_formats")
+    if not isinstance(selected, list) or len(selected) != 2:
+        raise AcquisitionError(
+            "YouTube live requires separate H.264 video and AAC audio"
+        )
+    streams = []
+    for raw in selected:
+        fmt = _raw_mapping(raw)
+        format_id = _safe_provider_id(fmt.get("format_id"))
+        url = fmt.get("url")
+        duration = fmt.get("target_duration")
+        codec = str(fmt.get("vcodec")) if not streams else str(fmt.get("acodec"))
+        valid_codec = (
+            codec.startswith(("avc1", "h264"))
+            if not streams
+            else codec.startswith(("mp4a", "aac"))
+        )
+        if (
+            format_id is None
+            or not isinstance(url, str)
+            or isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or not valid_codec
+            or fmt.get("protocol") != "http_dash_segments_generator"
+        ):
+            raise AcquisitionError(
+                "YouTube live formats do not support MP4 fragment acquisition"
+            )
+        streams.append(LiveStream(format_id, url, float(duration)))
+    return LiveState(status, tuple(streams))
+
+
 class YoutubeAdapter:
     """Acquire one supported YouTube URL with yt-dlp's Python API."""
 
     def acquire(
-        self, source: str, workspace: Path, *, time_range: TimeRange | None = None
+        self,
+        source: str,
+        workspace: Path,
+        *,
+        time_range: TimeRange | None = None,
+        live_capture: LiveCapture | None = None,
     ) -> AcquiredSource:
         reference = parse_youtube_url(source)
         if reference is None:
@@ -346,6 +389,65 @@ class YoutubeAdapter:
         options = _options(resolved_workspace, time_range)
         try:
             downloader_factory = cast(_DownloaderFactory, YoutubeDL)
+            with downloader_factory(_options(resolved_workspace, None)) as probe:
+                initial = _raw_mapping(probe.extract_info(source, download=False))
+            if initial.get("is_live") or initial.get("live_status") == "is_live":
+                check_media_tools()
+                live_options = _options(resolved_workspace, None)
+                live_options.update(
+                    live_from_start=True,
+                    ignore_no_formats_error=True,
+                    format="bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo*+bestaudio/best",
+                )
+                with downloader_factory(live_options) as downloader:
+
+                    def refresh() -> LiveState:
+                        info = _raw_mapping(
+                            downloader.extract_info(source, download=False)
+                        )
+                        if info.get("id") != initial.get("id"):
+                            raise AcquisitionError(
+                                "YouTube live identity changed during capture"
+                            )
+                        return _live_state(info)
+
+                    info = _raw_mapping(downloader.extract_info(source, download=False))
+                    downloaded = acquire_live(
+                        _live_state(info),
+                        resolved_workspace,
+                        time_range=time_range,
+                        capture=live_capture,
+                        refresh=refresh,
+                    )
+                    info["filepath"] = str(downloaded.path)
+                    acquired = _normalize_result(
+                        info, downloader, resolved_workspace, source
+                    )
+                    acquired = replace(
+                        acquired,
+                        acquired_range=downloaded.interval,
+                        live=downloaded.provenance,
+                        fingerprint=_fingerprint(
+                            info=info,
+                            media_path=downloaded.path,
+                            source_id=acquired.provider_id or "",
+                            time_range=downloaded.interval,
+                        ),
+                    )
+                    prepared, _ = prepare_source_range(
+                        acquired,
+                        inspect_media_path(acquired.local_path),
+                        downloaded.interval,
+                        resolved_workspace / "range-source",
+                    )
+                    acquired.local_path.unlink()
+                    return prepared
+            if live_capture is not None:
+                raise ConfigurationError(
+                    "--live-capture requires an ongoing YouTube live"
+                )
+            if initial.get("live_status") == "is_upcoming":
+                raise AcquisitionError("YouTube live has not started yet")
             with downloader_factory(options) as downloader:
                 info = downloader.extract_info(source, download=True)
                 acquired = _normalize_result(
@@ -372,10 +474,16 @@ class YoutubeAdapter:
 
 
 def acquire_youtube_source(
-    source: str, workspace: Path, *, time_range: TimeRange | None = None
+    source: str,
+    workspace: Path,
+    *,
+    time_range: TimeRange | None = None,
+    live_capture: LiveCapture | None = None,
 ) -> AcquiredSource:
     """Functional adapter entry point for callers that prefer a function."""
-    return YoutubeAdapter().acquire(source, workspace, time_range=time_range)
+    return YoutubeAdapter().acquire(
+        source, workspace, time_range=time_range, live_capture=live_capture
+    )
 
 
 YouTubeAdapter = YoutubeAdapter
